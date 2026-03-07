@@ -2,3 +2,5 @@
 .claude/settings.json
 .claude/settings.local.json
 /bindings/kotlin/
+/.build/
+/.swiftpm/

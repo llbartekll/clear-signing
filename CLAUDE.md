@@ -7,6 +7,8 @@ UniFFI bindings (Kotlin + Swift) are implemented in the same crate via a statele
 
 - Cargo workspace root at `/`
 - Single crate: `crates/erc7730/`
+- Local Swift package manifest: `Package.swift`
+- iOS demo app: `wallet/Wallet.xcodeproj`
 
 ## Build & Test
 
@@ -24,6 +26,9 @@ cargo check -p erc7730 --features uniffi
 cargo test -p erc7730 --features uniffi     # 34 unit tests
 cargo clippy -p erc7730 --all-targets --features uniffi -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
+./scripts/build-xcframework.sh
+swift package resolve
+swift package describe
 ```
 
 Generated binding outputs:
@@ -31,10 +36,14 @@ Generated binding outputs:
 - `bindings/swift/erc7730.swift`
 - `bindings/swift/erc7730FFI.h`
 - `bindings/swift/erc7730FFI.modulemap`
+- `target/ios/liberc7730.xcframework`
 
 Repository policy:
 - `bindings/swift/` is kept in-repo for SPM consumption.
 - `bindings/kotlin/` is generated locally and gitignored.
+- XCFramework is generated locally (not committed) and consumed by local `Package.swift`.
+- Local Swift package and `wallet` app deployment baseline is iOS 14+.
+- XCFramework header/modulemap staging is namespaced (`Headers/erc7730FFI/module.modulemap`) to avoid collisions with other Rust XCFrameworks.
 
 ## Code Conventions
 
@@ -55,6 +64,9 @@ UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
 - `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, tokens)`
 - `erc7730_format_typed_data(descriptor_json, typed_data_json, tokens)`
 
+Local Swift package product:
+- `Erc7730` (binary target + Swift wrapper target)
+
 ## Key Modules
 
 | Module | Key Types | Purpose |
@@ -68,6 +80,8 @@ UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
 | `uniffi_compat/` | `TokenMetaInput`, `FfiError`, exported FFI functions | Stateless UniFFI wrapper layer |
 | `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, metadata types |
 | `error.rs` | `Error`, `DecodeError`, `ResolveError` | Unified error hierarchy |
+| `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging for local SPM |
+| `wallet/` | SwiftUI smoke-test app | Minimal consumer of local `Erc7730` package |
 
 ## Pending
 

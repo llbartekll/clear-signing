@@ -13,8 +13,8 @@ import erc7730FFI
 
 fileprivate extension RustBuffer {
     // Allocate a new buffer, copying the contents of a `UInt8` array.
-    init(bytes: [UInt8]) {
-        let rbuf = bytes.withUnsafeBufferPointer { ptr in
+    init(byteArray: [UInt8]) {
+        let rbuf = byteArray.withUnsafeBufferPointer { ptr in
             RustBuffer.from(ptr)
         }
         self.init(capacity: rbuf.capacity, len: rbuf.len, data: rbuf.data)
@@ -209,7 +209,7 @@ extension FfiConverterRustBuffer {
     public static func lower(_ value: SwiftType) -> RustBuffer {
           var writer = createWriter()
           write(value, into: &writer)
-          return RustBuffer(bytes: writer)
+          return RustBuffer(byteArray: writer)
     }
 }
 // An error type for FFI errors. These errors occur at the UniFFI level, not

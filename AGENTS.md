@@ -11,6 +11,8 @@ The crate also provides UniFFI bindings (Kotlin + Swift) through a stateless FFI
 
 - Cargo workspace root at `/`
 - Single crate: `crates/erc7730/`
+- Local Swift package manifest: `Package.swift`
+- iOS demo app: `wallet/Wallet.xcodeproj`
 
 ## Build And Test
 
@@ -30,6 +32,9 @@ cargo check -p erc7730 --features uniffi
 cargo test -p erc7730 --features uniffi
 cargo clippy -p erc7730 --all-targets --features uniffi -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
+./scripts/build-xcframework.sh
+swift package resolve
+swift package describe
 ```
 
 Current baseline from `CLAUDE.md`:
@@ -72,6 +77,8 @@ FFI API is intentionally stateless and JSON/hex-based.
 | `uniffi_compat/` | `TokenMetaInput`, `FfiError`, UniFFI exports | Stateless FFI wrapper for Kotlin/Swift |
 | `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, and metadata types |
 | `error.rs` | `Error`, `DecodeError`, `ResolveError` | Unified error hierarchy |
+| `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging with collision-safe headers |
+| `wallet/` | SwiftUI smoke-test app | Local SPM consumer of `Erc7730` |
 
 ## UniFFI Artifacts
 
@@ -79,6 +86,13 @@ Generated bindings are written to:
 
 - `bindings/kotlin/` (generated locally, gitignored)
 - `bindings/swift/` (kept in-repo for SPM consumption)
+- `target/ios/liberc7730.xcframework` (generated locally for SPM binary target)
+
+## iOS/SPM Notes
+
+- `Package.swift` uses local binary target path: `target/ios/liberc7730.xcframework`.
+- Local Swift package and `wallet` app deployment baseline is iOS 14+.
+- XCFramework header/modulemap staging is namespaced under `Headers/erc7730FFI/` to avoid modulemap filename conflicts with other Rust libraries.
 
 ## Working Expectations For Agents
 
