@@ -21,8 +21,8 @@ use error::Error;
 
 // Re-exports for convenience
 pub use engine::{DisplayEntry, DisplayItem, DisplayModel};
-pub use resolver::{DescriptorSource, ResolvedDescriptor};
-pub use token::{TokenMeta, TokenSource};
+pub use resolver::{DescriptorSource, FilesystemSource, ResolvedDescriptor};
+pub use token::{CompositeTokenSource, TokenMeta, TokenSource, WellKnownTokenSource};
 pub use types::descriptor::Descriptor;
 
 /// Format contract calldata for clear signing display.
@@ -30,12 +30,37 @@ pub use types::descriptor::Descriptor;
 /// This is the main entry point for calldata clear signing.
 /// It parses the function signature from the descriptor's format keys,
 /// decodes the calldata, and renders the display model.
+///
+/// `from` is the optional sender address for `@.from` container value support.
 pub fn format_calldata(
     descriptor: &Descriptor,
     chain_id: u64,
     to: &str,
     calldata: &[u8],
     value: Option<&[u8]>,
+    token_source: &dyn TokenSource,
+) -> Result<DisplayModel, Error> {
+    format_calldata_with_from(
+        descriptor,
+        chain_id,
+        to,
+        calldata,
+        value,
+        None,
+        token_source,
+    )
+}
+
+/// Format contract calldata with full container value support.
+///
+/// Like [`format_calldata`] but also accepts `from` address for `@.from` resolution.
+pub fn format_calldata_with_from(
+    descriptor: &Descriptor,
+    chain_id: u64,
+    to: &str,
+    calldata: &[u8],
+    value: Option<&[u8]>,
+    from: Option<&str>,
     token_source: &dyn TokenSource,
 ) -> Result<DisplayModel, Error> {
     if calldata.len() < 4 {
@@ -48,13 +73,123 @@ pub fn format_calldata(
     let actual_selector = &calldata[..4];
 
     // Find matching format key and parse its signature
-    let (sig, _format_key) = find_matching_signature(descriptor, actual_selector)?;
+    let (sig, _format_key) = match find_matching_signature(descriptor, actual_selector) {
+        Ok(result) => result,
+        Err(_) => {
+            // Graceful fallback: return raw preview for unknown selectors
+            return Ok(build_raw_fallback(calldata));
+        }
+    };
 
     // Decode calldata using the parsed signature
-    let decoded = decoder::decode_calldata(&sig, calldata)?;
+    let mut decoded = decoder::decode_calldata(&sig, calldata)?;
+
+    // Inject container values as synthetic arguments
+    inject_container_values(&mut decoded, chain_id, to, value, from);
 
     // Render the display model
     engine::format_calldata(descriptor, chain_id, to, &decoded, value, token_source)
+}
+
+/// Inject EIP-7730 container values (@.value, @.to, @.chainId, @.from) as synthetic arguments.
+fn inject_container_values(
+    decoded: &mut decoder::DecodedArguments,
+    chain_id: u64,
+    to: &str,
+    value: Option<&[u8]>,
+    from: Option<&str>,
+) {
+    // @.value — transaction ETH value
+    if let Some(val_bytes) = value {
+        let mut padded = vec![0u8; 32usize.saturating_sub(val_bytes.len())];
+        padded.extend_from_slice(val_bytes);
+        decoded.args.push(decoder::DecodedArgument {
+            index: decoded.args.len(),
+            name: Some("value".into()),
+            param_type: decoder::ParamType::Uint(256),
+            value: decoder::ArgumentValue::Uint(padded),
+        });
+    }
+
+    // @.to — target contract address
+    if let Some(addr) = parse_address_bytes(to) {
+        decoded.args.push(decoder::DecodedArgument {
+            index: decoded.args.len(),
+            name: Some("to".into()),
+            param_type: decoder::ParamType::Address,
+            value: decoder::ArgumentValue::Address(addr),
+        });
+    }
+
+    // @.chainId
+    let chain_bytes = {
+        let mut buf = [0u8; 32];
+        buf[24..32].copy_from_slice(&chain_id.to_be_bytes());
+        buf.to_vec()
+    };
+    decoded.args.push(decoder::DecodedArgument {
+        index: decoded.args.len(),
+        name: Some("chainId".into()),
+        param_type: decoder::ParamType::Uint(256),
+        value: decoder::ArgumentValue::Uint(chain_bytes),
+    });
+
+    // @.from — sender address (if provided)
+    if let Some(from_addr) = from {
+        if let Some(addr) = parse_address_bytes(from_addr) {
+            decoded.args.push(decoder::DecodedArgument {
+                index: decoded.args.len(),
+                name: Some("from".into()),
+                param_type: decoder::ParamType::Address,
+                value: decoder::ArgumentValue::Address(addr),
+            });
+        }
+    }
+}
+
+fn parse_address_bytes(addr: &str) -> Option<[u8; 20]> {
+    let hex_str = addr
+        .strip_prefix("0x")
+        .or_else(|| addr.strip_prefix("0X"))
+        .unwrap_or(addr);
+    let bytes = hex::decode(hex_str).ok()?;
+    if bytes.len() != 20 {
+        return None;
+    }
+    let mut result = [0u8; 20];
+    result.copy_from_slice(&bytes);
+    Some(result)
+}
+
+/// Build a raw fallback DisplayModel for unknown selectors (graceful degradation).
+fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
+    let selector = if calldata.len() >= 4 {
+        format!("0x{}", hex::encode(&calldata[..4]))
+    } else {
+        format!("0x{}", hex::encode(calldata))
+    };
+
+    let mut entries = Vec::new();
+    let data = if calldata.len() > 4 {
+        &calldata[4..]
+    } else {
+        &[]
+    };
+
+    // Split into 32-byte words
+    for (i, chunk) in data.chunks(32).enumerate() {
+        entries.push(DisplayEntry::Item(DisplayItem {
+            label: format!("Param {}", i),
+            value: format!("0x{}", hex::encode(chunk)),
+        }));
+    }
+
+    DisplayModel {
+        intent: format!("Unknown function {}", selector),
+        interpolated_intent: None,
+        entries,
+        warnings: vec!["No matching descriptor format found".to_string()],
+    }
 }
 
 /// Format EIP-712 typed data for clear signing display.
@@ -76,7 +211,15 @@ pub fn format(
     tokens: &dyn TokenSource,
 ) -> Result<DisplayModel, Error> {
     let resolved = source.resolve_calldata(chain_id, to)?;
-    format_calldata(&resolved.descriptor, chain_id, to, calldata, value, tokens)
+    format_calldata_with_from(
+        &resolved.descriptor,
+        chain_id,
+        to,
+        calldata,
+        value,
+        None,
+        tokens,
+    )
 }
 
 /// Find a format key whose signature matches the calldata selector.

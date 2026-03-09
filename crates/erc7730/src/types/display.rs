@@ -19,11 +19,16 @@ pub struct DescriptorDisplay {
 /// A single display format for a function or message type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplayFormat {
+    /// Optional format identifier (v2).
+    #[serde(rename = "$id")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
     /// Human-readable intent label.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intent: Option<String>,
 
-    /// Intent with `${path}` template variables for interpolation.
+    /// Intent with `${path}` or `{name}` template variables for interpolation.
     #[serde(rename = "interpolatedIntent")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub interpolated_intent: Option<String>,
@@ -202,10 +207,36 @@ pub struct FormatParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enum_path: Option<String>,
 
+    /// `$ref` enum reference path (v2): e.g., `"$.metadata.enums.interestRateMode"`.
+    #[serde(rename = "$ref")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ref_path: Option<String>,
+
     /// Map reference key in metadata.maps.
     #[serde(rename = "mapReference")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_reference: Option<String>,
+
+    /// Threshold for max-amount display (v2).
+    /// Value or `"$.metadata.constants.max"` reference.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub threshold: Option<String>,
+
+    /// Message to display when amount >= threshold (e.g., "All", "Max").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+
+    /// Unit base symbol (e.g., "%", "bps", "h") for the `unit` format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+
+    /// Decimal places for the `unit` format (default 0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decimals: Option<u8>,
+
+    /// Whether to use SI prefix notation for the `unit` format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<bool>,
 
     /// Encryption parameters.
     #[serde(skip_serializing_if = "Option::is_none")]

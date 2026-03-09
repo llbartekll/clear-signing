@@ -137,6 +137,173 @@ impl DescriptorSource for StaticSource {
     }
 }
 
+/// Filesystem-based descriptor source — reads and indexes all JSON descriptors from a directory.
+pub struct FilesystemSource {
+    index: HashMap<String, Descriptor>,
+}
+
+impl FilesystemSource {
+    /// Load and index all descriptor JSON files recursively from a directory.
+    pub fn from_directory(path: &std::path::Path) -> Result<Self, ResolveError> {
+        let mut index = HashMap::new();
+
+        fn walk_dir(
+            dir: &std::path::Path,
+            index: &mut HashMap<String, Descriptor>,
+        ) -> Result<(), ResolveError> {
+            let entries = std::fs::read_dir(dir).map_err(|e| ResolveError::Io(e.to_string()))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| ResolveError::Io(e.to_string()))?;
+                let path = entry.path();
+                if path.is_dir() {
+                    walk_dir(&path, index)?;
+                } else if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    let content = std::fs::read_to_string(&path)
+                        .map_err(|e| ResolveError::Io(e.to_string()))?;
+                    match serde_json::from_str::<Descriptor>(&content) {
+                        Ok(descriptor) => {
+                            for deployment in descriptor.context.deployments() {
+                                let key = format!(
+                                    "{}:{}",
+                                    deployment.chain_id,
+                                    deployment.address.to_lowercase()
+                                );
+                                index.insert(key, descriptor.clone());
+                            }
+                        }
+                        Err(_) => {
+                            // Skip non-descriptor JSON files
+                            continue;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+
+        walk_dir(path, &mut index)?;
+        Ok(Self { index })
+    }
+
+    fn make_key(chain_id: u64, address: &str) -> String {
+        format!("{}:{}", chain_id, address.to_lowercase())
+    }
+}
+
+impl DescriptorSource for FilesystemSource {
+    fn resolve_calldata(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Result<ResolvedDescriptor, ResolveError> {
+        let key = Self::make_key(chain_id, address);
+        self.index
+            .get(&key)
+            .cloned()
+            .map(|descriptor| ResolvedDescriptor {
+                descriptor,
+                chain_id,
+                address: address.to_lowercase(),
+            })
+            .ok_or_else(|| ResolveError::NotFound {
+                chain_id,
+                address: address.to_string(),
+            })
+    }
+
+    fn resolve_typed(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Result<ResolvedDescriptor, ResolveError> {
+        self.resolve_calldata(chain_id, address)
+    }
+}
+
+/// HTTP-based descriptor source that fetches from a GitHub registry.
+///
+/// Requires the `github-registry` feature.
+#[cfg(feature = "github-registry")]
+pub struct GitHubRegistrySource {
+    base_url: String,
+    /// Maps "{chain_id}:{address_lowercase}" → relative path in registry
+    index: HashMap<String, String>,
+    /// In-memory descriptor cache
+    cache: std::cell::RefCell<HashMap<String, Descriptor>>,
+}
+
+#[cfg(feature = "github-registry")]
+impl GitHubRegistrySource {
+    /// Create a new source with a manually provided index.
+    ///
+    /// `base_url`: raw content URL prefix (e.g., `"https://raw.githubusercontent.com/org/repo/main"`).
+    /// `index`: maps `"{chain_id}:{address}"` → relative path (e.g., `"aave/calldata-lpv3.json"`).
+    pub fn new(base_url: &str, index: HashMap<String, String>) -> Self {
+        Self {
+            base_url: base_url.trim_end_matches('/').to_string(),
+            index,
+            cache: std::cell::RefCell::new(HashMap::new()),
+        }
+    }
+
+    fn make_key(chain_id: u64, address: &str) -> String {
+        format!("{}:{}", chain_id, address.to_lowercase())
+    }
+
+    fn fetch_descriptor(&self, rel_path: &str) -> Result<Descriptor, ResolveError> {
+        let url = format!("{}/{}", self.base_url, rel_path);
+        let response = ureq::get(&url)
+            .call()
+            .map_err(|e| ResolveError::Io(format!("HTTP fetch failed: {e}")))?;
+        let body = response
+            .into_string()
+            .map_err(|e| ResolveError::Io(format!("read response: {e}")))?;
+        serde_json::from_str(&body).map_err(|e| ResolveError::Parse(e.to_string()))
+    }
+}
+
+#[cfg(feature = "github-registry")]
+impl DescriptorSource for GitHubRegistrySource {
+    fn resolve_calldata(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Result<ResolvedDescriptor, ResolveError> {
+        let key = Self::make_key(chain_id, address);
+
+        // Check cache first
+        if let Some(cached) = self.cache.borrow().get(&key) {
+            return Ok(ResolvedDescriptor {
+                descriptor: cached.clone(),
+                chain_id,
+                address: address.to_lowercase(),
+            });
+        }
+
+        let rel_path = self.index.get(&key).ok_or_else(|| ResolveError::NotFound {
+            chain_id,
+            address: address.to_string(),
+        })?;
+
+        let descriptor = self.fetch_descriptor(rel_path)?;
+        self.cache.borrow_mut().insert(key, descriptor.clone());
+
+        Ok(ResolvedDescriptor {
+            descriptor,
+            chain_id,
+            address: address.to_lowercase(),
+        })
+    }
+
+    fn resolve_typed(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Result<ResolvedDescriptor, ResolveError> {
+        self.resolve_calldata(chain_id, address)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

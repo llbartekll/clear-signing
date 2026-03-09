@@ -139,11 +139,12 @@ fn find_format<'a>(
         if key == function_name {
             return Ok(format);
         }
-        // Match by computing selector from the key
+        // Match by computing selector from the key (handles named params)
         if key.contains('(') {
-            let key_selector = crate::decoder::selector_from_signature(key);
-            if hex::encode(key_selector) == selector_hex {
-                return Ok(format);
+            if let Ok(parsed) = crate::decoder::parse_signature(key) {
+                if hex::encode(parsed.selector) == selector_hex {
+                    return Ok(format);
+                }
             }
         }
     }
@@ -192,7 +193,8 @@ fn render_fields(
                     continue;
                 }
 
-                let formatted = format_value(ctx, &value, format.as_ref(), params.as_ref(), path)?;
+                let formatted =
+                    format_value(ctx, &value, format.as_ref(), params.as_ref(), path, label)?;
 
                 entries.push(DisplayEntry::Item(DisplayItem {
                     label: label.clone(),
@@ -288,6 +290,19 @@ fn resolve_path(decoded: &DecodedArguments, path: &str) -> Option<ArgumentValue>
         }
     }
 
+    // Try named parameter matching
+    let name = segments[0];
+    if let Some(arg) = decoded
+        .args
+        .iter()
+        .find(|a| a.name.as_deref() == Some(name))
+    {
+        if segments.len() == 1 {
+            return Some(arg.value.clone());
+        }
+        return navigate_value(&arg.value, &segments[1..]);
+    }
+
     None
 }
 
@@ -336,9 +351,13 @@ fn format_value(
     format: Option<&FieldFormat>,
     params: Option<&FormatParams>,
     path: &str,
+    label: &str,
 ) -> Result<String, Error> {
     let Some(val) = value else {
-        ctx.warnings.push(format!("could not resolve path: {path}"));
+        ctx.warnings.push(format!(
+            "could not resolve path: {} for field '{}'",
+            path, label
+        ));
         return Ok("<unresolved>".to_string());
     };
 
@@ -365,7 +384,7 @@ fn format_value(
     };
 
     match fmt {
-        FieldFormat::TokenAmount => format_token_amount(ctx, val, params),
+        FieldFormat::TokenAmount => format_token_amount(ctx, val, params, label, path),
         FieldFormat::Amount => format_amount(val),
         FieldFormat::Date => format_date(val),
         FieldFormat::Enum => format_enum(ctx, val, params),
@@ -375,13 +394,13 @@ fn format_value(
         FieldFormat::Raw => Ok(format_raw(val)),
         FieldFormat::TokenTicker => format_token_ticker(ctx, val, params),
         FieldFormat::ChainId => format_chain_id(val),
-        FieldFormat::Calldata
-        | FieldFormat::NftName
-        | FieldFormat::Duration
-        | FieldFormat::Unit => {
-            // Not yet implemented — render raw with warning
-            ctx.warnings
-                .push(format!("format {:?} not yet implemented", fmt));
+        FieldFormat::Duration => Ok(format_duration(val)),
+        FieldFormat::Unit => Ok(format_unit(val, params)),
+        FieldFormat::Calldata | FieldFormat::NftName => {
+            ctx.warnings.push(format!(
+                "format {:?} not yet implemented for field '{}' (path: {})",
+                fmt, label, path
+            ));
             Ok(format_raw(val))
         }
     }
@@ -469,6 +488,8 @@ fn format_token_amount(
     ctx: &mut RenderContext<'_>,
     val: &ArgumentValue,
     params: Option<&FormatParams>,
+    label: &str,
+    path: &str,
 ) -> Result<String, Error> {
     let raw_amount = match val {
         ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
@@ -508,12 +529,55 @@ fn format_token_amount(
         None
     };
 
+    // Check threshold/message for max-amount display
+    if let Some(params) = params {
+        if let (Some(ref threshold_ref), Some(ref message)) = (&params.threshold, &params.message) {
+            if let Some(threshold) = resolve_metadata_constant(ctx.descriptor, threshold_ref) {
+                if raw_amount >= threshold {
+                    if let Some(ref meta) = token_meta {
+                        return Ok(format!("{} {}", message, meta.symbol));
+                    }
+                    return Ok(message.clone());
+                }
+            }
+        }
+    }
+
     if let Some(meta) = token_meta {
         let formatted = format_with_decimals(&raw_amount, meta.decimals);
         Ok(format!("{} {}", formatted, meta.symbol))
     } else {
-        ctx.warnings.push("token metadata not found".to_string());
+        ctx.warnings.push(format!(
+            "token metadata not found for field '{}' (path: {})",
+            label, path
+        ));
         Ok(raw_amount.to_string())
+    }
+}
+
+/// Resolve a `$.metadata.constants.xxx` or literal hex reference to a BigUint.
+fn resolve_metadata_constant(descriptor: &Descriptor, ref_path: &str) -> Option<BigUint> {
+    if let Some(const_name) = ref_path.strip_prefix("$.metadata.constants.") {
+        let val = descriptor.metadata.constants.get(const_name)?;
+        parse_constant_to_biguint(val)
+    } else {
+        // Try parsing as literal hex
+        let hex_str = ref_path.strip_prefix("0x").unwrap_or(ref_path);
+        BigUint::parse_bytes(hex_str.as_bytes(), 16)
+    }
+}
+
+fn parse_constant_to_biguint(val: &serde_json::Value) -> Option<BigUint> {
+    match val {
+        serde_json::Value::String(s) => {
+            let hex_str = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .unwrap_or(s);
+            BigUint::parse_bytes(hex_str.as_bytes(), 16)
+        }
+        serde_json::Value::Number(n) => n.as_u64().map(BigUint::from),
+        _ => None,
     }
 }
 
@@ -626,10 +690,21 @@ fn format_enum(
     let raw = format_raw(val);
 
     if let Some(params) = params {
+        // Try direct enumPath first
         if let Some(ref enum_path) = params.enum_path {
             if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_path) {
                 if let Some(label) = enum_def.get(&raw) {
                     return Ok(label.clone());
+                }
+            }
+        }
+        // Try $ref path (v2): "$.metadata.enums.interestRateMode"
+        if let Some(ref ref_path) = params.ref_path {
+            if let Some(enum_name) = ref_path.strip_prefix("$.metadata.enums.") {
+                if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_name) {
+                    if let Some(label) = enum_def.get(&raw) {
+                        return Ok(label.clone());
+                    }
                 }
             }
         }
@@ -676,8 +751,9 @@ pub(crate) fn format_with_decimals(amount: &BigUint, decimals: u8) -> String {
     }
 }
 
-/// Interpolate `${path}` templates in an intent string.
+/// Interpolate `${path}` and `{name}` templates in an intent string.
 ///
+/// Supports both v1 `${path}` and v2 `{paramName}` interpolation patterns.
 /// When `fields` contains a matching `DisplayField::Simple` with a stateless format
 /// (Date, Number, Address), uses that formatter instead of raw formatting.
 fn interpolate_intent(
@@ -686,41 +762,147 @@ fn interpolate_intent(
     fields: &[DisplayField],
 ) -> String {
     let mut result = template.to_string();
-    // Find all ${...} patterns and replace them
+
+    // First pass: replace ${path} patterns (v1)
     while let Some(start) = result.find("${") {
         let end = match result[start..].find('}') {
             Some(e) => start + e,
             None => break,
         };
         let path = &result[start + 2..end];
-        let replacement = resolve_path(decoded, path)
-            .map(|v| {
-                // Look up field format for this path
-                let field_format = fields.iter().find_map(|f| {
-                    if let DisplayField::Simple {
-                        path: fp, format, ..
-                    } = f
-                    {
-                        if fp == path {
-                            format.as_ref()
-                        } else {
-                            None
-                        }
+        let replacement = resolve_and_format_for_interpolation(decoded, fields, path);
+        result.replace_range(start..=end, &replacement);
+    }
+
+    // Second pass: replace {name} patterns (v2) — only single `{` not preceded by `$`
+    let mut pos = 0;
+    while pos < result.len() {
+        if let Some(rel_start) = result[pos..].find('{') {
+            let start = pos + rel_start;
+            // Skip if preceded by '$' (already handled)
+            if start > 0 && result.as_bytes()[start - 1] == b'$' {
+                pos = start + 1;
+                continue;
+            }
+            let end = match result[start..].find('}') {
+                Some(e) => start + e,
+                None => break,
+            };
+            let path = result[start + 1..end].to_string();
+            let replacement = resolve_and_format_for_interpolation(decoded, fields, &path);
+            result.replace_range(start..=end, &replacement);
+            pos = start + replacement.len();
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
+/// Format a duration value (seconds → human-readable).
+fn format_duration(val: &ArgumentValue) -> String {
+    let secs = match val {
+        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
+            let n = BigUint::from_bytes_be(bytes);
+            u64::try_from(n).unwrap_or(0)
+        }
+        _ => return format_raw(val),
+    };
+
+    if secs == 0 {
+        return "0 seconds".to_string();
+    }
+
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!(
+            "{} {}",
+            days,
+            if days == 1 { "day" } else { "days" }
+        ));
+    }
+    if hours > 0 {
+        parts.push(format!(
+            "{} {}",
+            hours,
+            if hours == 1 { "hour" } else { "hours" }
+        ));
+    }
+    if minutes > 0 {
+        parts.push(format!(
+            "{} {}",
+            minutes,
+            if minutes == 1 { "minute" } else { "minutes" }
+        ));
+    }
+    if seconds > 0 {
+        parts.push(format!(
+            "{} {}",
+            seconds,
+            if seconds == 1 { "second" } else { "seconds" }
+        ));
+    }
+    parts.join(" ")
+}
+
+/// Format a unit value (e.g., percentage, bps) with optional decimals and SI prefix.
+fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> String {
+    let raw_val = match val {
+        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
+        _ => return format_raw(val),
+    };
+
+    let base = params.and_then(|p| p.base.as_deref()).unwrap_or("");
+    let decimals = params.and_then(|p| p.decimals).unwrap_or(0);
+
+    let formatted = if decimals > 0 {
+        format_with_decimals(&raw_val, decimals)
+    } else {
+        raw_val.to_string()
+    };
+
+    if base.is_empty() {
+        formatted
+    } else {
+        format!("{} {}", formatted, base)
+    }
+}
+
+fn resolve_and_format_for_interpolation(
+    decoded: &DecodedArguments,
+    fields: &[DisplayField],
+    path: &str,
+) -> String {
+    resolve_path(decoded, path)
+        .map(|v| {
+            let field_format = fields.iter().find_map(|f| {
+                if let DisplayField::Simple {
+                    path: fp, format, ..
+                } = f
+                {
+                    if fp == path {
+                        format.as_ref()
                     } else {
                         None
                     }
-                });
-                match field_format {
-                    Some(FieldFormat::Date) => format_date(&v).unwrap_or_else(|_| format_raw(&v)),
-                    Some(FieldFormat::Number) => format_number(&v),
-                    Some(FieldFormat::Address) => format_address(&v),
-                    _ => format_raw(&v),
+                } else {
+                    None
                 }
-            })
-            .unwrap_or_else(|| "<?>".to_string());
-        result.replace_range(start..=end, &replacement);
-    }
-    result
+            });
+            match field_format {
+                Some(FieldFormat::Date) => format_date(&v).unwrap_or_else(|_| format_raw(&v)),
+                Some(FieldFormat::Number) => format_number(&v),
+                Some(FieldFormat::Address) => format_address(&v),
+                _ => format_raw(&v),
+            }
+        })
+        .unwrap_or_else(|| "<?>".to_string())
 }
 
 #[cfg(test)]
@@ -772,11 +954,13 @@ mod tests {
             args: vec![
                 DecodedArgument {
                     index: 0,
+                    name: None,
                     param_type: ParamType::Address,
                     value: ArgumentValue::Address([0u8; 20]),
                 },
                 DecodedArgument {
                     index: 1,
+                    name: None,
                     param_type: ParamType::Uint(256),
                     value: ArgumentValue::Uint(vec![
                         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

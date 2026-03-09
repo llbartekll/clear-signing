@@ -16,6 +16,7 @@ required-features = ["uniffi"]
 [features]
 default = []
 uniffi = ["dep:uniffi", "uniffi/cli"]
+github-registry = ["dep:ureq"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -26,3 +27,4 @@ hex = "0.4"
 time = { version = "0.3", features = ["formatting", "macros"] }
 thiserror = "2"
 uniffi = { version = "0.31.0", default-features = false, optional = true }
+ureq = { version = "2", optional = true }

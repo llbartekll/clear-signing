@@ -1,7 +1,7 @@
 use crate::{
     eip712::TypedData,
     error::Error,
-    format_calldata, format_typed_data,
+    format_typed_data,
     token::{StaticTokenSource, TokenMeta},
     types::descriptor::Descriptor,
     DisplayModel,
@@ -57,6 +57,7 @@ pub fn erc7730_format_calldata(
     to: String,
     calldata_hex: String,
     value_hex: Option<String>,
+    from_address: Option<String>,
     tokens: Vec<TokenMetaInput>,
 ) -> Result<DisplayModel, FfiError> {
     let descriptor = Descriptor::from_json(&descriptor_json)
@@ -68,12 +69,13 @@ pub fn erc7730_format_calldata(
     };
 
     let token_source = build_token_source(&tokens);
-    format_calldata(
+    crate::format_calldata_with_from(
         &descriptor,
         chain_id,
         &to,
         &calldata,
         value.as_deref(),
+        from_address.as_deref(),
         &token_source,
     )
     .map_err(Into::into)
@@ -248,6 +250,7 @@ mod tests {
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
             None,
+            None,
             vec![],
         )
         .expect("calldata formatting should succeed");
@@ -286,6 +289,7 @@ mod tests {
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
             None,
+            None,
             vec![],
         )
         .expect_err("invalid descriptor should fail");
@@ -310,6 +314,7 @@ mod tests {
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             "zz".to_string(),
             None,
+            None,
             vec![],
         )
         .expect_err("invalid calldata hex should fail");
@@ -325,6 +330,7 @@ mod tests {
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
             Some("zz".to_string()),
+            None,
             vec![],
         )
         .expect_err("invalid value hex should fail");
@@ -340,6 +346,7 @@ mod tests {
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
             None,
+            None,
             vec![],
         )
         .expect("no-prefix calldata should succeed");
@@ -350,6 +357,7 @@ mod tests {
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             format!("0x{}", transfer_calldata_hex()),
             Some("0x00".to_string()),
+            None,
             vec![],
         )
         .expect("prefixed calldata should succeed");

@@ -372,6 +372,16 @@ fn format_typed_value(
                         }
                     }
                 }
+                // $ref path (v2): "$.metadata.enums.interestRateMode"
+                if let Some(ref ref_path) = params.ref_path {
+                    if let Some(enum_name) = ref_path.strip_prefix("$.metadata.enums.") {
+                        if let Some(enum_def) = descriptor.metadata.enums.get(enum_name) {
+                            if let Some(label) = enum_def.get(&raw) {
+                                return Ok(label.clone());
+                            }
+                        }
+                    }
+                }
             }
             Ok(raw)
         }
@@ -438,53 +448,86 @@ fn interpolate_typed_intent(
     fields: &[DisplayField],
 ) -> String {
     let mut result = template.to_string();
+
+    // First pass: replace ${path} patterns (v1)
     while let Some(start) = result.find("${") {
         let end = match result[start..].find('}') {
             Some(e) => start + e,
             None => break,
         };
         let path = &result[start + 2..end];
-        let replacement = resolve_typed_path(message, path)
-            .map(|v| {
-                let field_format = fields.iter().find_map(|f| {
-                    if let DisplayField::Simple {
-                        path: fp, format, ..
-                    } = f
-                    {
-                        if fp == path {
-                            format.as_ref()
-                        } else {
-                            None
-                        }
+        let replacement = resolve_and_format_typed_interpolation(message, fields, path);
+        result.replace_range(start..=end, &replacement);
+    }
+
+    // Second pass: replace {name} patterns (v2)
+    let mut pos = 0;
+    while pos < result.len() {
+        if let Some(rel_start) = result[pos..].find('{') {
+            let start = pos + rel_start;
+            if start > 0 && result.as_bytes()[start - 1] == b'$' {
+                pos = start + 1;
+                continue;
+            }
+            let end = match result[start..].find('}') {
+                Some(e) => start + e,
+                None => break,
+            };
+            let path = result[start + 1..end].to_string();
+            let replacement = resolve_and_format_typed_interpolation(message, fields, &path);
+            result.replace_range(start..=end, &replacement);
+            pos = start + replacement.len();
+        } else {
+            break;
+        }
+    }
+
+    result
+}
+
+fn resolve_and_format_typed_interpolation(
+    message: &serde_json::Value,
+    fields: &[DisplayField],
+    path: &str,
+) -> String {
+    resolve_typed_path(message, path)
+        .map(|v| {
+            let field_format = fields.iter().find_map(|f| {
+                if let DisplayField::Simple {
+                    path: fp, format, ..
+                } = f
+                {
+                    if fp == path {
+                        format.as_ref()
                     } else {
                         None
                     }
-                });
-                match field_format {
-                    Some(FieldFormat::Date) => {
-                        let ts: i64 = match &v {
-                            serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
-                            serde_json::Value::String(s) => s.parse().unwrap_or(0),
-                            _ => 0,
-                        };
-                        if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(ts) {
-                            if let Ok(fmt) = time::format_description::parse(
-                                "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
-                            ) {
-                                if let Ok(s) = dt.format(&fmt) {
-                                    return s;
-                                }
+                } else {
+                    None
+                }
+            });
+            match field_format {
+                Some(FieldFormat::Date) => {
+                    let ts: i64 = match &v {
+                        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
+                        serde_json::Value::String(s) => s.parse().unwrap_or(0),
+                        _ => 0,
+                    };
+                    if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(ts) {
+                        if let Ok(fmt) = time::format_description::parse(
+                            "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
+                        ) {
+                            if let Ok(s) = dt.format(&fmt) {
+                                return s;
                             }
                         }
-                        json_value_to_string(&v)
                     }
-                    _ => json_value_to_string(&v),
+                    json_value_to_string(&v)
                 }
-            })
-            .unwrap_or_else(|| "<?>".to_string());
-        result.replace_range(start..=end, &replacement);
-    }
-    result
+                _ => json_value_to_string(&v),
+            }
+        })
+        .unwrap_or_else(|| "<?>".to_string())
 }
 
 #[cfg(test)]

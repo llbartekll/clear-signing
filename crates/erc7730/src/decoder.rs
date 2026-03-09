@@ -10,6 +10,7 @@ use crate::error::DecodeError;
 pub struct FunctionSignature {
     pub name: String,
     pub params: Vec<ParamType>,
+    pub param_names: Vec<Option<String>>,
     pub canonical: String,
     pub selector: [u8; 4],
 }
@@ -54,6 +55,7 @@ pub struct DecodedArguments {
 #[derive(Debug, Clone)]
 pub struct DecodedArgument {
     pub index: usize,
+    pub name: Option<String>,
     pub param_type: ParamType,
     pub value: ArgumentValue,
 }
@@ -140,10 +142,13 @@ pub fn parse_signature(sig: &str) -> Result<FunctionSignature, DecodeError> {
     }
 
     let params_str = &sig[open + 1..sig.len() - 1];
-    let params = if params_str.is_empty() {
-        vec![]
+    let (params, param_names) = if params_str.is_empty() {
+        (vec![], vec![])
     } else {
-        parse_param_list(params_str)?
+        let named = parse_param_list_named(params_str)?;
+        let params = named.iter().map(|(p, _)| p.clone()).collect();
+        let names = named.into_iter().map(|(_, n)| n).collect();
+        (params, names)
     };
 
     let canonical = format!("{}({})", name, canonical_params(&params));
@@ -152,6 +157,7 @@ pub fn parse_signature(sig: &str) -> Result<FunctionSignature, DecodeError> {
     Ok(FunctionSignature {
         name,
         params,
+        param_names,
         canonical,
         selector,
     })
@@ -191,6 +197,67 @@ fn parse_param_list(s: &str) -> Result<Vec<ParamType>, DecodeError> {
     }
 
     Ok(result)
+}
+
+/// Parse a comma-separated list of potentially named params (top-level only).
+fn parse_param_list_named(s: &str) -> Result<Vec<(ParamType, Option<String>)>, DecodeError> {
+    let mut result = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| DecodeError::InvalidSignature("unbalanced ')'".to_string()))?;
+            }
+            ',' if depth == 0 => {
+                result.push(parse_param_with_name(s[start..i].trim())?);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    if depth != 0 {
+        return Err(DecodeError::InvalidSignature(
+            "unbalanced parentheses".to_string(),
+        ));
+    }
+
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        result.push(parse_param_with_name(last)?);
+    }
+
+    Ok(result)
+}
+
+/// Parse a single param that may include a name: `"address asset"` → (Address, Some("asset")).
+fn parse_param_with_name(s: &str) -> Result<(ParamType, Option<String>), DecodeError> {
+    let s = s.trim();
+
+    // For types ending with ')' or ']' (tuples, arrays), check for a name after
+    if let Some(pos) = s.rfind([')', ']']) {
+        let after = s[pos + 1..].trim();
+        if after.is_empty() {
+            return Ok((parse_param_type(s)?, None));
+        }
+        let type_str = &s[..pos + 1];
+        return Ok((parse_param_type(type_str)?, Some(after.to_string())));
+    }
+
+    // For simple types: split on first space
+    if let Some(space_pos) = s.find(' ') {
+        let type_str = &s[..space_pos];
+        let name = s[space_pos..].trim();
+        return Ok((parse_param_type(type_str)?, Some(name.to_string())));
+    }
+
+    // No space, no name
+    Ok((parse_param_type(s)?, None))
 }
 
 /// Parse a single param type string.
@@ -331,6 +398,7 @@ pub fn decode_calldata(
         let value = decode_value(param, data, offset)?;
         args.push(DecodedArgument {
             index: i,
+            name: sig.param_names.get(i).cloned().flatten(),
             param_type: param.clone(),
             value,
         });
@@ -594,5 +662,47 @@ mod tests {
         let sig = parse_signature("f(uint,int)").unwrap();
         assert_eq!(sig.params[0], ParamType::Uint(256));
         assert_eq!(sig.params[1], ParamType::Int(256));
+    }
+
+    #[test]
+    fn test_parse_named_params() {
+        let sig = parse_signature(
+            "deposit(address asset,uint256 amount,address onBehalfOf,uint16 referralCode)",
+        )
+        .unwrap();
+        assert_eq!(sig.name, "deposit");
+        assert_eq!(sig.params.len(), 4);
+        assert_eq!(sig.params[0], ParamType::Address);
+        assert_eq!(sig.params[1], ParamType::Uint(256));
+        assert_eq!(sig.params[2], ParamType::Address);
+        assert_eq!(sig.params[3], ParamType::Uint(16));
+        assert_eq!(
+            sig.param_names,
+            vec![
+                Some("asset".to_string()),
+                Some("amount".to_string()),
+                Some("onBehalfOf".to_string()),
+                Some("referralCode".to_string()),
+            ]
+        );
+        // Canonical form strips names
+        assert_eq!(sig.canonical, "deposit(address,uint256,address,uint16)");
+    }
+
+    #[test]
+    fn test_parse_mixed_named_unnamed() {
+        let sig = parse_signature("f(address,uint256 amount)").unwrap();
+        assert_eq!(sig.param_names, vec![None, Some("amount".to_string())]);
+    }
+
+    #[test]
+    fn test_named_params_selector_unchanged() {
+        let named = parse_signature(
+            "deposit(address asset,uint256 amount,address onBehalfOf,uint16 referralCode)",
+        )
+        .unwrap();
+        let unnamed = parse_signature("deposit(address,uint256,address,uint16)").unwrap();
+        assert_eq!(named.selector, unnamed.selector);
+        assert_eq!(named.canonical, unnamed.canonical);
     }
 }
