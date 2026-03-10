@@ -14,22 +14,20 @@ The crate also provides UniFFI bindings (Kotlin + Swift) through a stateless FFI
 - Local Swift package manifest: `Package.swift`
 - iOS demo app: `wallet/Wallet.xcodeproj`
 
-## Build And Test
-
-Run these from the workspace root:
+## Build & Test
 
 ```sh
-cargo build
-cargo test
-cargo clippy
-cargo fmt --check
+cargo build          # Build
+cargo test           # Run default tests (34 unit + 12 integration)
+cargo clippy         # Lint
+cargo fmt --check    # Format check
 ```
 
-UniFFI-specific checks:
+UniFFI checks and binding generation:
 
 ```sh
 cargo check -p erc7730 --features uniffi
-cargo test -p erc7730 --features uniffi
+cargo test -p erc7730 --features uniffi     # 41 unit tests + 12 integration
 cargo clippy -p erc7730 --all-targets --features uniffi -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
@@ -37,9 +35,19 @@ swift package resolve
 swift package describe
 ```
 
-Current baseline from `CLAUDE.md`:
-- 27 unit tests (default build)
-- 34 unit tests (`--features uniffi`)
+Generated binding outputs:
+- `bindings/kotlin/uniffi/erc7730/erc7730.kt`
+- `bindings/swift/erc7730.swift`
+- `bindings/swift/erc7730FFI.h`
+- `bindings/swift/erc7730FFI.modulemap`
+- `target/ios/liberc7730.xcframework`
+
+Repository policy:
+- `bindings/swift/` is kept in-repo for SPM consumption.
+- `bindings/kotlin/` is generated locally and gitignored.
+- XCFramework is generated locally (not committed) and consumed by local `Package.swift`.
+- Local Swift package and `wallet` app deployment baseline is iOS 14+.
+- XCFramework header/modulemap staging is namespaced (`Headers/erc7730FFI/module.modulemap`) to avoid collisions with other Rust XCFrameworks.
 
 ## Code Conventions
 
@@ -51,18 +59,18 @@ Current baseline from `CLAUDE.md`:
 
 ## Public API
 
-The three main entry points are re-exported from `lib.rs`:
+Four entry points, all in `lib.rs`:
+- `format(chain_id, to, calldata, value, source, tokens)` — high-level: resolves descriptor then formats
+- `format_calldata(descriptor, chain_id, to, calldata, value, tokens)` — low-level: format with pre-resolved descriptor
+- `format_calldata_with_from(descriptor, chain_id, to, calldata, value, from, tokens)` — with `@.from` container value support
+- `format_typed_data(descriptor, data, tokens)` — EIP-712 typed data formatting
 
-- `format(chain_id, to, calldata, value, source, tokens)` for high-level formatting with descriptor resolution
-- `format_calldata(descriptor, chain_id, to, calldata, value, tokens)` for formatting with a pre-resolved descriptor
-- `format_typed_data(descriptor, data, tokens)` for EIP-712 typed data formatting
-
-UniFFI FFI exports (feature-gated module `uniffi_compat`):
-
-- `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, tokens)`
+UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
+- `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)`
 - `erc7730_format_typed_data(descriptor_json, typed_data_json, tokens)`
 
-FFI API is intentionally stateless and JSON/hex-based.
+Local Swift package product:
+- `Erc7730` (binary target + Swift wrapper target)
 
 ## Key Modules
 
@@ -71,28 +79,28 @@ FFI API is intentionally stateless and JSON/hex-based.
 | `engine.rs` | `DisplayModel`, `DisplayEntry`, `DisplayItem` | Main formatting pipeline |
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
-| `resolver.rs` | `DescriptorSource`, `ResolvedDescriptor`, `StaticSource` | Descriptor resolution |
-| `token.rs` | `TokenSource`, `TokenMeta`, `TokenLookupKey` | Token metadata using CAIP-19 keys |
+| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `FilesystemSource`, `GitHubRegistrySource` | Descriptor resolution (static, filesystem, HTTP) |
+| `token.rs` | `TokenSource` (trait), `TokenMeta`, `WellKnownTokenSource`, `CompositeTokenSource` | Token metadata (CAIP-19 keys, embedded well-known tokens) |
 | `address_book.rs` | `AddressBook` | Address-to-label resolution from descriptor metadata |
-| `uniffi_compat/` | `TokenMetaInput`, `FfiError`, UniFFI exports | Stateless FFI wrapper for Kotlin/Swift |
+| `uniffi_compat/` | `TokenMetaInput`, `FfiError`, exported FFI functions | Stateless UniFFI wrapper layer |
 | `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, and metadata types |
 | `error.rs` | `Error`, `DecodeError`, `ResolveError` | Unified error hierarchy |
-| `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging with collision-safe headers |
-| `wallet/` | SwiftUI smoke-test app | Local SPM consumer of `Erc7730` |
+| `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging for local SPM |
+| `wallet/` | SwiftUI smoke-test app | Minimal consumer of local `Erc7730` package |
 
-## UniFFI Artifacts
+## V2 Registry Compatibility
 
-Generated bindings are written to:
+The library supports v2 registry descriptor features:
+- **Named parameter paths**: `"path": "amount"` resolved by parameter name from signature
+- **`{paramName}` interpolation**: v2 intent syntax (alongside v1 `${path}`)
+- **Threshold/message**: `"threshold": "$.metadata.constants.max"` + `"message": "All"` for max-amount display
+- **`$ref` enum resolution**: `"$ref": "$.metadata.enums.interestRateMode"`
+- **Container values**: `@.value`, `@.from`, `@.to`, `@.chainId` injected as synthetic arguments
+- **Graceful degradation**: Unknown selectors return raw preview instead of errors
+- **`duration`/`unit` formatters**: Seconds → human-readable, numeric + unit symbol
 
-- `bindings/kotlin/` (generated locally, gitignored)
-- `bindings/swift/` (kept in-repo for SPM consumption)
-- `target/ios/liberc7730.xcframework` (generated locally for SPM binary target)
-
-## iOS/SPM Notes
-
-- `Package.swift` uses local binary target path: `target/ios/liberc7730.xcframework`.
-- Local Swift package and `wallet` app deployment baseline is iOS 14+.
-- XCFramework header/modulemap staging is namespaced under `Headers/erc7730FFI/` to avoid modulemap filename conflicts with other Rust libraries.
+Optional features:
+- `github-registry`: HTTP-based descriptor fetching via `GitHubRegistrySource` (adds `ureq` dependency)
 
 ## Working Expectations For Agents
 
@@ -102,9 +110,9 @@ Generated bindings are written to:
 - Run relevant Rust checks after changes when possible
 - Keep docs and module exports aligned with implementation changes
 
-## Pending Roadmap
+## Pending
 
-- Phase 2: `format_multi()` plus `FieldFormat::Calldata` for nested calldata and Safe wallet support
-- Phase 3: `GitHubRegistrySource`, `EmbeddedSource`, and descriptor validation
-- Phase 4: Packaging and distribution for existing UniFFI bindings (Swift XCFramework/SPM and Kotlin AAR/Maven)
-- Phase 5: Missing formatters (`nftName`, `duration`, `unit`), graceful degradation, and CI pipeline
+- **Phase 2**: `format_multi()` + `FieldFormat::Calldata` (nested calldata, Safe wallet support)
+- **Phase 3**: `EmbeddedSource` + descriptor validation
+- **Phase 4**: Packaging/distribution for existing UniFFI bindings (Swift XCFramework/SPM + Kotlin AAR/Maven)
+- **Phase 5**: Missing formatter (`nftName`), file inclusion (`$id`/includes), CI pipeline
