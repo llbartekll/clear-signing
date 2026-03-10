@@ -22,6 +22,7 @@
 		D100000100000000000A /* ReownWalletKit in Frameworks */ = {isa = PBXBuildFile; productRef = D100000100000000000B /* ReownWalletKit */; };
 		D100000100000000000C /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = D100000100000000000D /* secp256k1 */; };
 		D100000100000000000E /* CodeScanner in Frameworks */ = {isa = PBXBuildFile; productRef = D100000100000000000F /* CodeScanner */; };
+		D1000001000000000060 /* Starscream in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000061 /* Starscream */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,6 +40,7 @@
 		D1000001000000000018 /* SessionProposalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProposalSheet.swift; sourceTree = "<group>"; };
 		D1000001000000000019 /* SessionRequestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRequestSheet.swift; sourceTree = "<group>"; };
 		D1000001000000000040 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Config.xcconfig; path = Config.xcconfig; sourceTree = SOURCE_ROOT; };
+		D1000001000000000041 /* Wallet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Wallet.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -50,6 +52,7 @@
 				D100000100000000000A /* ReownWalletKit in Frameworks */,
 				D100000100000000000C /* secp256k1 in Frameworks */,
 				D100000100000000000E /* CodeScanner in Frameworks */,
+				D1000001000000000060 /* Starscream in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -73,6 +76,7 @@
 				D1000001000000000020 /* Services */,
 				D1000001000000000021 /* Views */,
 				C1000001233456780013 /* Info.plist */,
+				D1000001000000000041 /* Wallet.entitlements */,
 			);
 			path = Wallet;
 			sourceTree = "<group>";
@@ -128,6 +132,7 @@
 				D100000100000000000B /* ReownWalletKit */,
 				D100000100000000000D /* secp256k1 */,
 				D100000100000000000F /* CodeScanner */,
+				D1000001000000000061 /* Starscream */,
 			);
 			productName = Wallet;
 			productReference = C1000001233456780010 /* Wallet.app */;
@@ -162,6 +167,7 @@
 				D1000001000000000030 /* XCRemoteSwiftPackageReference "reown-swift" */,
 				D1000001000000000031 /* XCRemoteSwiftPackageReference "swift-secp256k1" */,
 				D1000001000000000032 /* XCRemoteSwiftPackageReference "CodeScanner" */,
+				D1000001000000000033 /* XCRemoteSwiftPackageReference "Starscream" */,
 			);
 			productRefGroup = C100000123345678000F /* Products */;
 			projectDirPath = "";
@@ -246,6 +252,7 @@
 		C1000001233456780017 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Wallet/Wallet.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -267,6 +274,7 @@
 		C1000001233456780018 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Wallet/Wallet.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
@@ -340,6 +348,14 @@
 				minimumVersion = 2.0.0;
 			};
 		};
+		D1000001000000000033 /* XCRemoteSwiftPackageReference "Starscream" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/daltoniam/Starscream";
+			requirement = {
+				kind = exactVersion;
+				version = 3.1.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -362,6 +378,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D1000001000000000032 /* XCRemoteSwiftPackageReference "CodeScanner" */;
 			productName = CodeScanner;
+		};
+		D1000001000000000061 /* Starscream */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D1000001000000000033 /* XCRemoteSwiftPackageReference "Starscream" */;
+			productName = Starscream;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

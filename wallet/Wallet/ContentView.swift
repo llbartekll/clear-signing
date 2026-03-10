@@ -59,17 +59,13 @@ struct ContentView: View {
                 .autocorrectionDisabled()
                 .font(.caption.monospaced())
 
-            HStack {
-                Button("Pair") { viewModel.pair() }
-                    .disabled(viewModel.pairingURI.isEmpty)
+            Button("Pair") { viewModel.pair() }
+                .disabled(viewModel.pairingURI.isEmpty)
 
-                Spacer()
-
-                Button {
-                    viewModel.showScanner = true
-                } label: {
-                    Label("Scan QR", systemImage: "qrcode.viewfinder")
-                }
+            Button {
+                viewModel.showScanner = true
+            } label: {
+                Label("Scan QR", systemImage: "qrcode.viewfinder")
             }
 
             if viewModel.isPaired {

@@ -1,6 +1,10 @@
 import Foundation
+import os
 import ReownWalletKit
 import secp256k1
+import Starscream
+
+private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "WalletConnectService")
 
 actor WalletConnectService {
 
@@ -9,6 +13,7 @@ actor WalletConnectService {
     private init() {}
 
     func configure(projectId: String) {
+        log.info("Networking.configure projectId=\(projectId) groupId=group.com.lucidumbrella.wallet")
         let redirect = try! AppMetadata.Redirect(native: "wallet-demo://", universal: nil, linkMode: false)
         let metadata = AppMetadata(
             name: "ERC-7730 Wallet Demo",
@@ -23,11 +28,14 @@ actor WalletConnectService {
             socketFactory: DefaultSocketFactory()
         )
         WalletKit.configure(metadata: metadata, crypto: Secp256k1CryptoProvider())
+        log.info("WalletKit configured")
     }
 
     func pair(uri: String) async throws {
+        log.info("Pairing with URI: \(uri.prefix(40))...")
         let wcUri = try WalletConnectURI(uriString: uri)
         try await WalletKit.instance.pair(uri: wcUri)
+        log.info("Pair call completed")
     }
 
     func approveProposal(_ proposal: Session.Proposal, address: String) async throws {
@@ -98,75 +106,15 @@ struct Secp256k1CryptoProvider: CryptoProvider {
     }
 }
 
-// MARK: - Default Socket Factory
+// MARK: - Default Socket Factory (Starscream)
+
+extension WebSocket: WebSocketConnecting { }
 
 struct DefaultSocketFactory: WebSocketFactory {
     func create(with url: URL) -> WebSocketConnecting {
-        URLSessionWebSocket(url: url)
-    }
-}
-
-final class URLSessionWebSocket: NSObject, WebSocketConnecting, URLSessionWebSocketDelegate {
-    var isConnected = false
-    var onConnect: (() -> Void)?
-    var onDisconnect: ((Error?) -> Void)?
-    var onText: ((String) -> Void)?
-    var request: URLRequest
-
-    private var task: URLSessionWebSocketTask?
-    private lazy var session: URLSession = URLSession(
-        configuration: .default,
-        delegate: self,
-        delegateQueue: nil
-    )
-
-    init(url: URL) {
-        self.request = URLRequest(url: url)
-        super.init()
-        self.task = session.webSocketTask(with: url)
-    }
-
-    func connect() {
-        task?.resume()
-        receiveMessage()
-    }
-
-    func disconnect() {
-        task?.cancel(with: .normalClosure, reason: nil)
-        isConnected = false
-    }
-
-    func write(string: String, completion: (() -> Void)?) {
-        task?.send(.string(string)) { _ in
-            completion?()
-        }
-    }
-
-    private func receiveMessage() {
-        task?.receive { [weak self] result in
-            switch result {
-            case .success(let message):
-                if case .string(let text) = message {
-                    self?.onText?(text)
-                }
-                self?.receiveMessage()
-            case .failure:
-                break
-            }
-        }
-    }
-
-    // MARK: URLSessionWebSocketDelegate
-
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
-                    didOpenWithProtocol protocol: String?) {
-        isConnected = true
-        onConnect?()
-    }
-
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask,
-                    didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
-        isConnected = false
-        onDisconnect?(nil)
+        let socket = WebSocket(url: url)
+        let queue = DispatchQueue(label: "com.walletconnect.sdk.sockets", qos: .utility, attributes: .concurrent)
+        socket.callbackQueue = queue
+        return socket
     }
 }

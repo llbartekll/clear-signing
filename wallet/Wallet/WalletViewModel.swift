@@ -1,6 +1,9 @@
 import Foundation
+import os
 import Erc7730
 import ReownWalletKit
+
+private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "WalletViewModel")
 
 @Observable
 final class WalletViewModel {
@@ -70,9 +73,14 @@ final class WalletViewModel {
 
     func configureWalletConnect() {
         let projectId = Bundle.main.infoDictionary?["WalletConnectProjectID"] as? String ?? ""
-        guard !projectId.isEmpty, projectId != "YOUR_PROJECT_ID_HERE" else { return }
+        guard !projectId.isEmpty, projectId != "YOUR_PROJECT_ID_HERE" else {
+            log.warning("WalletConnect project ID not set — skipping configuration")
+            return
+        }
+        log.info("Configuring WalletConnect with project ID: \(projectId.prefix(8))...")
         Task {
             await wc.configure(projectId: projectId)
+            log.info("WalletConnect configured successfully")
             await MainActor.run { wcConfigured = true }
             listenForProposals()
             listenForRequests()
@@ -84,14 +92,17 @@ final class WalletViewModel {
         pairingError = nil
         let uri = pairingURI.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !uri.isEmpty else { return }
+        log.info("Pairing with URI: \(uri.prefix(30))...")
         Task {
             do {
                 try await wc.pair(uri: uri)
+                log.info("Pairing succeeded")
                 await MainActor.run {
                     isPaired = true
                     pairingURI = ""
                 }
             } catch {
+                log.error("Pairing failed: \(error)")
                 await MainActor.run { pairingError = error.localizedDescription }
             }
         }
@@ -107,15 +118,18 @@ final class WalletViewModel {
 
     func approveProposal() {
         guard let proposal = pendingProposal, let address = ethereumAddress else { return }
+        log.info("Approving proposal from \(proposal.proposer.name) with address \(address)")
         Task {
             do {
                 try await wc.approveProposal(proposal, address: address)
+                log.info("Proposal approved")
                 await MainActor.run {
                     showProposal = false
                     pendingProposal = nil
                     refreshSessions()
                 }
             } catch {
+                log.error("Approve proposal failed: \(error)")
                 await MainActor.run { pairingError = error.localizedDescription }
             }
         }
@@ -123,6 +137,7 @@ final class WalletViewModel {
 
     func rejectProposal() {
         guard let proposal = pendingProposal else { return }
+        log.info("Rejecting proposal from \(proposal.proposer.name)")
         Task {
             try? await wc.rejectProposal(proposal)
             await MainActor.run {
@@ -135,6 +150,7 @@ final class WalletViewModel {
     // MARK: - Request
 
     func processRequest(_ request: Request) {
+        log.info("Received request: method=\(request.method) topic=\(request.topic.prefix(8))...")
         pendingRequest = request
         displayModel = nil
         requestError = nil
@@ -147,6 +163,7 @@ final class WalletViewModel {
         } else if method == "eth_signTypedData" || method == "eth_signTypedData_v4" {
             processTypedData(request)
         } else {
+            log.warning("Unsupported method: \(method)")
             rawRequestJSON = prettyJSON(request.params)
             requestError = "Unsupported method: \(method)"
         }
@@ -180,6 +197,7 @@ final class WalletViewModel {
     private func processTransaction(_ request: Request) {
         guard let paramsArray = try? request.params.get([TransactionParams].self),
               let tx = paramsArray.first else {
+            log.error("Could not parse transaction params")
             requestError = "Could not parse transaction params"
             rawRequestJSON = prettyJSON(request.params)
             return
@@ -190,6 +208,7 @@ final class WalletViewModel {
         let chainRef = request.chainId
         let chainId = UInt64(chainRef.reference) ?? 1
 
+        log.info("Processing tx: to=\(tx.to) chainId=\(chainId) calldata=\((tx.data ?? "0x").prefix(10))...")
         let calldata = tx.data ?? "0x"
         let result = clearSigning.formatCalldata(
             chainId: chainId,
@@ -201,8 +220,10 @@ final class WalletViewModel {
 
         switch result {
         case .success(let model):
+            log.info("Clear signing OK: intent=\(model.intent) entries=\(model.entries.count)")
             displayModel = model
         case .failure(let error):
+            log.error("Clear signing failed: \(error)")
             requestError = error.localizedDescription
         }
     }
@@ -229,7 +250,9 @@ final class WalletViewModel {
 
     private func listenForProposals() {
         Task {
+            log.info("Listening for session proposals")
             for await proposal in await wc.sessionProposals {
+                log.info("Received proposal from \(proposal.proposer.name)")
                 await MainActor.run {
                     pendingProposal = proposal
                     showProposal = true
@@ -240,7 +263,9 @@ final class WalletViewModel {
 
     private func listenForRequests() {
         Task {
+            log.info("Listening for session requests")
             for await request in await wc.sessionRequests {
+                log.info("Received request: \(request.method)")
                 await MainActor.run {
                     processRequest(request)
                 }
