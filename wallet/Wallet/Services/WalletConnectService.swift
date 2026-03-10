@@ -62,6 +62,21 @@ actor WalletConnectService {
         )
     }
 
+    func disconnect(topic: String) async throws {
+        try await WalletKit.instance.disconnect(topic: topic)
+    }
+
+    func disconnectAllSessions() async {
+        let sessions = WalletKit.instance.getSessions()
+        for session in sessions {
+            do {
+                try await WalletKit.instance.disconnect(topic: session.topic)
+            } catch {
+                log.error("Disconnect failed for topic \(session.topic.prefix(8)): \(error)")
+            }
+        }
+    }
+
     nonisolated var sessionProposals: AsyncStream<Session.Proposal> {
         AsyncStream { continuation in
             Task {
@@ -77,6 +92,16 @@ actor WalletConnectService {
             Task {
                 for await (request, _) in WalletKit.instance.sessionRequestPublisher.values {
                     continuation.yield(request)
+                }
+            }
+        }
+    }
+
+    nonisolated var sessionDeletes: AsyncStream<(topic: String, reason: Reason)> {
+        AsyncStream { continuation in
+            Task {
+                for await (topic, reason) in WalletKit.instance.sessionDeletePublisher.values {
+                    continuation.yield((topic: topic, reason: reason))
                 }
             }
         }

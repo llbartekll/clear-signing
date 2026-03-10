@@ -97,6 +97,13 @@ struct ContentView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            viewModel.disconnectSession(session)
+                        } label: {
+                            Label("Disconnect", systemImage: "xmark.circle")
+                        }
+                    }
                 }
             }
         }

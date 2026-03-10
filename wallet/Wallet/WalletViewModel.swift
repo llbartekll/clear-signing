@@ -67,6 +67,19 @@ final class WalletViewModel {
         keyManager = nil
         ethereumAddress = nil
         privateKeyHex = ""
+        Task {
+            await wc.disconnectAllSessions()
+            await MainActor.run {
+                activeSessions = []
+                pendingProposal = nil
+                pendingRequest = nil
+                displayModel = nil
+                requestError = nil
+                rawRequestJSON = nil
+                showProposal = false
+                showRequest = false
+            }
+        }
     }
 
     // MARK: - WalletConnect
@@ -84,6 +97,7 @@ final class WalletViewModel {
             await MainActor.run { wcConfigured = true }
             listenForProposals()
             listenForRequests()
+            listenForSessionDeletes()
             refreshSessions()
         }
     }
@@ -192,6 +206,19 @@ final class WalletViewModel {
         }
     }
 
+    func disconnectSession(_ session: Session) {
+        Task {
+            do {
+                try await wc.disconnect(topic: session.topic)
+                await MainActor.run {
+                    activeSessions.removeAll { $0.topic == session.topic }
+                }
+            } catch {
+                log.error("Disconnect failed: \(error)")
+            }
+        }
+    }
+
     // MARK: - Private
 
     private func processTransaction(_ request: Request) {
@@ -268,6 +295,18 @@ final class WalletViewModel {
                 log.info("Received request: \(request.method)")
                 await MainActor.run {
                     processRequest(request)
+                }
+            }
+        }
+    }
+
+    private func listenForSessionDeletes() {
+        Task {
+            log.info("Listening for session deletes")
+            for await delete in await wc.sessionDeletes {
+                log.info("Session deleted topic=\(delete.topic.prefix(8)) reason=\(delete.reason)")
+                await MainActor.run {
+                    activeSessions.removeAll { $0.topic == delete.topic }
                 }
             }
         }
