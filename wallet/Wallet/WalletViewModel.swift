@@ -278,7 +278,7 @@ final class WalletViewModel {
     private func listenForProposals() {
         Task {
             log.info("Listening for session proposals")
-            for await proposal in await wc.sessionProposals {
+            for await proposal in wc.sessionProposals {
                 log.info("Received proposal from \(proposal.proposer.name)")
                 await MainActor.run {
                     pendingProposal = proposal
@@ -291,7 +291,7 @@ final class WalletViewModel {
     private func listenForRequests() {
         Task {
             log.info("Listening for session requests")
-            for await request in await wc.sessionRequests {
+            for await request in wc.sessionRequests {
                 log.info("Received request: \(request.method)")
                 await MainActor.run {
                     processRequest(request)
@@ -303,8 +303,8 @@ final class WalletViewModel {
     private func listenForSessionDeletes() {
         Task {
             log.info("Listening for session deletes")
-            for await delete in await wc.sessionDeletes {
-                log.info("Session deleted topic=\(delete.topic.prefix(8)) reason=\(delete.reason)")
+            for await delete in wc.sessionDeletes {
+                log.info("Session deleted topic=\(delete.topic.prefix(8)) reason=\(String(describing: delete.reason))")
                 await MainActor.run {
                     activeSessions.removeAll { $0.topic == delete.topic }
                 }
