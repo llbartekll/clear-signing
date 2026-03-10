@@ -102,7 +102,7 @@ extension KeyManager {
 /// Alias for cross-file access.
 func KeyManager_keccak256(_ data: Data) -> Data { keccak256(data) }
 
-/// Minimal Keccak-256 implementation (FIPS 202 / SHA-3, rate=1088, capacity=512).
+/// Minimal Keccak-256 implementation (Ethereum, not SHA3-256).
 func keccak256(_ data: Data) -> Data {
     let rate = 136 // 1088 / 8
     var state = [UInt64](repeating: 0, count: 25)
@@ -146,19 +146,12 @@ private func keccakF1600(_ state: inout [UInt64]) {
         0x8000000000008002, 0x8000000000000080, 0x000000000000800A, 0x800000008000000A,
         0x8000000080008081, 0x8000000000008080, 0x0000000080000001, 0x8000000080008008,
     ]
-    let rotations: [Int] = [
-         0,  1, 62, 28, 27,
-        36, 44,  6, 55, 20,
-         3, 10, 43, 25, 39,
-        41, 45, 15, 21,  8,
-        18,  2, 61, 56, 14,
-    ]
-    let piLane: [Int] = [
-         0, 10,  7, 11, 17,
-        20,  4,  1,  5,  8,
-        15, 23,  2, 13, 24,
-        21, 16,  3, 19, 12,
-        14, 22,  9,  6, 18,
+    let rotations: [[Int]] = [
+        [ 0, 36,  3, 41, 18],
+        [ 1, 44, 10, 45,  2],
+        [62,  6, 43, 15, 61],
+        [28, 55, 25, 21, 56],
+        [27, 20, 39,  8, 14],
     ]
 
     for round in 0..<24 {
@@ -171,11 +164,18 @@ private func keccakF1600(_ state: inout [UInt64]) {
         }
         // ρ and π
         var temp = [UInt64](repeating: 0, count: 25)
-        for i in 0..<25 { temp[piLane[i]] = rotl64(state[i], rotations[i]) }
+        for x in 0..<5 {
+            for y in 0..<5 {
+                let newX = y
+                let newY = (2 * x + 3 * y) % 5
+                temp[newX + 5 * newY] = rotl64(state[x + 5 * y], rotations[x][y])
+            }
+        }
         // χ
-        for y in stride(from: 0, to: 25, by: 5) {
-            for x in 0..<5 {
-                state[y+x] = temp[y+x] ^ (~temp[y+(x+1)%5] & temp[y+(x+2)%5])
+        for x in 0..<5 {
+            for y in 0..<5 {
+                let idx = x + 5 * y
+                state[idx] = temp[idx] ^ ((~temp[((x + 1) % 5) + 5 * y]) & temp[((x + 2) % 5) + 5 * y])
             }
         }
         // ι
@@ -184,7 +184,8 @@ private func keccakF1600(_ state: inout [UInt64]) {
 }
 
 private func rotl64(_ x: UInt64, _ n: Int) -> UInt64 {
-    (x << n) | (x >> (64 - n))
+    if n == 0 { return x }
+    return (x << n) | (x >> (64 - n))
 }
 
 // MARK: - EIP-55 Checksum
