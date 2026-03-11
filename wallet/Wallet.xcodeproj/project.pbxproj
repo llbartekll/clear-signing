@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -23,6 +23,8 @@
 		D100000100000000000C /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = D100000100000000000D /* secp256k1 */; };
 		D100000100000000000E /* CodeScanner in Frameworks */ = {isa = PBXBuildFile; productRef = D100000100000000000F /* CodeScanner */; };
 		D1000001000000000060 /* Starscream in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000061 /* Starscream */; };
+		D1000001000000000062 /* EvmSigningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000063 /* EvmSigningService.swift */; };
+		D1000001000000000064 /* YttriumUtilsWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000065 /* YttriumUtilsWrapper */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,8 +41,9 @@
 		D1000001000000000017 /* QRScannerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRScannerSheet.swift; sourceTree = "<group>"; };
 		D1000001000000000018 /* SessionProposalSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionProposalSheet.swift; sourceTree = "<group>"; };
 		D1000001000000000019 /* SessionRequestSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRequestSheet.swift; sourceTree = "<group>"; };
-		D1000001000000000040 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Config.xcconfig; path = Config.xcconfig; sourceTree = SOURCE_ROOT; };
+		D1000001000000000040 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = SOURCE_ROOT; };
 		D1000001000000000041 /* Wallet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Wallet.entitlements; sourceTree = "<group>"; };
+		D1000001000000000063 /* EvmSigningService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvmSigningService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -53,17 +56,27 @@
 				D100000100000000000C /* secp256k1 in Frameworks */,
 				D100000100000000000E /* CodeScanner in Frameworks */,
 				D1000001000000000060 /* Starscream in Frameworks */,
+				D1000001000000000064 /* YttriumUtilsWrapper in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		44C044E22F61954D0028B291 /* Recovered References */ = {
+			isa = PBXGroup;
+			children = (
+				D1000001000000000040 /* Config.xcconfig */,
+			);
+			name = "Recovered References";
+			sourceTree = "<group>";
+		};
 		C1000001233456780003 = {
 			isa = PBXGroup;
 			children = (
 				C1000001233456780004 /* Wallet */,
 				C100000123345678000F /* Products */,
+				44C044E22F61954D0028B291 /* Recovered References */,
 			);
 			sourceTree = "<group>";
 		};
@@ -95,6 +108,7 @@
 				D1000001000000000012 /* KeyManager.swift */,
 				D1000001000000000013 /* WalletConnectService.swift */,
 				D1000001000000000014 /* ClearSigningService.swift */,
+				D1000001000000000063 /* EvmSigningService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -133,6 +147,7 @@
 				D100000100000000000D /* secp256k1 */,
 				D100000100000000000F /* CodeScanner */,
 				D1000001000000000061 /* Starscream */,
+				D1000001000000000065 /* YttriumUtilsWrapper */,
 			);
 			productName = Wallet;
 			productReference = C1000001233456780010 /* Wallet.app */;
@@ -199,6 +214,7 @@
 				D1000001000000000002 /* KeyManager.swift in Sources */,
 				D1000001000000000003 /* WalletConnectService.swift in Sources */,
 				D1000001000000000004 /* ClearSigningService.swift in Sources */,
+				D1000001000000000062 /* EvmSigningService.swift in Sources */,
 				D1000001000000000005 /* DisplayModelView.swift in Sources */,
 				D1000001000000000006 /* KeyImportSection.swift in Sources */,
 				D1000001000000000007 /* QRScannerSheet.swift in Sources */,
@@ -319,7 +335,7 @@
 /* Begin XCLocalSwiftPackageReference section */
 		C1000001233456780097 /* XCLocalSwiftPackageReference ".." */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = "..";
+			relativePath = ..;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -328,8 +344,8 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/reown-com/reown-swift";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.0.0;
+				kind = upToNextMinorVersion;
+				minimumVersion = 2.1.0;
 			};
 		};
 		D1000001000000000031 /* XCRemoteSwiftPackageReference "swift-secp256k1" */ = {
@@ -383,6 +399,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = D1000001000000000033 /* XCRemoteSwiftPackageReference "Starscream" */;
 			productName = Starscream;
+		};
+		D1000001000000000065 /* YttriumUtilsWrapper */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D1000001000000000030 /* XCRemoteSwiftPackageReference "reown-swift" */;
+			productName = YttriumUtilsWrapper;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

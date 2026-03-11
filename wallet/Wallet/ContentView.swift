@@ -41,6 +41,7 @@ struct ContentView: View {
                     displayModel: viewModel.displayModel,
                     error: viewModel.requestError,
                     rawJSON: viewModel.rawRequestJSON,
+                    onApprove: { viewModel.approveRequest() },
                     onReject: { viewModel.rejectRequest() }
                 )
             }
