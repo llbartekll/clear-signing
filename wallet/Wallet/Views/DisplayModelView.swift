@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Erc7730
 
 struct DisplayModelView: View {
@@ -21,9 +22,16 @@ struct DisplayModelView: View {
             }
 
             ForEach(model.warnings, id: \.self) { warning in
-                Label(warning, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
+                Button {
+                    copyToClipboard(warning)
+                } label: {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
             }
         }
     }
@@ -56,5 +64,9 @@ struct DisplayModelView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    private func copyToClipboard(_ value: String) {
+        UIPasteboard.general.string = value
     }
 }
