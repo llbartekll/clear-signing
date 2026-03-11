@@ -112,7 +112,7 @@ pub fn format_calldata(
     let interpolated = format
         .interpolated_intent
         .as_ref()
-        .map(|template| interpolate_intent(template, decoded, &format.fields));
+        .map(|template| interpolate_intent(template, &ctx, &format.fields));
 
     Ok(DisplayModel {
         intent: format
@@ -758,7 +758,7 @@ pub(crate) fn format_with_decimals(amount: &BigUint, decimals: u8) -> String {
 /// (Date, Number, Address), uses that formatter instead of raw formatting.
 fn interpolate_intent(
     template: &str,
-    decoded: &DecodedArguments,
+    ctx: &RenderContext<'_>,
     fields: &[DisplayField],
 ) -> String {
     let mut result = template.to_string();
@@ -770,7 +770,7 @@ fn interpolate_intent(
             None => break,
         };
         let path = &result[start + 2..end];
-        let replacement = resolve_and_format_for_interpolation(decoded, fields, path);
+        let replacement = resolve_and_format_for_interpolation(ctx, fields, path);
         result.replace_range(start..=end, &replacement);
     }
 
@@ -789,7 +789,7 @@ fn interpolate_intent(
                 None => break,
             };
             let path = result[start + 1..end].to_string();
-            let replacement = resolve_and_format_for_interpolation(decoded, fields, &path);
+            let replacement = resolve_and_format_for_interpolation(ctx, fields, &path);
             result.replace_range(start..=end, &replacement);
             pos = start + replacement.len();
         } else {
@@ -875,34 +875,96 @@ fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> String {
 }
 
 fn resolve_and_format_for_interpolation(
-    decoded: &DecodedArguments,
+    ctx: &RenderContext<'_>,
     fields: &[DisplayField],
     path: &str,
 ) -> String {
-    resolve_path(decoded, path)
+    resolve_path(ctx.decoded, path)
         .map(|v| {
-            let field_format = fields.iter().find_map(|f| {
-                if let DisplayField::Simple {
-                    path: fp, format, ..
-                } = f
-                {
-                    if fp == path {
-                        format.as_ref()
+            let (field_format, field_params) = fields
+                .iter()
+                .find_map(|f| {
+                    if let DisplayField::Simple {
+                        path: fp,
+                        format,
+                        params,
+                        ..
+                    } = f
+                    {
+                        if fp == path {
+                            Some((format.as_ref(), params.as_ref()))
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
-                } else {
-                    None
-                }
-            });
+                })
+                .unwrap_or((None, None));
             match field_format {
                 Some(FieldFormat::Date) => format_date(&v).unwrap_or_else(|_| format_raw(&v)),
                 Some(FieldFormat::Number) => format_number(&v),
                 Some(FieldFormat::Address) => format_address(&v),
+                Some(FieldFormat::TokenAmount) => {
+                    format_token_amount_for_interpolation(ctx, &v, field_params)
+                }
                 _ => format_raw(&v),
             }
         })
         .unwrap_or_else(|| "<?>".to_string())
+}
+
+/// Format a token amount for interpolation (simplified version of format_token_amount).
+fn format_token_amount_for_interpolation(
+    ctx: &RenderContext<'_>,
+    val: &ArgumentValue,
+    params: Option<&FormatParams>,
+) -> String {
+    let raw_amount = match val {
+        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
+        _ => return format_raw(val),
+    };
+
+    let lookup_chain_id = resolve_chain_id(ctx, params);
+
+    let token_meta = params.and_then(|p| {
+        p.token_path.as_ref().and_then(|token_path| {
+            let token_addr = resolve_path(ctx.decoded, token_path);
+            if let Some(ArgumentValue::Address(addr)) = token_addr {
+                let addr_hex = format!("0x{}", hex::encode(addr));
+                if let Some(ref native) = p.native_currency_address {
+                    if addr_hex.to_lowercase() == native.to_lowercase() {
+                        return Some(native_token_meta(lookup_chain_id));
+                    }
+                }
+                let key = TokenLookupKey::new(lookup_chain_id, &addr_hex);
+                ctx.token_source.lookup(&key)
+            } else {
+                None
+            }
+        })
+    });
+
+    // Check threshold/message
+    if let Some(p) = params {
+        if let (Some(ref threshold_ref), Some(ref message)) = (&p.threshold, &p.message) {
+            if let Some(threshold) = resolve_metadata_constant(ctx.descriptor, threshold_ref) {
+                if raw_amount >= threshold {
+                    if let Some(ref meta) = token_meta {
+                        return format!("{} {}", message, meta.symbol);
+                    }
+                    return message.clone();
+                }
+            }
+        }
+    }
+
+    if let Some(meta) = token_meta {
+        let formatted = format_with_decimals(&raw_amount, meta.decimals);
+        format!("{} {}", formatted, meta.symbol)
+    } else {
+        raw_amount.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -947,6 +1009,7 @@ mod tests {
     #[test]
     fn test_interpolate_intent() {
         use crate::decoder::{DecodedArgument, ParamType};
+        use crate::token::EmptyTokenSource;
 
         let decoded = DecodedArguments {
             function_name: "transfer".to_string(),
@@ -970,7 +1033,21 @@ mod tests {
             ],
         };
 
-        let result = interpolate_intent("Send ${1} to ${0}", &decoded, &[]);
+        let descriptor: Descriptor = serde_json::from_str(
+            r#"{"context":{"contract":{"deployments":[]}},"metadata":{"owner":"test","enums":{},"constants":{},"addressBook":{},"maps":{}},"display":{"definitions":{},"formats":{}}}"#
+        ).unwrap();
+        let token_source = EmptyTokenSource;
+        let address_book = AddressBook::from_descriptor(&descriptor.context, &descriptor.metadata);
+        let ctx = RenderContext {
+            descriptor: &descriptor,
+            decoded: &decoded,
+            chain_id: 1,
+            token_source: &token_source,
+            address_book: &address_book,
+            warnings: Vec::new(),
+        };
+
+        let result = interpolate_intent("Send ${1} to ${0}", &ctx, &[]);
         assert_eq!(
             result,
             "Send 1000 to 0x0000000000000000000000000000000000000000"

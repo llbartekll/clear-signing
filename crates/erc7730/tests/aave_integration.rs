@@ -451,8 +451,8 @@ fn aave_interpolated_intent() {
     // interpolatedIntent: "Supply {amount} for {onBehalfOf}"
     let intent = result.interpolated_intent.as_deref().unwrap();
     assert!(
-        intent.contains("1000000000"),
-        "interpolated intent should contain the amount: {intent}"
+        intent.contains("1000 USDC"),
+        "interpolated intent should contain formatted amount: {intent}"
     );
     assert!(
         intent.contains("1111111111"),
@@ -567,11 +567,56 @@ fn real_wallet_withdraw_usdc_mainnet() {
         to_value.to_lowercase().contains("bf01daf454dce008d3e2bfd47d5e186f71477253"),
         "recipient should be the from address: {to_value}"
     );
-    // Interpolated intent uses raw values (not threshold/message formatting)
+    // Interpolated intent should use threshold/message formatting
     let interp = result.interpolated_intent.as_deref().unwrap();
     assert!(
-        interp.contains("Withdraw") && interp.to_lowercase().contains("bf01daf454dce"),
-        "interpolated intent should contain 'Withdraw' and recipient: {interp}"
+        interp.contains("Max USDC"),
+        "interpolated intent should contain 'Max USDC': {interp}"
+    );
+    assert!(
+        interp.to_lowercase().contains("bf01daf454dce"),
+        "interpolated intent should contain recipient: {interp}"
+    );
+}
+
+/// Exact eth_sendTransaction: withdraw 0.1 USDC (100000 raw, 6 decimals) on mainnet.
+/// Verifies interpolated intent renders formatted token amount, not raw integer.
+#[test]
+fn real_wallet_withdraw_0_1_usdc_mainnet() {
+    let descriptor = load_descriptor("aave-lpv3.json");
+    let tokens = aave_token_source();
+
+    let calldata = hex::decode(
+        "69328dec\
+         000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\
+         00000000000000000000000000000000000000000000000000000000000186a0\
+         000000000000000000000000bf01daf454dce008d3e2bfd47d5e186f71477253",
+    )
+    .unwrap();
+
+    let result = format_calldata_with_from(
+        &descriptor,
+        1,
+        "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+        &calldata,
+        Some(&[0x00]),
+        Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
+        &tokens,
+    )
+    .unwrap();
+
+    assert_eq!(result.intent, "Withdraw");
+    assert_eq!(get_entry_value(&result, "Amount to withdraw"), "0.1 USDC");
+
+    // Interpolated intent must show "0.1 USDC", not raw "100000"
+    let interp = result.interpolated_intent.as_deref().unwrap();
+    assert!(
+        interp.contains("0.1 USDC"),
+        "interpolated intent should contain '0.1 USDC': {interp}"
+    );
+    assert!(
+        !interp.contains("100000"),
+        "interpolated intent should NOT contain raw '100000': {interp}"
     );
 }
 
