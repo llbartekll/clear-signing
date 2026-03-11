@@ -7,6 +7,7 @@ struct SessionRequestSheet: View {
     let displayModel: DisplayModel?
     let error: String?
     let rawJSON: String?
+    let onApprove: () -> Void
     let onReject: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -61,6 +62,11 @@ struct SessionRequestSheet: View {
                     Button("Reject") {
                         onReject()
                         dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Approve") {
+                        onApprove()
                     }
                 }
             }

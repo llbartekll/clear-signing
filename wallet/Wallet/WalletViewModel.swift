@@ -198,6 +198,77 @@ final class WalletViewModel {
         }
     }
 
+    func approveRequest() {
+        guard let request = pendingRequest else { return }
+        guard let keyManager else {
+            requestError = "No private key available"
+            return
+        }
+
+        Task {
+            do {
+                let signer = EvmSigningService.shared
+                let expectedAddress = keyManager.ethereumAddress
+                let responseValue: AnyCodable
+
+                switch request.method {
+                case "eth_sendTransaction":
+                    let txHash = try await signer.signAndSend(
+                        request: request,
+                        privateKeyHex: keyManager.privateKeyHex,
+                        expectedAddress: expectedAddress
+                    )
+                    responseValue = AnyCodable(txHash)
+
+                case "eth_signTypedData", "eth_signTypedData_v4":
+                    let signature = try signer.signTypedData(
+                        request: request,
+                        privateKeyHex: keyManager.privateKeyHex,
+                        expectedAddress: expectedAddress
+                    )
+                    responseValue = AnyCodable(signature)
+
+                default:
+                    throw EvmSigningService.SigningError.invalidParams("unsupported method \(request.method)")
+                }
+
+                try await WalletKit.instance.respond(
+                    topic: request.topic,
+                    requestId: request.id,
+                    response: .response(responseValue)
+                )
+
+                await MainActor.run {
+                    showRequest = false
+                    pendingRequest = nil
+                    displayModel = nil
+                    requestError = nil
+                    rawRequestJSON = nil
+                }
+            } catch {
+                let rpcError: JSONRPCError
+                switch error {
+                case EvmSigningService.SigningError.addressMismatch(_, _):
+                    rpcError = JSONRPCError(code: 4001, message: "User rejected")
+                case EvmSigningService.SigningError.invalidParams(_):
+                    rpcError = JSONRPCError.invalidParams
+                default:
+                    rpcError = JSONRPCError(code: -32000, message: error.localizedDescription)
+                }
+
+                try? await WalletKit.instance.respond(
+                    topic: request.topic,
+                    requestId: request.id,
+                    response: .error(rpcError)
+                )
+
+                await MainActor.run {
+                    requestError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     func refreshSessions() {
         guard wcConfigured else { return }
         Task {
@@ -232,16 +303,21 @@ final class WalletViewModel {
 
         rawRequestJSON = prettyJSON(request.params)
 
+        guard let to = tx.to else {
+            requestError = "Transaction has no recipient (contract creation)"
+            return
+        }
+
         let chainRef = request.chainId
         let chainId = UInt64(chainRef.reference) ?? 1
 
-        log.info("Processing tx: to=\(tx.to) chainId=\(chainId) calldata=\((tx.data ?? "0x").prefix(10))...")
-        let calldata = tx.data ?? "0x"
+        let calldata = tx.data ?? tx.input ?? "0x"
+        log.info("Processing tx: to=\(to) chainId=\(chainId) calldata=\(calldata.prefix(10))...")
 
         Task {
             let result = await clearSigning.formatCalldata(
                 chainId: chainId,
-                to: tx.to,
+                to: to,
                 calldata: calldata,
                 value: tx.value,
                 from: tx.from
@@ -260,26 +336,25 @@ final class WalletViewModel {
     }
 
     private func processTypedData(_ request: Request) {
-        guard let paramsArray = try? request.params.get([String].self),
-              paramsArray.count >= 2 else {
-            requestError = "Could not parse typed data params"
-            rawRequestJSON = prettyJSON(request.params)
-            return
-        }
+        do {
+            let payload = try EvmSigningService.shared.extractTypedDataPayload(from: request.params)
+            let typedDataJson = payload.json
+            rawRequestJSON = typedDataJson
 
-        let typedDataJson = paramsArray[1]
-        rawRequestJSON = typedDataJson
-
-        Task {
-            let result = await clearSigning.formatTypedData(typedDataJson: typedDataJson)
-            await MainActor.run {
-                switch result {
-                case .success(let model):
-                    displayModel = model
-                case .failure(let error):
-                    requestError = error.localizedDescription
+            Task {
+                let result = await clearSigning.formatTypedData(typedDataJson: typedDataJson)
+                await MainActor.run {
+                    switch result {
+                    case .success(let model):
+                        displayModel = model
+                    case .failure(let error):
+                        requestError = error.localizedDescription
+                    }
                 }
             }
+        } catch {
+            requestError = error.localizedDescription
+            rawRequestJSON = prettyJSON(request.params)
         }
     }
 
@@ -328,15 +403,4 @@ final class WalletViewModel {
         }
         return String(data: pretty, encoding: .utf8)
     }
-}
-
-// MARK: - Transaction params
-
-private struct TransactionParams: Codable {
-    let from: String?
-    let to: String
-    let data: String?
-    let value: String?
-    let gas: String?
-    let gasPrice: String?
 }
