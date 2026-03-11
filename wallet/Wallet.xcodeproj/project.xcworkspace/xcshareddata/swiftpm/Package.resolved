@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/reown-com/reown-swift",
       "state" : {
-        "revision" : "62cda54f04f8013766d380e314e7e7ece7407232",
-        "version" : "1.8.0"
+        "revision" : "7610124945196b0c888fe6fb7b286194837b8583",
+        "version" : "2.1.7"
       }
     },
     {
@@ -78,8 +78,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/reown-com/yttrium",
       "state" : {
-        "revision" : "3c8222684e5164af98027494226071d720e6e1d1",
-        "version" : "0.9.75"
+        "revision" : "0b15156ae6dc8d853b4c9ad9a98065cb9fe4f397",
+        "version" : "0.10.25"
       }
     }
   ],
