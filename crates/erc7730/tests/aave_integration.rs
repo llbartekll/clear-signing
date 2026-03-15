@@ -696,3 +696,230 @@ async fn filesystem_source_aave() {
         .await;
     assert!(err.is_err());
 }
+
+// --- Real Transaction Tests (from Etherscan mainnet, generate-tests skill) ---
+
+/// Real tx 0xae03ca4d: borrow 100 USDT variable rate on mainnet.
+/// Verifies enum interpolation renders "variable" not raw "2" in interpolated intent.
+#[test]
+fn real_tx_borrow_usdt_enum_interpolation() {
+    let descriptor = load_descriptor("aave-lpv3.json");
+    let tokens = aave_token_source();
+
+    let calldata = hex::decode(
+        "a415bcad\
+         000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7\
+         0000000000000000000000000000000000000000000000000000000005f5e100\
+         0000000000000000000000000000000000000000000000000000000000000002\
+         0000000000000000000000000000000000000000000000000000000000000000\
+         000000000000000000000000694278718ecb91113a4c6141cc579dc105187a8a",
+    )
+    .unwrap();
+
+    let result = format_calldata_with_from(
+        &descriptor,
+        1,
+        "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        &calldata,
+        None,
+        Some("0x694278718ecb91113a4c6141cc579dc105187a8a"),
+        &tokens,
+    )
+    .unwrap();
+
+    assert_eq!(result.intent, "Borrow");
+    assert_eq!(get_entry_value(&result, "Amount to borrow"), "100 USDT");
+    assert_eq!(get_entry_value(&result, "Interest Rate mode"), "variable");
+
+    let interp = result.interpolated_intent.as_deref().unwrap();
+    assert!(
+        interp.contains("100 USDT"),
+        "interpolated intent should contain '100 USDT': {interp}"
+    );
+    assert!(
+        interp.contains("variable"),
+        "interpolated intent should contain 'variable' (not raw '2'): {interp}"
+    );
+    assert!(
+        !interp.contains("with 2 rate"),
+        "interpolated intent should NOT contain raw enum value 'with 2 rate': {interp}"
+    );
+}
+
+/// Real tx 0x6a49bcf0: repay 99.348201 USDC variable rate on mainnet.
+/// Verifies enum + tokenAmount interpolation together.
+#[test]
+fn real_tx_repay_usdc_enum_interpolation() {
+    let descriptor = load_descriptor("aave-lpv3.json");
+    let tokens = aave_token_source();
+
+    let calldata = hex::decode(
+        "573ade81\
+         000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\
+         0000000000000000000000000000000000000000000000000000000005ebeee9\
+         0000000000000000000000000000000000000000000000000000000000000002\
+         000000000000000000000000ad8c1b5b4d5dfe7fbe508ba57b1e05b33391f94a",
+    )
+    .unwrap();
+
+    let result = format_calldata_with_from(
+        &descriptor,
+        1,
+        "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        &calldata,
+        None,
+        Some("0xad8c1b5b4d5dfe7fbe508ba57b1e05b33391f94a"),
+        &tokens,
+    )
+    .unwrap();
+
+    assert_eq!(result.intent, "Repay loan");
+    assert_eq!(get_entry_value(&result, "Amount to repay"), "99.348201 USDC");
+    assert_eq!(get_entry_value(&result, "Interest rate mode"), "variable");
+
+    let interp = result.interpolated_intent.as_deref().unwrap();
+    assert!(
+        interp.contains("99.348201 USDC"),
+        "interpolated intent should contain formatted amount: {interp}"
+    );
+    assert!(
+        interp.contains("variable"),
+        "interpolated intent should resolve enum to 'variable': {interp}"
+    );
+}
+
+/// Real tx 0x9acfc63d: repay All USDT variable rate on mainnet.
+/// Verifies threshold/message + enum interpolation together.
+#[test]
+fn real_tx_repay_all_usdt_enum_interpolation() {
+    let descriptor = load_descriptor("aave-lpv3.json");
+    let tokens = aave_token_source();
+
+    let calldata = hex::decode(
+        "573ade81\
+         000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7\
+         ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\
+         0000000000000000000000000000000000000000000000000000000000000002\
+         0000000000000000000000000b5a6a15b975fd35f0b301748c8dabd35b50d8c5",
+    )
+    .unwrap();
+
+    let result = format_calldata_with_from(
+        &descriptor,
+        1,
+        "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        &calldata,
+        None,
+        Some("0x0b5a6a15b975fd35f0b301748c8dabd35b50d8c5"),
+        &tokens,
+    )
+    .unwrap();
+
+    assert_eq!(result.intent, "Repay loan");
+    assert_eq!(get_entry_value(&result, "Amount to repay"), "All USDT");
+    assert_eq!(get_entry_value(&result, "Interest rate mode"), "variable");
+
+    let interp = result.interpolated_intent.as_deref().unwrap();
+    assert!(
+        interp.contains("All USDT"),
+        "interpolated intent should contain threshold message: {interp}"
+    );
+    assert!(
+        interp.contains("variable"),
+        "interpolated intent should resolve enum to 'variable': {interp}"
+    );
+    assert!(
+        !interp.contains("with 2"),
+        "interpolated intent should NOT contain raw '2': {interp}"
+    );
+}
+
+/// Real tx 0x3b5748a6: withdraw Max WETH on mainnet.
+/// Verifies threshold/message interpolation with a token not in default well-known set.
+#[test]
+fn real_tx_withdraw_max_weth() {
+    let descriptor = load_descriptor("aave-lpv3.json");
+    let mut custom = StaticTokenSource::new();
+    custom.insert(
+        1,
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        TokenMeta {
+            symbol: "WETH".to_string(),
+            decimals: 18,
+            name: "Wrapped Ether".to_string(),
+        },
+    );
+    let tokens = CompositeTokenSource::new(vec![
+        Box::new(custom),
+        Box::new(WellKnownTokenSource::new()),
+    ]);
+
+    let calldata = hex::decode(
+        "69328dec\
+         000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2\
+         ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\
+         0000000000000000000000002f45665810956929bbfaa984d70a511ad08b0b54",
+    )
+    .unwrap();
+
+    let result = format_calldata_with_from(
+        &descriptor,
+        1,
+        "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        &calldata,
+        None,
+        Some("0x2f45665810956929bbfaa984d70a511ad08b0b54"),
+        &tokens,
+    )
+    .unwrap();
+
+    assert_eq!(result.intent, "Withdraw");
+    assert_eq!(get_entry_value(&result, "Amount to withdraw"), "Max WETH");
+
+    let interp = result.interpolated_intent.as_deref().unwrap();
+    assert!(
+        interp.contains("Max WETH"),
+        "interpolated intent should contain 'Max WETH': {interp}"
+    );
+}
+
+/// Real tx 0x1f7166e2: supplyWithPermit 13400 USDC on mainnet.
+/// Verifies permit variant formatting with real data.
+#[test]
+fn real_tx_supply_with_permit_usdc() {
+    let descriptor = load_descriptor("aave-lpv3.json");
+    let tokens = aave_token_source();
+
+    let calldata = hex::decode(
+        "02c205f0\
+         000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48\
+         000000000000000000000000000000000000000000000000000000031eb3c600\
+         00000000000000000000000044f2a3aa7fdda16a7bf66c68fba96508078d2bdc\
+         0000000000000000000000000000000000000000000000000000000000000000\
+         0000000000000000000000000000000000000000000000000000000069b6a5b9\
+         000000000000000000000000000000000000000000000000000000000000001c\
+         3c0980cd1d3bbc8d4e6d2e393e0913eeeaf25785629f0a535650dcf99b5176dd\
+         0d838b39d2ef75a01d05e11911d6cf9abc53ef9a51f845a5e3445a9c853fe9a2",
+    )
+    .unwrap();
+
+    let result = format_calldata_with_from(
+        &descriptor,
+        1,
+        "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        &calldata,
+        None,
+        Some("0x44f2a3aa7fdda16a7bf66c68fba96508078d2bdc"),
+        &tokens,
+    )
+    .unwrap();
+
+    assert_eq!(result.intent, "Supply");
+    assert_eq!(get_entry_value(&result, "Amount to supply"), "13400 USDC");
+
+    let interp = result.interpolated_intent.as_deref().unwrap();
+    assert!(
+        interp.contains("13400 USDC"),
+        "interpolated intent should contain '13400 USDC': {interp}"
+    );
+}

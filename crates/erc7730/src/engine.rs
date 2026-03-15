@@ -14,7 +14,7 @@ use crate::types::display::{
 
 /// Output model for clear signing display.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DisplayModel {
     pub intent: String,
     pub interpolated_intent: Option<String>,
@@ -24,7 +24,7 @@ pub struct DisplayModel {
 
 /// A display entry — either a flat item or a group of items.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum DisplayEntry {
     Item(DisplayItem),
     Group {
@@ -35,7 +35,7 @@ pub enum DisplayEntry {
 }
 
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum GroupIteration {
     Sequential,
     Bundled,
@@ -43,7 +43,7 @@ pub enum GroupIteration {
 
 /// A single label+value pair for display.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct DisplayItem {
     pub label: String,
     pub value: String,
@@ -929,10 +929,41 @@ fn resolve_and_format_for_interpolation(
                         format_raw(&v)
                     }
                 }
+                Some(FieldFormat::Enum) => {
+                    format_enum_for_interpolation(ctx, &v, field_params)
+                }
                 _ => format_raw(&v),
             }
         })
         .unwrap_or_else(|| "<?>".to_string())
+}
+
+/// Resolve an enum value for interpolation using descriptor metadata.
+fn format_enum_for_interpolation(
+    ctx: &RenderContext<'_>,
+    val: &ArgumentValue,
+    params: Option<&FormatParams>,
+) -> String {
+    let raw = format_raw(val);
+    if let Some(params) = params {
+        if let Some(ref enum_path) = params.enum_path {
+            if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_path) {
+                if let Some(label) = enum_def.get(&raw) {
+                    return label.clone();
+                }
+            }
+        }
+        if let Some(ref ref_path) = params.ref_path {
+            if let Some(enum_name) = ref_path.strip_prefix("$.metadata.enums.") {
+                if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_name) {
+                    if let Some(label) = enum_def.get(&raw) {
+                        return label.clone();
+                    }
+                }
+            }
+        }
+    }
+    raw
 }
 
 /// Format a token amount for interpolation (simplified version of format_token_amount).
