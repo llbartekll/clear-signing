@@ -9,7 +9,7 @@ autoactivate_when: editing or creating Rust (.rs) files in this workspace
 
 ## Goal
 
-Write idiomatic Rust code that follows this project's established patterns. This library (ERC-7730 v2 clear signing) is the standalone version of yttrium's clear signing module, adapted for Rust 2021 edition with a sync-only, single-crate architecture.
+Write idiomatic Rust code that follows this project's established patterns. This library (ERC-7730 v2 clear signing) is the standalone version of yttrium's clear signing module, adapted for Rust 2021 edition with a single-crate architecture. Async (`tokio`/`reqwest`) is used behind the `github-registry` feature for HTTP descriptor resolution and UniFFI async exports.
 
 ## When to Activate
 
@@ -61,7 +61,7 @@ pub enum MyError {
 - Define traits for extensible behavior (`DescriptorSource`, `TokenSource`)
 - Provide static/in-memory test implementations (`StaticSource`, `StaticTokenSource`)
 - Implement `Default` for test sources via `new()` delegation
-- Use `&dyn Trait` for trait object parameters (no async, no `Send + Sync` bounds needed)
+- Use `&dyn Trait` for trait object parameters (add `Send + Sync` only when required by async context)
 
 ```rust
 pub trait MySource {
@@ -162,13 +162,13 @@ Before considering Rust code complete:
 **Do NOT:**
 - Use `.unwrap()` or `.expect()` in library code
 - Use `eyre`, `anyhow`, or `Box<dyn Error>` — only `thiserror`
-- Add `async` / `tokio` — this is a sync library
+- Add `async` / `tokio` outside the `github-registry` feature gate
 - Use block import style `use { foo, bar }` — use one `use` per item
-- Add `Send + Sync` bounds on trait objects — not needed in sync code
+- Add `Send + Sync` bounds on trait objects unless required by async context
 - Create `rustfmt.toml` — use defaults
 - Use `cargo +nightly fmt` — use stable `cargo fmt`
 - Skip `#[derive(Debug, Clone)]` on public types
-- Add UniFFI attributes yet — planned but not implemented
+- Add UniFFI attributes outside of `uniffi_compat/` module
 
 ## Examples
 

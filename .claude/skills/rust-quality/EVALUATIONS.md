@@ -19,10 +19,10 @@ Test prompts to verify the rust-quality skill activates and guides correctly.
 **Prompt:** "Add a `ChainSource` trait that looks up chain metadata by chain ID, with a static test implementation."
 
 **Expected behavior:**
-- Defines `pub trait ChainSource` with sync methods
+- Defines `pub trait ChainSource` with methods
 - Creates `StaticChainSource` with `HashMap` storage
 - Implements `new()` + `Default` delegation
-- Uses `&dyn ChainSource` in function signatures (no `Send + Sync`)
+- Uses `&dyn ChainSource` in function signatures
 - Follows the `DescriptorSource` / `TokenSource` pattern exactly
 - Inline `#[cfg(test)]` tests
 
