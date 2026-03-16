@@ -334,6 +334,53 @@ pub async fn erc7730_format_typed(
     result.map_err(Into::into)
 }
 
+#[uniffi::export]
+pub fn erc7730_format_calldata_multi(
+    descriptors_json: Vec<String>,
+    chain_id: u64,
+    to: String,
+    calldata_hex: String,
+    value_hex: Option<String>,
+    from_address: Option<String>,
+    tokens: Vec<TokenMetaInput>,
+) -> Result<DisplayModel, FfiError> {
+    let mut descriptors = Vec::with_capacity(descriptors_json.len());
+    for json_str in &descriptors_json {
+        let descriptor = Descriptor::from_json(json_str)
+            .map_err(|e| FfiError::InvalidDescriptorJson(e.to_string()))?;
+        // Derive chain_id and address from descriptor context deployments
+        let (cid, addr) = descriptor
+            .context
+            .deployments()
+            .first()
+            .map(|dep| (dep.chain_id, dep.address.clone()))
+            .unwrap_or((chain_id, to.clone()));
+        descriptors.push(crate::ResolvedDescriptor {
+            descriptor,
+            chain_id: cid,
+            address: addr,
+        });
+    }
+
+    let calldata = decode_hex(&calldata_hex, HexContext::Calldata)?;
+    let value = match value_hex {
+        Some(hex_value) => Some(decode_hex(&hex_value, HexContext::Value)?),
+        None => None,
+    };
+
+    let token_source = build_token_source(&tokens);
+    crate::format_calldata_multi(
+        &descriptors,
+        chain_id,
+        &to,
+        &calldata,
+        value.as_deref(),
+        from_address.as_deref(),
+        &token_source,
+    )
+    .map_err(Into::into)
+}
+
 enum HexContext {
     Calldata,
     Value,
@@ -509,7 +556,7 @@ mod tests {
             DisplayEntry::Item(item) => {
                 assert_eq!(item.label, "To");
             }
-            DisplayEntry::Group { .. } => {
+            _ => {
                 panic!("expected item entry");
             }
         }

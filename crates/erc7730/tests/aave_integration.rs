@@ -774,7 +774,10 @@ fn real_tx_repay_usdc_enum_interpolation() {
     .unwrap();
 
     assert_eq!(result.intent, "Repay loan");
-    assert_eq!(get_entry_value(&result, "Amount to repay"), "99.348201 USDC");
+    assert_eq!(
+        get_entry_value(&result, "Amount to repay"),
+        "99.348201 USDC"
+    );
     assert_eq!(get_entry_value(&result, "Interest rate mode"), "variable");
 
     let interp = result.interpolated_intent.as_deref().unwrap();

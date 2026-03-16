@@ -135,11 +135,7 @@ fn fixture_snapshot_tests() {
 
     for suite_path in &suites {
         let base_dir = suite_path.parent().unwrap();
-        let suite_name = base_dir
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        let suite_name = base_dir.file_name().unwrap().to_string_lossy().to_string();
 
         let json_str = std::fs::read_to_string(suite_path)
             .unwrap_or_else(|e| panic!("read {}: {e}", suite_path.display()));
@@ -158,22 +154,19 @@ fn fixture_snapshot_tests() {
                     tc.expected =
                         Some(serde_json::to_value(model).expect("serialize DisplayModel"));
                     any_captured = true;
-                    eprintln!("[capture] {suite_name}/{}: captured expected output", tc.name);
+                    eprintln!(
+                        "[capture] {suite_name}/{}: captured expected output",
+                        tc.name
+                    );
                 }
                 (None, Err(e)) => {
-                    failures.push(format!(
-                        "{suite_name}/{}: capture failed: {e}",
-                        tc.name
-                    ));
+                    failures.push(format!("{suite_name}/{}: capture failed: {e}", tc.name));
                 }
                 (Some(expected), Ok(model)) => {
-                    let actual =
-                        serde_json::to_value(model).expect("serialize DisplayModel");
+                    let actual = serde_json::to_value(model).expect("serialize DisplayModel");
                     if &actual != expected {
-                        let expected_pretty =
-                            serde_json::to_string_pretty(expected).unwrap();
-                        let actual_pretty =
-                            serde_json::to_string_pretty(&actual).unwrap();
+                        let expected_pretty = serde_json::to_string_pretty(expected).unwrap();
+                        let actual_pretty = serde_json::to_string_pretty(&actual).unwrap();
                         failures.push(format!(
                             "{suite_name}/{}: snapshot mismatch\n--- expected\n{expected_pretty}\n+++ actual\n{actual_pretty}",
                             tc.name

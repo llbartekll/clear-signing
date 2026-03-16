@@ -1,0 +1,60 @@
+{
+  "$comment": "ERC-4337 PackedUserOperation EIP-712 descriptor (based on EIP-7730 standard example)",
+  "context": {
+    "eip712": {
+      "domain": {
+        "name": "Account"
+      },
+      "deployments": [
+        {
+          "chainId": 1,
+          "address": "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Account Abstraction",
+    "contractName": "EntryPoint",
+    "enums": {},
+    "constants": {},
+    "addressBook": {},
+    "maps": {}
+  },
+  "display": {
+    "definitions": {},
+    "formats": {
+      "PackedUserOperation": {
+        "intent": "Sign Packed User Operation",
+        "interpolatedIntent": "Authorize user operation from {sender}",
+        "fields": [
+          {
+            "path": "sender",
+            "label": "Sender Account",
+            "format": "addressName"
+          },
+          {
+            "path": "nonce",
+            "label": "Nonce",
+            "format": "raw",
+            "visible": "never"
+          },
+          {
+            "path": "callData",
+            "label": "Embedded Call",
+            "format": "calldata",
+            "params": {
+              "calleePath": "#.sender"
+            }
+          },
+          {
+            "path": "preVerificationGas",
+            "label": "Pre-verification Gas",
+            "format": "raw",
+            "visible": "never"
+          }
+        ]
+      }
+    }
+  }
+}

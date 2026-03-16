@@ -253,6 +253,11 @@ uint64_t uniffi_erc7730_fn_func_erc7730_format(uint64_t chain_id, RustBuffer to,
 RustBuffer uniffi_erc7730_fn_func_erc7730_format_calldata(RustBuffer descriptor_json, uint64_t chain_id, RustBuffer to, RustBuffer calldata_hex, RustBuffer value_hex, RustBuffer from_address, RustBuffer tokens, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_CALLDATA_MULTI
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_CALLDATA_MULTI
+RustBuffer uniffi_erc7730_fn_func_erc7730_format_calldata_multi(RustBuffer descriptors_json, uint64_t chain_id, RustBuffer to, RustBuffer calldata_hex, RustBuffer value_hex, RustBuffer from_address, RustBuffer tokens, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_TYPED
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_TYPED
 uint64_t uniffi_erc7730_fn_func_erc7730_format_typed(RustBuffer typed_data_json, RustBuffer tokens
@@ -532,6 +537,12 @@ uint16_t uniffi_erc7730_checksum_func_erc7730_format(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_CALLDATA
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_CALLDATA
 uint16_t uniffi_erc7730_checksum_func_erc7730_format_calldata(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_CALLDATA_MULTI
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_CALLDATA_MULTI
+uint16_t uniffi_erc7730_checksum_func_erc7730_format_calldata_multi(void
     
 );
 #endif

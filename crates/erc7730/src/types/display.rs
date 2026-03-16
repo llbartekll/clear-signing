@@ -241,6 +241,21 @@ pub struct FormatParams {
     /// Encryption parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encryption: Option<EncryptionParams>,
+
+    /// Path to the callee address for nested calldata (e.g., "to").
+    #[serde(rename = "calleePath")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callee_path: Option<String>,
+
+    /// Path to the value amount for nested calldata (injected as `@.value` in inner context).
+    #[serde(rename = "amountPath")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount_path: Option<String>,
+
+    /// Path to the spender/from address for nested calldata (injected as `@.from` in inner context).
+    #[serde(rename = "spenderPath")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spender_path: Option<String>,
 }
 
 /// Encryption parameters for encrypted fields.

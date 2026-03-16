@@ -1,0 +1,65 @@
+{
+  "context": {
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552" }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Safe",
+    "contractName": "GnosisSafe",
+    "enums": {
+      "operation": {
+        "0": "Call",
+        "1": "Delegate Call"
+      }
+    },
+    "constants": {
+      "addressAsNull": "0x0000000000000000000000000000000000000000"
+    },
+    "addressBook": {},
+    "maps": {}
+  },
+  "display": {
+    "definitions": {},
+    "formats": {
+      "execTransaction(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,bytes signatures)": {
+        "intent": "Execute Safe transaction",
+        "fields": [
+          {
+            "path": "operation",
+            "label": "Operation",
+            "format": "enum",
+            "params": { "$ref": "$.metadata.enums.operation" }
+          },
+          {
+            "path": "@.to",
+            "label": "From Safe",
+            "format": "addressName"
+          },
+          {
+            "path": "data",
+            "label": "Transaction",
+            "format": "calldata",
+            "params": {
+              "calleePath": "to",
+              "amountPath": "value",
+              "spenderPath": "@.to"
+            }
+          },
+          {
+            "path": "baseGas",
+            "label": "Gas amount",
+            "format": "raw"
+          },
+          {
+            "path": "gasPrice",
+            "label": "Gas price",
+            "format": "raw"
+          }
+        ]
+      }
+    }
+  }
+}

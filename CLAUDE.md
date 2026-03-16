@@ -14,7 +14,7 @@ UniFFI bindings (Kotlin + Swift) are implemented in the same crate via a statele
 
 ```sh
 cargo build          # Build
-cargo test           # Run default tests (34 unit + 13 integration)
+cargo test           # Run default tests (35 unit + 21 integration)
 cargo clippy         # Lint
 cargo fmt --check    # Format check
 ```
@@ -23,7 +23,7 @@ UniFFI checks and binding generation:
 
 ```sh
 cargo check -p erc7730 --features uniffi,github-registry
-cargo test -p erc7730 --features uniffi,github-registry     # 42 unit tests + 13 integration
+cargo test -p erc7730 --features uniffi,github-registry     # 42 unit tests + 30 integration
 cargo clippy -p erc7730 --all-targets --features uniffi,github-registry -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
@@ -55,18 +55,20 @@ Repository policy:
 
 ## Public API
 
-Six entry points, all in `lib.rs`:
+Entry points in `lib.rs`:
 - `format(chain_id, to, calldata, value, source, tokens)` — high-level: resolves descriptor then formats (graceful degradation on NotFound)
 - `format_with_from(chain_id, to, calldata, value, from, source, tokens)` — high-level with `@.from` support
 - `format_typed(data, source, tokens)` — high-level: resolves descriptor then formats EIP-712 typed data (graceful degradation on NotFound)
 - `format_calldata(descriptor, chain_id, to, calldata, value, tokens)` — low-level: format with pre-resolved descriptor
 - `format_calldata_with_from(descriptor, chain_id, to, calldata, value, from, tokens)` — low-level with `@.from` container value support
+- `format_calldata_multi(descriptors, chain_id, to, calldata, value, from, tokens)` — low-level with multiple pre-resolved descriptors for nested calldata (Safe/4337)
 - `format_typed_data(descriptor, data, tokens)` — low-level EIP-712 typed data formatting
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
 - `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, tokens)` — high-level with GitHub registry resolution (requires `github-registry` feature)
 - `erc7730_format_typed(typed_data_json, tokens)` — high-level EIP-712 with GitHub registry resolution (requires `github-registry` feature)
 - `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level
+- `erc7730_format_calldata_multi(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level with multiple descriptors for nested calldata
 - `erc7730_format_typed_data(descriptor_json, typed_data_json, tokens)` — low-level
 
 Local Swift package product:
@@ -76,7 +78,7 @@ Local Swift package product:
 
 | Module | Key Types | Purpose |
 |--------|-----------|---------|
-| `engine.rs` | `DisplayModel`, `DisplayEntry`, `DisplayItem` | Main formatting pipeline |
+| `engine.rs` | `DisplayModel`, `DisplayEntry` (Item/Group/Nested), `DisplayItem` | Main formatting pipeline + nested calldata |
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
 | `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `FilesystemSource`, `GitHubRegistrySource` | Descriptor resolution (static, filesystem, HTTP) |
@@ -98,6 +100,8 @@ The library supports v2 registry descriptor features:
 - **Container values**: `@.value`, `@.from`, `@.to`, `@.chainId` injected as synthetic arguments
 - **Graceful degradation**: Unknown selectors return raw preview instead of errors
 - **`duration`/`unit` formatters**: Seconds → human-readable, numeric + unit symbol
+- **`FieldFormat::Calldata`**: Nested calldata decoding (Safe `execTransaction`, ERC-4337 UserOps) — recursive rendering with `DisplayEntry::Nested`, `calleePath`/`amountPath`/`spenderPath` params, depth limit of 3
+- **`@.` container value priority**: Paths with `@.` prefix prefer container values over same-named function params (search from end)
 
 Optional features:
 - `github-registry`: async HTTP descriptor fetching via `GitHubRegistrySource` (adds `reqwest` dependency; requires tokio runtime)
@@ -116,7 +120,6 @@ Optional features:
 
 ## Pending
 
-- **Phase 2**: `format_multi()` + `FieldFormat::Calldata` (nested calldata, Safe wallet support)
 - **Phase 3**: `EmbeddedSource` + descriptor validation
 - **Phase 4**: Packaging/distribution for existing UniFFI bindings (Swift XCFramework/SPM + Kotlin AAR/Maven)
 - **Phase 5**: Missing formatter (`nftName`), file inclusion (`$id`/includes), CI pipeline

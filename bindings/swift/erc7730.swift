@@ -13,8 +13,8 @@ import erc7730FFI
 
 fileprivate extension RustBuffer {
     // Allocate a new buffer, copying the contents of a `UInt8` array.
-    init(byteArray: [UInt8]) {
-        let rbuf = byteArray.withUnsafeBufferPointer { ptr in
+    init(bytes: [UInt8]) {
+        let rbuf = bytes.withUnsafeBufferPointer { ptr in
             RustBuffer.from(ptr)
         }
         self.init(capacity: rbuf.capacity, len: rbuf.len, data: rbuf.data)
@@ -209,7 +209,7 @@ extension FfiConverterRustBuffer {
     public static func lower(_ value: SwiftType) -> RustBuffer {
           var writer = createWriter()
           write(value, into: &writer)
-          return RustBuffer(byteArray: writer)
+          return RustBuffer(bytes: writer)
     }
 }
 // An error type for FFI errors. These errors occur at the UniFFI level, not
@@ -680,7 +680,7 @@ public func FfiConverterTypeTokenMetaInput_lower(_ value: TokenMetaInput) -> Rus
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
- * A display entry — either a flat item or a group of items.
+ * A display entry — either a flat item, a group of items, or a nested calldata call.
  */
 
 public enum DisplayEntry: Equatable, Hashable {
@@ -688,6 +688,8 @@ public enum DisplayEntry: Equatable, Hashable {
     case item(DisplayItem
     )
     case group(label: String, iteration: GroupIteration, items: [DisplayItem]
+    )
+    case nested(label: String, intent: String, entries: [DisplayEntry], warnings: [String]
     )
 
 
@@ -716,6 +718,9 @@ public struct FfiConverterTypeDisplayEntry: FfiConverterRustBuffer {
         case 2: return .group(label: try FfiConverterString.read(from: &buf), iteration: try FfiConverterTypeGroupIteration.read(from: &buf), items: try FfiConverterSequenceTypeDisplayItem.read(from: &buf)
         )
         
+        case 3: return .nested(label: try FfiConverterString.read(from: &buf), intent: try FfiConverterString.read(from: &buf), entries: try FfiConverterSequenceTypeDisplayEntry.read(from: &buf), warnings: try FfiConverterSequenceString.read(from: &buf)
+        )
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -734,6 +739,14 @@ public struct FfiConverterTypeDisplayEntry: FfiConverterRustBuffer {
             FfiConverterString.write(label, into: &buf)
             FfiConverterTypeGroupIteration.write(iteration, into: &buf)
             FfiConverterSequenceTypeDisplayItem.write(items, into: &buf)
+            
+        
+        case let .nested(label,intent,entries,warnings):
+            writeInt(&buf, Int32(3))
+            FfiConverterString.write(label, into: &buf)
+            FfiConverterString.write(intent, into: &buf)
+            FfiConverterSequenceTypeDisplayEntry.write(entries, into: &buf)
+            FfiConverterSequenceString.write(warnings, into: &buf)
             
         }
     }
@@ -1179,6 +1192,19 @@ public func erc7730FormatCalldata(descriptorJson: String, chainId: UInt64, to: S
     )
 })
 }
+public func erc7730FormatCalldataMulti(descriptorsJson: [String], chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, tokens: [TokenMetaInput])throws  -> DisplayModel  {
+    return try  FfiConverterTypeDisplayModel_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_erc7730_fn_func_erc7730_format_calldata_multi(
+        FfiConverterSequenceString.lower(descriptorsJson),
+        FfiConverterUInt64.lower(chainId),
+        FfiConverterString.lower(to),
+        FfiConverterString.lower(calldataHex),
+        FfiConverterOptionString.lower(valueHex),
+        FfiConverterOptionString.lower(fromAddress),
+        FfiConverterSequenceTypeTokenMetaInput.lower(tokens),$0
+    )
+})
+}
 /**
  * High-level: resolve descriptor from GitHub registry, then format EIP-712 typed data.
  *
@@ -1227,6 +1253,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 45099) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_func_erc7730_format_calldata_multi() != 26428) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_format_typed() != 55740) {

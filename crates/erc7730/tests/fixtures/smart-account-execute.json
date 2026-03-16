@@ -1,0 +1,47 @@
+{
+  "$comment": "Minimal smart account execute function descriptor for UserOp testing",
+  "context": {
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0x1111111111111111111111111111111111111111" }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Smart Account",
+    "contractName": "SmartAccount",
+    "enums": {},
+    "constants": {},
+    "addressBook": {},
+    "maps": {}
+  },
+  "display": {
+    "definitions": {},
+    "formats": {
+      "execute(address dest,uint256 value,bytes func)": {
+        "intent": "Execute call",
+        "fields": [
+          {
+            "path": "dest",
+            "label": "Destination",
+            "format": "addressName"
+          },
+          {
+            "path": "value",
+            "label": "Value",
+            "format": "amount"
+          },
+          {
+            "path": "func",
+            "label": "Inner Call",
+            "format": "calldata",
+            "params": {
+              "calleePath": "dest",
+              "amountPath": "value"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

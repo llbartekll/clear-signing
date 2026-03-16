@@ -8,11 +8,15 @@ use serde::{Deserialize, Serialize};
 use crate::address_book::AddressBook;
 use crate::engine::{DisplayEntry, DisplayItem, DisplayModel, GroupIteration};
 use crate::error::Error;
+use crate::resolver::ResolvedDescriptor;
 use crate::token::{TokenLookupKey, TokenSource};
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
     DisplayField, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleRule,
 };
+
+/// Maximum recursion depth for nested calldata in EIP-712 context.
+const MAX_CALLDATA_DEPTH: u8 = 3;
 
 /// EIP-712 typed data as received for signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +62,25 @@ pub fn format_typed_data(
     data: &TypedData,
     token_source: &dyn TokenSource,
 ) -> Result<DisplayModel, Error> {
+    format_typed_data_inner(descriptor, data, token_source, &[])
+}
+
+/// Format EIP-712 typed data with pre-resolved inner descriptors for nested calldata support.
+pub fn format_typed_data_multi(
+    descriptor: &Descriptor,
+    data: &TypedData,
+    token_source: &dyn TokenSource,
+    descriptors: &[ResolvedDescriptor],
+) -> Result<DisplayModel, Error> {
+    format_typed_data_inner(descriptor, data, token_source, descriptors)
+}
+
+fn format_typed_data_inner(
+    descriptor: &Descriptor,
+    data: &TypedData,
+    token_source: &dyn TokenSource,
+    descriptors: &[ResolvedDescriptor],
+) -> Result<DisplayModel, Error> {
     let address_book = AddressBook::from_descriptor(&descriptor.context, &descriptor.metadata);
     let chain_id = data.domain.chain_id.unwrap_or(1);
 
@@ -78,6 +101,8 @@ pub fn format_typed_data(
         token_source,
         &address_book,
         &mut warnings,
+        descriptors,
+        0,
     )?;
 
     Ok(DisplayModel {
@@ -95,6 +120,7 @@ pub fn format_typed_data(
 }
 
 /// Render typed data fields recursively.
+#[allow(clippy::too_many_arguments)]
 fn render_typed_fields(
     descriptor: &Descriptor,
     message: &serde_json::Value,
@@ -103,6 +129,8 @@ fn render_typed_fields(
     token_source: &dyn TokenSource,
     address_book: &AddressBook,
     warnings: &mut Vec<String>,
+    descriptors: &[ResolvedDescriptor],
+    depth: u8,
 ) -> Result<Vec<DisplayEntry>, Error> {
     let mut entries = Vec::new();
 
@@ -121,6 +149,8 @@ fn render_typed_fields(
                         token_source,
                         address_book,
                         warnings,
+                        descriptors,
+                        depth,
                     )?;
                     entries.append(&mut sub);
                 } else {
@@ -136,6 +166,8 @@ fn render_typed_fields(
                     token_source,
                     address_book,
                     warnings,
+                    descriptors,
+                    depth,
                 )? {
                     entries.push(entry);
                 }
@@ -151,6 +183,23 @@ fn render_typed_fields(
 
                 // Check visibility
                 if !check_typed_visibility(visible, &value) {
+                    continue;
+                }
+
+                // Intercept calldata format
+                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                    let entry = render_typed_calldata_field(
+                        descriptor,
+                        message,
+                        &value,
+                        params.as_ref(),
+                        label,
+                        chain_id,
+                        token_source,
+                        descriptors,
+                        depth,
+                    )?;
+                    entries.push(entry);
                     continue;
                 }
 
@@ -177,6 +226,7 @@ fn render_typed_fields(
     Ok(entries)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_typed_field_group(
     descriptor: &Descriptor,
     message: &serde_json::Value,
@@ -185,6 +235,8 @@ fn render_typed_field_group(
     token_source: &dyn TokenSource,
     address_book: &AddressBook,
     warnings: &mut Vec<String>,
+    descriptors: &[ResolvedDescriptor],
+    depth: u8,
 ) -> Result<Option<DisplayEntry>, Error> {
     let sub = render_typed_fields(
         descriptor,
@@ -194,6 +246,8 @@ fn render_typed_field_group(
         token_source,
         address_book,
         warnings,
+        descriptors,
+        depth,
     )?;
 
     let items: Vec<DisplayItem> = sub
@@ -201,6 +255,12 @@ fn render_typed_field_group(
         .flat_map(|e| match e {
             DisplayEntry::Item(i) => vec![i],
             DisplayEntry::Group { items, .. } => items,
+            DisplayEntry::Nested { intent, .. } => {
+                vec![DisplayItem {
+                    label: "Nested call".to_string(),
+                    value: intent,
+                }]
+            }
         })
         .collect();
 
@@ -218,6 +278,232 @@ fn render_typed_field_group(
         iteration,
         items,
     }))
+}
+
+/// Render a nested calldata field within EIP-712 typed data.
+///
+/// The `#.` path prefix resolves from message fields (EIP-712 specific).
+#[allow(clippy::too_many_arguments)]
+fn render_typed_calldata_field(
+    _descriptor: &Descriptor,
+    message: &serde_json::Value,
+    val: &Option<serde_json::Value>,
+    params: Option<&FormatParams>,
+    label: &str,
+    chain_id: u64,
+    token_source: &dyn TokenSource,
+    descriptors: &[ResolvedDescriptor],
+    depth: u8,
+) -> Result<DisplayEntry, Error> {
+    // Extract hex bytes from JSON value
+    let inner_calldata = match val {
+        Some(serde_json::Value::String(s)) => {
+            let hex_str = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .unwrap_or(s);
+            match hex::decode(hex_str) {
+                Ok(bytes) => bytes,
+                Err(_) => {
+                    return Ok(DisplayEntry::Nested {
+                        label: label.to_string(),
+                        intent: "Unknown".to_string(),
+                        entries: vec![DisplayEntry::Item(DisplayItem {
+                            label: "Raw data".to_string(),
+                            value: s.clone(),
+                        })],
+                        warnings: vec!["could not decode calldata hex".to_string()],
+                    });
+                }
+            }
+        }
+        _ => {
+            let raw = val
+                .as_ref()
+                .map(json_value_to_string)
+                .unwrap_or_else(|| "<unresolved>".to_string());
+            return Ok(DisplayEntry::Nested {
+                label: label.to_string(),
+                intent: "Unknown".to_string(),
+                entries: vec![DisplayEntry::Item(DisplayItem {
+                    label: "Raw data".to_string(),
+                    value: raw,
+                })],
+                warnings: vec!["calldata field is not a hex string".to_string()],
+            });
+        }
+    };
+
+    // Check depth limit
+    if depth >= MAX_CALLDATA_DEPTH {
+        return Ok(DisplayEntry::Nested {
+            label: label.to_string(),
+            intent: "Unknown".to_string(),
+            entries: vec![DisplayEntry::Item(DisplayItem {
+                label: "Raw data".to_string(),
+                value: format!("0x{}", hex::encode(&inner_calldata)),
+            })],
+            warnings: vec![format!(
+                "nested calldata depth limit ({}) reached",
+                MAX_CALLDATA_DEPTH
+            )],
+        });
+    }
+
+    if inner_calldata.len() < 4 {
+        return Ok(DisplayEntry::Nested {
+            label: label.to_string(),
+            intent: "Unknown".to_string(),
+            entries: vec![DisplayEntry::Item(DisplayItem {
+                label: "Raw data".to_string(),
+                value: format!("0x{}", hex::encode(&inner_calldata)),
+            })],
+            warnings: vec!["inner calldata too short".to_string()],
+        });
+    }
+
+    // Resolve callee address — supports `#.` prefix for message field reference
+    let callee_addr: Option<String> =
+        params
+            .and_then(|p| p.callee_path.as_ref())
+            .and_then(|path| {
+                let resolved = if let Some(rest) = path.strip_prefix("#.") {
+                    resolve_typed_path(message, rest)
+                } else {
+                    resolve_typed_path(message, path)
+                };
+                resolved.and_then(|v| match v {
+                    serde_json::Value::String(s) => Some(s),
+                    _ => None,
+                })
+            });
+
+    let callee = match callee_addr {
+        Some(addr) => addr,
+        None => {
+            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+        }
+    };
+
+    // Resolve amount (for @.value injection)
+    let amount_bytes: Option<Vec<u8>> =
+        params
+            .and_then(|p| p.amount_path.as_ref())
+            .and_then(|path| {
+                let resolved = if let Some(rest) = path.strip_prefix("#.") {
+                    resolve_typed_path(message, rest)
+                } else {
+                    resolve_typed_path(message, path)
+                };
+                resolved.and_then(|v| {
+                    let s = json_value_to_string(&v);
+                    let n: num_bigint::BigUint = s.parse().ok()?;
+                    let bytes = n.to_bytes_be();
+                    let mut padded = vec![0u8; 32usize.saturating_sub(bytes.len())];
+                    padded.extend_from_slice(&bytes);
+                    Some(padded)
+                })
+            });
+
+    // Resolve spender/from
+    let spender_addr: Option<String> =
+        params
+            .and_then(|p| p.spender_path.as_ref())
+            .and_then(|path| {
+                let resolved = if let Some(rest) = path.strip_prefix("#.") {
+                    resolve_typed_path(message, rest)
+                } else {
+                    resolve_typed_path(message, path)
+                };
+                resolved.and_then(|v| match v {
+                    serde_json::Value::String(s) => Some(s),
+                    _ => None,
+                })
+            });
+
+    // Find matching inner descriptor
+    let inner_descriptor = descriptors.iter().find(|rd| {
+        rd.descriptor.context.deployments().iter().any(|dep| {
+            dep.chain_id == chain_id && dep.address.to_lowercase() == callee.to_lowercase()
+        })
+    });
+
+    let inner_descriptor = match inner_descriptor {
+        Some(rd) => &rd.descriptor,
+        None => {
+            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+        }
+    };
+
+    // Find matching signature + decode
+    let (sig, _) = match crate::find_matching_signature(inner_descriptor, &inner_calldata[..4]) {
+        Ok(result) => result,
+        Err(_) => {
+            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+        }
+    };
+
+    let mut decoded = match crate::decoder::decode_calldata(&sig, &inner_calldata) {
+        Ok(d) => d,
+        Err(_) => {
+            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+        }
+    };
+
+    crate::inject_container_values(
+        &mut decoded,
+        chain_id,
+        &callee,
+        amount_bytes.as_deref(),
+        spender_addr.as_deref(),
+    );
+
+    // Use engine's format pipeline for the inner call
+    let result = crate::engine::format_calldata_multi(
+        inner_descriptor,
+        chain_id,
+        &callee,
+        &decoded,
+        amount_bytes.as_deref(),
+        token_source,
+        descriptors,
+    )?;
+
+    Ok(DisplayEntry::Nested {
+        label: label.to_string(),
+        intent: result.intent,
+        entries: result.entries,
+        warnings: result.warnings,
+    })
+}
+
+fn build_raw_nested_eip712(label: &str, calldata: &[u8]) -> DisplayEntry {
+    let selector = if calldata.len() >= 4 {
+        format!("0x{}", hex::encode(&calldata[..4]))
+    } else {
+        format!("0x{}", hex::encode(calldata))
+    };
+
+    let data = if calldata.len() > 4 {
+        &calldata[4..]
+    } else {
+        &[]
+    };
+
+    let mut entries = Vec::new();
+    for (i, chunk) in data.chunks(32).enumerate() {
+        entries.push(DisplayEntry::Item(DisplayItem {
+            label: format!("Param {}", i),
+            value: format!("0x{}", hex::encode(chunk)),
+        }));
+    }
+
+    DisplayEntry::Nested {
+        label: label.to_string(),
+        intent: format!("Unknown function {}", selector),
+        entries,
+        warnings: vec!["No matching descriptor for inner call".to_string()],
+    }
 }
 
 /// Build a raw fallback DisplayModel for EIP-712 typed data when no format matches.

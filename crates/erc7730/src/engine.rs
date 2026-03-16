@@ -6,11 +6,15 @@ use num_bigint::BigUint;
 use crate::address_book::AddressBook;
 use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::error::Error;
+use crate::resolver::ResolvedDescriptor;
 use crate::token::{TokenLookupKey, TokenSource};
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
     DisplayField, DisplayFormat, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleRule,
 };
+
+/// Maximum recursion depth for nested calldata formatting.
+const MAX_CALLDATA_DEPTH: u8 = 3;
 
 /// Output model for clear signing display.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Record))]
@@ -22,7 +26,7 @@ pub struct DisplayModel {
     pub warnings: Vec<String>,
 }
 
-/// A display entry — either a flat item or a group of items.
+/// A display entry — either a flat item, a group of items, or a nested calldata call.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum DisplayEntry {
@@ -31,6 +35,12 @@ pub enum DisplayEntry {
         label: String,
         iteration: GroupIteration,
         items: Vec<DisplayItem>,
+    },
+    Nested {
+        label: String,
+        intent: String,
+        entries: Vec<DisplayEntry>,
+        warnings: Vec<String>,
     },
 }
 
@@ -82,6 +92,8 @@ struct RenderContext<'a> {
     token_source: &'a dyn TokenSource,
     address_book: &'a AddressBook,
     warnings: Vec<String>,
+    descriptors: &'a [ResolvedDescriptor],
+    depth: u8,
 }
 
 /// Format calldata into a display model using a descriptor.
@@ -92,6 +104,47 @@ pub fn format_calldata(
     decoded: &DecodedArguments,
     _value: Option<&[u8]>,
     token_source: &dyn TokenSource,
+) -> Result<DisplayModel, Error> {
+    format_calldata_inner(
+        descriptor,
+        chain_id,
+        _to,
+        decoded,
+        _value,
+        token_source,
+        &[],
+    )
+}
+
+/// Format calldata with pre-resolved inner descriptors for nested calldata support.
+pub fn format_calldata_multi(
+    descriptor: &Descriptor,
+    chain_id: u64,
+    to: &str,
+    decoded: &DecodedArguments,
+    value: Option<&[u8]>,
+    token_source: &dyn TokenSource,
+    descriptors: &[ResolvedDescriptor],
+) -> Result<DisplayModel, Error> {
+    format_calldata_inner(
+        descriptor,
+        chain_id,
+        to,
+        decoded,
+        value,
+        token_source,
+        descriptors,
+    )
+}
+
+fn format_calldata_inner(
+    descriptor: &Descriptor,
+    chain_id: u64,
+    _to: &str,
+    decoded: &DecodedArguments,
+    _value: Option<&[u8]>,
+    token_source: &dyn TokenSource,
+    descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
     let address_book = AddressBook::from_descriptor(&descriptor.context, &descriptor.metadata);
 
@@ -105,6 +158,8 @@ pub fn format_calldata(
         token_source,
         address_book: &address_book,
         warnings: Vec::new(),
+        descriptors,
+        depth: 0,
     };
 
     let entries = render_fields(&mut ctx, &format.fields)?;
@@ -193,6 +248,13 @@ fn render_fields(
                     continue;
                 }
 
+                // Intercept calldata format — produces a Nested entry instead of a flat value
+                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                    let entry = render_calldata_field(ctx, &value, params.as_ref(), label)?;
+                    entries.push(entry);
+                    continue;
+                }
+
                 let formatted =
                     format_value(ctx, &value, format.as_ref(), params.as_ref(), path, label)?;
 
@@ -224,6 +286,12 @@ fn render_field_group(
                 } => {
                     items.extend(sub_items);
                 }
+                DisplayEntry::Nested { intent, .. } => {
+                    items.push(DisplayItem {
+                        label: "Nested call".to_string(),
+                        value: intent,
+                    });
+                }
             }
         }
     }
@@ -252,11 +320,19 @@ fn resolve_reference(descriptor: &Descriptor, reference: &str) -> Option<Display
 }
 
 /// Resolve a path like `@.to` or `@.args[0]` to a decoded value.
+///
+/// When the path starts with `@.`, container values (appended last by
+/// `inject_container_values`) take priority over function params with the
+/// same name.  Without the prefix, function params are matched first.
 fn resolve_path(decoded: &DecodedArguments, path: &str) -> Option<ArgumentValue> {
     let path = path.trim();
 
-    // Strip "@." prefix if present
-    let path = path.strip_prefix("@.").unwrap_or(path);
+    // Detect `@.` prefix — means "prefer container value" for named lookup
+    let (prefer_container, path) = if let Some(stripped) = path.strip_prefix("@.") {
+        (true, stripped)
+    } else {
+        (false, path)
+    };
 
     // Try numeric index first (positional: "0", "1", etc.)
     if let Ok(index) = path.parse::<usize>() {
@@ -291,12 +367,21 @@ fn resolve_path(decoded: &DecodedArguments, path: &str) -> Option<ArgumentValue>
     }
 
     // Try named parameter matching
+    // When `@.` prefix was present, search from the end (container values are appended last)
     let name = segments[0];
-    if let Some(arg) = decoded
-        .args
-        .iter()
-        .find(|a| a.name.as_deref() == Some(name))
-    {
+    let arg = if prefer_container {
+        decoded
+            .args
+            .iter()
+            .rfind(|a| a.name.as_deref() == Some(name))
+    } else {
+        decoded
+            .args
+            .iter()
+            .find(|a| a.name.as_deref() == Some(name))
+    };
+
+    if let Some(arg) = arg {
         if segments.len() == 1 {
             return Some(arg.value.clone());
         }
@@ -396,13 +481,219 @@ fn format_value(
         FieldFormat::ChainId => format_chain_id(val),
         FieldFormat::Duration => Ok(format_duration(val)),
         FieldFormat::Unit => Ok(format_unit(val, params)),
-        FieldFormat::Calldata | FieldFormat::NftName => {
+        FieldFormat::Calldata => {
+            // Should not reach here — calldata format is intercepted in render_fields
+            ctx.warnings.push(format!(
+                "calldata format should be handled by render_calldata_field for field '{}' (path: {})",
+                label, path
+            ));
+            Ok(format_raw(val))
+        }
+        FieldFormat::NftName => {
             ctx.warnings.push(format!(
                 "format {:?} not yet implemented for field '{}' (path: {})",
                 fmt, label, path
             ));
             Ok(format_raw(val))
         }
+    }
+}
+
+/// Render a nested calldata field by decoding the inner call and recursively formatting it.
+fn render_calldata_field(
+    ctx: &mut RenderContext<'_>,
+    val: &Option<ArgumentValue>,
+    params: Option<&FormatParams>,
+    label: &str,
+) -> Result<DisplayEntry, Error> {
+    // Extract bytes from value
+    let inner_calldata = match val {
+        Some(ArgumentValue::Bytes(bytes)) => bytes,
+        _ => {
+            let raw = val
+                .as_ref()
+                .map(format_raw)
+                .unwrap_or_else(|| "<unresolved>".to_string());
+            return Ok(DisplayEntry::Nested {
+                label: label.to_string(),
+                intent: "Unknown".to_string(),
+                entries: vec![DisplayEntry::Item(DisplayItem {
+                    label: "Raw data".to_string(),
+                    value: raw,
+                })],
+                warnings: vec!["calldata field is not bytes".to_string()],
+            });
+        }
+    };
+
+    // Check depth limit
+    if ctx.depth >= MAX_CALLDATA_DEPTH {
+        return Ok(DisplayEntry::Nested {
+            label: label.to_string(),
+            intent: "Unknown".to_string(),
+            entries: vec![DisplayEntry::Item(DisplayItem {
+                label: "Raw data".to_string(),
+                value: format!("0x{}", hex::encode(inner_calldata)),
+            })],
+            warnings: vec![format!(
+                "nested calldata depth limit ({}) reached",
+                MAX_CALLDATA_DEPTH
+            )],
+        });
+    }
+
+    if inner_calldata.len() < 4 {
+        return Ok(DisplayEntry::Nested {
+            label: label.to_string(),
+            intent: "Unknown".to_string(),
+            entries: vec![DisplayEntry::Item(DisplayItem {
+                label: "Raw data".to_string(),
+                value: format!("0x{}", hex::encode(inner_calldata)),
+            })],
+            warnings: vec!["inner calldata too short".to_string()],
+        });
+    }
+
+    // Resolve callee address from params
+    let callee_addr = params
+        .and_then(|p| p.callee_path.as_ref())
+        .and_then(|path| resolve_path(ctx.decoded, path))
+        .and_then(|v| match v {
+            ArgumentValue::Address(addr) => Some(format!("0x{}", hex::encode(addr))),
+            _ => None,
+        });
+
+    let callee = match callee_addr {
+        Some(addr) => addr,
+        None => {
+            // No callee — return raw preview
+            return Ok(build_raw_nested(label, inner_calldata));
+        }
+    };
+
+    // Resolve amount (for @.value injection)
+    let amount_bytes: Option<Vec<u8>> = params
+        .and_then(|p| p.amount_path.as_ref())
+        .and_then(|path| resolve_path(ctx.decoded, path))
+        .and_then(|v| match v {
+            ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => Some(bytes),
+            _ => None,
+        });
+
+    // Resolve spender/from (for @.from injection)
+    let spender_addr: Option<String> = params
+        .and_then(|p| p.spender_path.as_ref())
+        .and_then(|path| resolve_path(ctx.decoded, path))
+        .and_then(|v| match v {
+            ArgumentValue::Address(addr) => Some(format!("0x{}", hex::encode(addr))),
+            _ => None,
+        });
+
+    // Find matching inner descriptor by chain_id + callee address
+    let inner_descriptor = ctx.descriptors.iter().find(|rd| {
+        rd.descriptor.context.deployments().iter().any(|dep| {
+            dep.chain_id == ctx.chain_id && dep.address.to_lowercase() == callee.to_lowercase()
+        })
+    });
+
+    let inner_descriptor = match inner_descriptor {
+        Some(rd) => &rd.descriptor,
+        None => {
+            return Ok(build_raw_nested(label, inner_calldata));
+        }
+    };
+
+    // Find matching signature
+    let (sig, _format_key) =
+        match crate::find_matching_signature(inner_descriptor, &inner_calldata[..4]) {
+            Ok(result) => result,
+            Err(_) => {
+                return Ok(build_raw_nested(label, inner_calldata));
+            }
+        };
+
+    // Decode inner calldata
+    let mut decoded = match crate::decoder::decode_calldata(&sig, inner_calldata) {
+        Ok(d) => d,
+        Err(_) => {
+            return Ok(build_raw_nested(label, inner_calldata));
+        }
+    };
+
+    // Inject container values into inner context
+    crate::inject_container_values(
+        &mut decoded,
+        ctx.chain_id,
+        &callee,
+        amount_bytes.as_deref(),
+        spender_addr.as_deref(),
+    );
+
+    // Build inner render context
+    let inner_address_book =
+        AddressBook::from_descriptor(&inner_descriptor.context, &inner_descriptor.metadata);
+    let inner_format =
+        match find_format(inner_descriptor, &decoded.function_name, &decoded.selector) {
+            Ok(f) => f,
+            Err(_) => {
+                return Ok(build_raw_nested(label, inner_calldata));
+            }
+        };
+
+    let mut inner_ctx = RenderContext {
+        descriptor: inner_descriptor,
+        decoded: &decoded,
+        chain_id: ctx.chain_id,
+        token_source: ctx.token_source,
+        address_book: &inner_address_book,
+        warnings: Vec::new(),
+        descriptors: ctx.descriptors,
+        depth: ctx.depth + 1,
+    };
+
+    let inner_entries = render_fields(&mut inner_ctx, &inner_format.fields)?;
+    let inner_warnings = inner_ctx.warnings;
+
+    let intent = inner_format
+        .intent
+        .clone()
+        .unwrap_or_else(|| decoded.function_name.clone());
+
+    Ok(DisplayEntry::Nested {
+        label: label.to_string(),
+        intent,
+        entries: inner_entries,
+        warnings: inner_warnings,
+    })
+}
+
+/// Build a raw-preview Nested entry for inner calldata when no descriptor matches.
+fn build_raw_nested(label: &str, calldata: &[u8]) -> DisplayEntry {
+    let selector = if calldata.len() >= 4 {
+        format!("0x{}", hex::encode(&calldata[..4]))
+    } else {
+        format!("0x{}", hex::encode(calldata))
+    };
+
+    let data = if calldata.len() > 4 {
+        &calldata[4..]
+    } else {
+        &[]
+    };
+
+    let mut entries = Vec::new();
+    for (i, chunk) in data.chunks(32).enumerate() {
+        entries.push(DisplayEntry::Item(DisplayItem {
+            label: format!("Param {}", i),
+            value: format!("0x{}", hex::encode(chunk)),
+        }));
+    }
+
+    DisplayEntry::Nested {
+        label: label.to_string(),
+        intent: format!("Unknown function {}", selector),
+        entries,
+        warnings: vec!["No matching descriptor for inner call".to_string()],
     }
 }
 
@@ -929,9 +1220,7 @@ fn resolve_and_format_for_interpolation(
                         format_raw(&v)
                     }
                 }
-                Some(FieldFormat::Enum) => {
-                    format_enum_for_interpolation(ctx, &v, field_params)
-                }
+                Some(FieldFormat::Enum) => format_enum_for_interpolation(ctx, &v, field_params),
                 _ => format_raw(&v),
             }
         })
@@ -1097,6 +1386,8 @@ mod tests {
             token_source: &token_source,
             address_book: &address_book,
             warnings: Vec::new(),
+            descriptors: &[],
+            depth: 0,
         };
 
         let result = interpolate_intent("Send ${1} to ${0}", &ctx, &[]);

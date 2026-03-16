@@ -92,7 +92,7 @@ pub fn format_calldata_with_from(
 }
 
 /// Inject EIP-7730 container values (@.value, @.to, @.chainId, @.from) as synthetic arguments.
-fn inject_container_values(
+pub(crate) fn inject_container_values(
     decoded: &mut decoder::DecodedArguments,
     chain_id: u64,
     to: &str,
@@ -147,7 +147,7 @@ fn inject_container_values(
     }
 }
 
-fn parse_address_bytes(addr: &str) -> Option<[u8; 20]> {
+pub(crate) fn parse_address_bytes(addr: &str) -> Option<[u8; 20]> {
     let hex_str = addr
         .strip_prefix("0x")
         .or_else(|| addr.strip_prefix("0X"))
@@ -162,7 +162,7 @@ fn parse_address_bytes(addr: &str) -> Option<[u8; 20]> {
 }
 
 /// Build a raw fallback DisplayModel for unknown selectors (graceful degradation).
-fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
+pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
     let selector = if calldata.len() >= 4 {
         format!("0x{}", hex::encode(&calldata[..4]))
     } else {
@@ -190,6 +190,69 @@ fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
         entries,
         warnings: vec!["No matching descriptor format found".to_string()],
     }
+}
+
+/// Format contract calldata with multiple pre-resolved descriptors for nested calldata.
+///
+/// The first matching descriptor by chain_id + address is used as the outer descriptor.
+/// Remaining descriptors are available for resolving inner calldata fields.
+pub fn format_calldata_multi(
+    descriptors: &[ResolvedDescriptor],
+    chain_id: u64,
+    to: &str,
+    calldata: &[u8],
+    value: Option<&[u8]>,
+    from: Option<&str>,
+    token_source: &dyn TokenSource,
+) -> Result<DisplayModel, Error> {
+    if calldata.len() < 4 {
+        return Err(Error::Decode(error::DecodeError::CalldataTooShort {
+            expected: 4,
+            actual: calldata.len(),
+        }));
+    }
+
+    // Find the outer descriptor matching chain_id + to address
+    let outer_idx =
+        descriptors.iter().position(|rd| {
+            rd.descriptor.context.deployments().iter().any(|dep| {
+                dep.chain_id == chain_id && dep.address.to_lowercase() == to.to_lowercase()
+            })
+        });
+
+    let outer_idx = match outer_idx {
+        Some(idx) => idx,
+        None => {
+            if descriptors.is_empty() {
+                return Ok(build_raw_fallback(calldata));
+            }
+            // Fallback to first descriptor
+            0
+        }
+    };
+
+    let outer_descriptor = &descriptors[outer_idx].descriptor;
+    let actual_selector = &calldata[..4];
+
+    let (sig, _format_key) = match find_matching_signature(outer_descriptor, actual_selector) {
+        Ok(result) => result,
+        Err(_) => {
+            return Ok(build_raw_fallback(calldata));
+        }
+    };
+
+    let mut decoded = decoder::decode_calldata(&sig, calldata)?;
+    inject_container_values(&mut decoded, chain_id, to, value, from);
+
+    engine::format_calldata_multi(
+        outer_descriptor,
+        chain_id,
+        to,
+        &decoded,
+        value,
+        token_source,
+        descriptors,
+    )
 }
 
 /// Format EIP-712 typed data for clear signing display.
@@ -276,7 +339,7 @@ pub async fn format_typed(
 }
 
 /// Find a format key whose signature matches the calldata selector.
-fn find_matching_signature(
+pub(crate) fn find_matching_signature(
     descriptor: &Descriptor,
     actual_selector: &[u8],
 ) -> Result<(decoder::FunctionSignature, String), Error> {
