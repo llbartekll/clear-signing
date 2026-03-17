@@ -16,7 +16,7 @@ and running them through the Rust clear-signing library.
 ## Goal
 
 For each function signature in a descriptor's `display.formats`, fetch real
-transactions from Etherscan, run them through `format_calldata_with_from()`, and
+transactions from Etherscan, run them through `format_calldata()`, and
 report whether formatting succeeds with correct output. No files are written —
 this is transient validation for quick feedback.
 
@@ -112,7 +112,8 @@ Write a temporary Rust test file to validate each transaction. The approach:
 2. Write a temporary test file using the existing integration test pattern
    (see `tests/aave_integration.rs`):
    ```rust
-   let result = format_calldata_with_from(&descriptor, chain_id, to, &calldata, value, from, &tokens);
+   let tx = TransactionContext { chain_id, to, calldata: &calldata, value, from };
+   let result = format_calldata(&descriptor, &tx, &tokens);
    ```
 
 3. Run via:

@@ -136,15 +136,14 @@ pub fn erc7730_format_calldata(
     );
 
     let token_source = build_token_source(&tokens);
-    let result = crate::format_calldata_with_from(
-        &descriptor,
+    let tx = crate::TransactionContext {
         chain_id,
-        &to,
-        &calldata,
-        value.as_deref(),
-        from_address.as_deref(),
-        &token_source,
-    );
+        to: &to,
+        calldata: &calldata,
+        value: value.as_deref(),
+        from: from_address.as_deref(),
+    };
+    let result = crate::format_calldata(&descriptor, &tx, &token_source);
 
     match &result {
         Ok(model) => {
@@ -245,6 +244,7 @@ pub async fn erc7730_format(
     calldata_hex: String,
     value_hex: Option<String>,
     from_address: Option<String>,
+    implementation_address: Option<String>,
     tokens: Vec<TokenMetaInput>,
 ) -> Result<DisplayModel, FfiError> {
     println!("[erc7730] format called (high-level, registry)");
@@ -266,16 +266,19 @@ pub async fn erc7730_format(
     let well_known = WellKnownTokenSource::new();
     let composite = CompositeTokenSource::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
 
-    let result = crate::format_with_from(
+    let tx = crate::TransactionContext {
         chain_id,
-        &to,
-        &calldata,
-        value.as_deref(),
-        from_address.as_deref(),
-        source,
-        &composite,
-    )
-    .await;
+        to: &to,
+        calldata: &calldata,
+        value: value.as_deref(),
+        from: from_address.as_deref(),
+    };
+    let opts = implementation_address
+        .as_deref()
+        .map(|addr| crate::FormatOptions {
+            implementation_address: Some(addr),
+        });
+    let result = crate::format(&tx, source, &composite, opts.as_ref()).await;
 
     match &result {
         Ok(model) => {
@@ -369,16 +372,14 @@ pub fn erc7730_format_calldata_multi(
     };
 
     let token_source = build_token_source(&tokens);
-    crate::format_calldata_multi(
-        &descriptors,
+    let tx = crate::TransactionContext {
         chain_id,
-        &to,
-        &calldata,
-        value.as_deref(),
-        from_address.as_deref(),
-        &token_source,
-    )
-    .map_err(Into::into)
+        to: &to,
+        calldata: &calldata,
+        value: value.as_deref(),
+        from: from_address.as_deref(),
+    };
+    crate::format_calldata_multi(&descriptors, &tx, &token_source).map_err(Into::into)
 }
 
 enum HexContext {

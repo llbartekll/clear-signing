@@ -4,7 +4,7 @@ use erc7730::decoder::parse_signature;
 use erc7730::resolver::ResolvedDescriptor;
 use erc7730::token::{EmptyTokenSource, StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata_multi, DisplayEntry};
+use erc7730::{format_calldata_multi, DisplayEntry, TransactionContext};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
@@ -134,16 +134,14 @@ fn safe_exec_transaction_wrapping_erc20_transfer() {
         },
     );
 
-    let result = format_calldata_multi(
-        &descriptors,
-        1,
-        safe_addr,
-        &outer_calldata,
-        None,
-        None,
-        &tokens,
-    )
-    .unwrap();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: safe_addr,
+        calldata: &outer_calldata,
+        value: None,
+        from: None,
+    };
+    let result = format_calldata_multi(&descriptors, &tx, &tokens).unwrap();
 
     assert_eq!(result.intent, "Execute Safe transaction");
 
@@ -236,16 +234,14 @@ fn safe_exec_transaction_no_inner_descriptor() {
         address: safe_addr.to_string(),
     }];
 
-    let result = format_calldata_multi(
-        &descriptors,
-        1,
-        safe_addr,
-        &outer_calldata,
-        None,
-        None,
-        &EmptyTokenSource,
-    )
-    .unwrap();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: safe_addr,
+        calldata: &outer_calldata,
+        value: None,
+        from: None,
+    };
+    let result = format_calldata_multi(&descriptors, &tx, &EmptyTokenSource).unwrap();
 
     assert_eq!(result.intent, "Execute Safe transaction");
 
@@ -311,16 +307,14 @@ fn safe_exec_transaction_container_value_propagation() {
         },
     );
 
-    let result = format_calldata_multi(
-        &descriptors,
-        1,
-        safe_addr,
-        &outer_calldata,
-        None,
-        None,
-        &tokens,
-    )
-    .unwrap();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: safe_addr,
+        calldata: &outer_calldata,
+        value: None,
+        from: None,
+    };
+    let result = format_calldata_multi(&descriptors, &tx, &tokens).unwrap();
 
     // The inner call should still decode properly
     match &result.entries[2] {
@@ -377,16 +371,14 @@ fn safe_exec_transaction_depth_limit() {
         },
     ];
 
-    let result = format_calldata_multi(
-        &descriptors,
-        1,
-        safe_addr,
-        &outer_calldata,
-        None,
-        None,
-        &EmptyTokenSource,
-    )
-    .unwrap();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: safe_addr,
+        calldata: &outer_calldata,
+        value: None,
+        from: None,
+    };
+    let result = format_calldata_multi(&descriptors, &tx, &EmptyTokenSource).unwrap();
 
     // Verify the result doesn't panic and has nested structure
     assert_eq!(result.intent, "Execute Safe transaction");

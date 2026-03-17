@@ -147,7 +147,7 @@ value_hex = "0x0" if value_wei == 0 else hex(value_wei)
 ```
 
 The test code converts hex values to the 32-byte big-endian format expected by
-`format_calldata_with_from()`.
+`format_calldata()`.
 
 ---
 

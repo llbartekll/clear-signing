@@ -1165,11 +1165,11 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
  *
  * Requires the `github-registry` feature.
  */
-public func erc7730Format(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, tokens: [TokenMetaInput])async throws  -> DisplayModel  {
+public func erc7730Format(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, implementationAddress: String?, tokens: [TokenMetaInput])async throws  -> DisplayModel  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(to),FfiConverterString.lower(calldataHex),FfiConverterOptionString.lower(valueHex),FfiConverterOptionString.lower(fromAddress),FfiConverterSequenceTypeTokenMetaInput.lower(tokens)
+                uniffi_erc7730_fn_func_erc7730_format(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(to),FfiConverterString.lower(calldataHex),FfiConverterOptionString.lower(valueHex),FfiConverterOptionString.lower(fromAddress),FfiConverterOptionString.lower(implementationAddress),FfiConverterSequenceTypeTokenMetaInput.lower(tokens)
                 )
             },
             pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
@@ -1249,7 +1249,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format() != 61390) {
+    if (uniffi_erc7730_checksum_func_erc7730_format() != 11473) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 45099) {

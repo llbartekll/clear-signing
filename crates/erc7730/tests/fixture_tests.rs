@@ -1,13 +1,13 @@
 //! Snapshot-based fixture tests for ERC-7730 clear signing.
 //!
 //! Auto-discovers `tests/fixtures/*/tests.json` files and runs each test case
-//! through `format_calldata_with_from()`, comparing against stored expected output.
+//! through `format_calldata()`, comparing against stored expected output.
 //!
 //! When `expected` is `null`, capture mode: populate and rewrite `tests.json`.
 
 use erc7730::token::{CompositeTokenSource, StaticTokenSource, TokenMeta, WellKnownTokenSource};
 use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata_with_from, DisplayModel};
+use erc7730::{format_calldata, DisplayModel, TransactionContext};
 use std::path::{Path, PathBuf};
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -110,16 +110,14 @@ fn run_test_case(
     let calldata = decode_hex(&tc.calldata);
     let val = value_bytes(&tc.value);
 
-    format_calldata_with_from(
-        descriptor,
-        tc.chain_id,
-        &tc.to,
-        &calldata,
-        val.as_deref(),
-        Some(tc.from.as_str()),
-        token_source,
-    )
-    .map_err(|e| format!("{e}"))
+    let tx = TransactionContext {
+        chain_id: tc.chain_id,
+        to: &tc.to,
+        calldata: &calldata,
+        value: val.as_deref(),
+        from: Some(tc.from.as_str()),
+    };
+    format_calldata(descriptor, &tx, token_source).map_err(|e| format!("{e}"))
 }
 
 #[test]

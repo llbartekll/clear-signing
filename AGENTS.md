@@ -59,14 +59,18 @@ Repository policy:
 
 ## Public API
 
-Four entry points, all in `lib.rs`:
-- `format(chain_id, to, calldata, value, source, tokens)` — high-level: resolves descriptor then formats
-- `format_calldata(descriptor, chain_id, to, calldata, value, tokens)` — low-level: format with pre-resolved descriptor
-- `format_calldata_with_from(descriptor, chain_id, to, calldata, value, from, tokens)` — with `@.from` container value support
+Shared types: `TransactionContext { chain_id, to, calldata, value, from }`, `FormatOptions { implementation_address }`.
+
+Entry points in `lib.rs`:
+- `format(tx, source, tokens, opts)` — high-level: resolves descriptor then formats
+- `format_calldata(descriptor, tx, tokens)` — low-level: format with pre-resolved descriptor
+- `format_calldata_multi(descriptors, tx, tokens)` — low-level with multiple descriptors for nested calldata
 - `format_typed_data(descriptor, data, tokens)` — EIP-712 typed data formatting
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
+- `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, implementation_address, tokens)`
 - `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)`
+- `erc7730_format_calldata_multi(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)`
 - `erc7730_format_typed_data(descriptor_json, typed_data_json, tokens)`
 
 Local Swift package product:

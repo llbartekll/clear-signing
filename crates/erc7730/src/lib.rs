@@ -25,70 +25,63 @@ pub use resolver::{DescriptorSource, FilesystemSource, ResolvedDescriptor};
 pub use token::{CompositeTokenSource, TokenMeta, TokenSource, WellKnownTokenSource};
 pub use types::descriptor::Descriptor;
 
+/// Transaction context for calldata formatting.
+pub struct TransactionContext<'a> {
+    pub chain_id: u64,
+    pub to: &'a str,
+    pub calldata: &'a [u8],
+    pub value: Option<&'a [u8]>,
+    pub from: Option<&'a str>,
+}
+
+/// Options controlling descriptor resolution behavior.
+pub struct FormatOptions<'a> {
+    pub implementation_address: Option<&'a str>,
+}
+
 /// Format contract calldata for clear signing display.
 ///
 /// This is the main entry point for calldata clear signing.
 /// It parses the function signature from the descriptor's format keys,
 /// decodes the calldata, and renders the display model.
-///
-/// `from` is the optional sender address for `@.from` container value support.
 pub fn format_calldata(
     descriptor: &Descriptor,
-    chain_id: u64,
-    to: &str,
-    calldata: &[u8],
-    value: Option<&[u8]>,
+    tx: &TransactionContext<'_>,
     token_source: &dyn TokenSource,
 ) -> Result<DisplayModel, Error> {
-    format_calldata_with_from(
-        descriptor,
-        chain_id,
-        to,
-        calldata,
-        value,
-        None,
-        token_source,
-    )
-}
-
-/// Format contract calldata with full container value support.
-///
-/// Like [`format_calldata`] but also accepts `from` address for `@.from` resolution.
-pub fn format_calldata_with_from(
-    descriptor: &Descriptor,
-    chain_id: u64,
-    to: &str,
-    calldata: &[u8],
-    value: Option<&[u8]>,
-    from: Option<&str>,
-    token_source: &dyn TokenSource,
-) -> Result<DisplayModel, Error> {
-    if calldata.len() < 4 {
+    if tx.calldata.len() < 4 {
         return Err(Error::Decode(error::DecodeError::CalldataTooShort {
             expected: 4,
-            actual: calldata.len(),
+            actual: tx.calldata.len(),
         }));
     }
 
-    let actual_selector = &calldata[..4];
+    let actual_selector = &tx.calldata[..4];
 
     // Find matching format key and parse its signature
     let (sig, _format_key) = match find_matching_signature(descriptor, actual_selector) {
         Ok(result) => result,
         Err(_) => {
             // Graceful fallback: return raw preview for unknown selectors
-            return Ok(build_raw_fallback(calldata));
+            return Ok(build_raw_fallback(tx.calldata));
         }
     };
 
     // Decode calldata using the parsed signature
-    let mut decoded = decoder::decode_calldata(&sig, calldata)?;
+    let mut decoded = decoder::decode_calldata(&sig, tx.calldata)?;
 
     // Inject container values as synthetic arguments
-    inject_container_values(&mut decoded, chain_id, to, value, from);
+    inject_container_values(&mut decoded, tx.chain_id, tx.to, tx.value, tx.from);
 
     // Render the display model
-    engine::format_calldata(descriptor, chain_id, to, &decoded, value, token_source)
+    engine::format_calldata(
+        descriptor,
+        tx.chain_id,
+        tx.to,
+        &decoded,
+        tx.value,
+        token_source,
+    )
 }
 
 /// Inject EIP-7730 container values (@.value, @.to, @.chainId, @.from) as synthetic arguments.
@@ -198,33 +191,28 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
 /// Remaining descriptors are available for resolving inner calldata fields.
 pub fn format_calldata_multi(
     descriptors: &[ResolvedDescriptor],
-    chain_id: u64,
-    to: &str,
-    calldata: &[u8],
-    value: Option<&[u8]>,
-    from: Option<&str>,
+    tx: &TransactionContext<'_>,
     token_source: &dyn TokenSource,
 ) -> Result<DisplayModel, Error> {
-    if calldata.len() < 4 {
+    if tx.calldata.len() < 4 {
         return Err(Error::Decode(error::DecodeError::CalldataTooShort {
             expected: 4,
-            actual: calldata.len(),
+            actual: tx.calldata.len(),
         }));
     }
 
     // Find the outer descriptor matching chain_id + to address
-    let outer_idx =
-        descriptors.iter().position(|rd| {
-            rd.descriptor.context.deployments().iter().any(|dep| {
-                dep.chain_id == chain_id && dep.address.to_lowercase() == to.to_lowercase()
-            })
-        });
+    let outer_idx = descriptors.iter().position(|rd| {
+        rd.descriptor.context.deployments().iter().any(|dep| {
+            dep.chain_id == tx.chain_id && dep.address.to_lowercase() == tx.to.to_lowercase()
+        })
+    });
 
     let outer_idx = match outer_idx {
         Some(idx) => idx,
         None => {
             if descriptors.is_empty() {
-                return Ok(build_raw_fallback(calldata));
+                return Ok(build_raw_fallback(tx.calldata));
             }
             // Fallback to first descriptor
             0
@@ -232,24 +220,24 @@ pub fn format_calldata_multi(
     };
 
     let outer_descriptor = &descriptors[outer_idx].descriptor;
-    let actual_selector = &calldata[..4];
+    let actual_selector = &tx.calldata[..4];
 
     let (sig, _format_key) = match find_matching_signature(outer_descriptor, actual_selector) {
         Ok(result) => result,
         Err(_) => {
-            return Ok(build_raw_fallback(calldata));
+            return Ok(build_raw_fallback(tx.calldata));
         }
     };
 
-    let mut decoded = decoder::decode_calldata(&sig, calldata)?;
-    inject_container_values(&mut decoded, chain_id, to, value, from);
+    let mut decoded = decoder::decode_calldata(&sig, tx.calldata)?;
+    inject_container_values(&mut decoded, tx.chain_id, tx.to, tx.value, tx.from);
 
     engine::format_calldata_multi(
         outer_descriptor,
-        chain_id,
-        to,
+        tx.chain_id,
+        tx.to,
         &decoded,
-        value,
+        tx.value,
         token_source,
         descriptors,
     )
@@ -266,53 +254,20 @@ pub fn format_typed_data(
 
 /// High-level convenience: resolve descriptor then format calldata.
 ///
-/// Gracefully degrades to raw preview when no descriptor is found.
-pub async fn format(
-    chain_id: u64,
-    to: &str,
-    calldata: &[u8],
-    value: Option<&[u8]>,
-    source: &dyn DescriptorSource,
-    tokens: &dyn TokenSource,
-) -> Result<DisplayModel, Error> {
-    match source.resolve_calldata(chain_id, to).await {
-        Ok(resolved) => format_calldata_with_from(
-            &resolved.descriptor,
-            chain_id,
-            to,
-            calldata,
-            value,
-            None,
-            tokens,
-        ),
-        Err(error::ResolveError::NotFound { .. }) => Ok(build_raw_fallback(calldata)),
-        Err(e) => Err(Error::Resolve(e)),
-    }
-}
-
-/// High-level convenience: resolve descriptor then format calldata (with from address).
+/// Uses `opts.implementation_address` for descriptor resolution if provided (proxy support),
+/// falling back to `tx.to`.
 ///
 /// Gracefully degrades to raw preview when no descriptor is found.
-pub async fn format_with_from(
-    chain_id: u64,
-    to: &str,
-    calldata: &[u8],
-    value: Option<&[u8]>,
-    from: Option<&str>,
+pub async fn format(
+    tx: &TransactionContext<'_>,
     source: &dyn DescriptorSource,
     tokens: &dyn TokenSource,
+    opts: Option<&FormatOptions<'_>>,
 ) -> Result<DisplayModel, Error> {
-    match source.resolve_calldata(chain_id, to).await {
-        Ok(resolved) => format_calldata_with_from(
-            &resolved.descriptor,
-            chain_id,
-            to,
-            calldata,
-            value,
-            from,
-            tokens,
-        ),
-        Err(error::ResolveError::NotFound { .. }) => Ok(build_raw_fallback(calldata)),
+    let addr = opts.and_then(|o| o.implementation_address).unwrap_or(tx.to);
+    match source.resolve_calldata(tx.chain_id, addr).await {
+        Ok(resolved) => format_calldata(&resolved.descriptor, tx, tokens),
+        Err(error::ResolveError::NotFound { .. }) => Ok(build_raw_fallback(tx.calldata)),
         Err(e) => Err(Error::Resolve(e)),
     }
 }
@@ -424,15 +379,14 @@ mod tests {
         calldata.extend_from_slice(&amount_word);
 
         let tokens = EmptyTokenSource;
-        let result = format_calldata(
-            &descriptor,
-            1,
-            "0xdac17f958d2ee523a2206206994597c13d831ec7",
-            &calldata,
-            None,
-            &tokens,
-        )
-        .unwrap();
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            calldata: &calldata,
+            value: None,
+            from: None,
+        };
+        let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
         assert_eq!(result.entries.len(), 2);
@@ -524,15 +478,14 @@ mod tests {
             },
         );
 
-        let result = format_calldata(
-            &descriptor,
-            1,
-            "0xdac17f958d2ee523a2206206994597c13d831ec7",
-            &calldata,
-            None,
-            &tokens,
-        )
-        .unwrap();
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            calldata: &calldata,
+            value: None,
+            from: None,
+        };
+        let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
 
@@ -597,8 +550,14 @@ mod tests {
         calldata.extend_from_slice(&[0u8; 32]); // arg 0
         calldata.extend_from_slice(&[0u8; 32]); // arg 1
 
-        let result =
-            format_calldata(&descriptor, 1, "0xabc", &calldata, None, &EmptyTokenSource).unwrap();
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xabc",
+            calldata: &calldata,
+            value: None,
+            from: None,
+        };
+        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
 
         // Only 1 field should be visible (the second has visible: false)
         assert_eq!(result.entries.len(), 1);
@@ -665,8 +624,14 @@ mod tests {
         amount[31] = 100;
         calldata.extend_from_slice(&amount);
 
-        let result =
-            format_calldata(&descriptor, 1, "0xabc", &calldata, None, &EmptyTokenSource).unwrap();
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xabc",
+            calldata: &calldata,
+            value: None,
+            from: None,
+        };
+        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
 
         assert_eq!(result.entries.len(), 1);
         if let DisplayEntry::Group { label, items, .. } = &result.entries[0] {
@@ -733,8 +698,14 @@ mod tests {
         word[31] = 1; // value = 1 → "Limit"
         calldata.extend_from_slice(&word);
 
-        let result =
-            format_calldata(&descriptor, 1, "0xabc", &calldata, None, &EmptyTokenSource).unwrap();
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xabc",
+            calldata: &calldata,
+            value: None,
+            from: None,
+        };
+        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
 
         if let DisplayEntry::Item(ref item) = result.entries[0] {
             assert_eq!(item.label, "Order Type");
@@ -756,16 +727,14 @@ mod tests {
         calldata.extend_from_slice(&[0u8; 32]); // to
         calldata.extend_from_slice(&[0u8; 32]); // amount
 
-        let result = format(
-            1,
-            "0xdac17f958d2ee523a2206206994597c13d831ec7",
-            &calldata,
-            None,
-            &source,
-            &EmptyTokenSource,
-        )
-        .await
-        .unwrap();
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            calldata: &calldata,
+            value: None,
+            from: None,
+        };
+        let result = format(&tx, &source, &EmptyTokenSource, None).await.unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
     }
@@ -812,15 +781,14 @@ mod tests {
             hex::decode("7c616fe6000000000000000000000000000000000000000000000000000000006945563d")
                 .unwrap();
 
-        let result = format_calldata(
-            &descriptor,
-            10,
-            "0x521B4C065Bbdbe3E20B3727340730936912DfA46",
-            &calldata,
-            None,
-            &EmptyTokenSource,
-        )
-        .unwrap();
+        let tx = TransactionContext {
+            chain_id: 10,
+            to: "0x521B4C065Bbdbe3E20B3727340730936912DfA46",
+            calldata: &calldata,
+            value: None,
+            from: None,
+        };
+        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
 
         assert_eq!(result.intent, "Increase Unlock Time");
         assert_eq!(result.entries.len(), 1);

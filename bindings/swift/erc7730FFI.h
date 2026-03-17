@@ -245,7 +245,7 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureRes
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT
-uint64_t uniffi_erc7730_fn_func_erc7730_format(uint64_t chain_id, RustBuffer to, RustBuffer calldata_hex, RustBuffer value_hex, RustBuffer from_address, RustBuffer tokens
+uint64_t uniffi_erc7730_fn_func_erc7730_format(uint64_t chain_id, RustBuffer to, RustBuffer calldata_hex, RustBuffer value_hex, RustBuffer from_address, RustBuffer implementation_address, RustBuffer tokens
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_CALLDATA

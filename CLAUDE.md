@@ -55,17 +55,19 @@ Repository policy:
 
 ## Public API
 
+Shared types in `lib.rs`:
+- `TransactionContext { chain_id, to, calldata, value, from }` — transaction parameters bundled into a single struct
+- `FormatOptions { implementation_address }` — resolution options (e.g. proxy support)
+
 Entry points in `lib.rs`:
-- `format(chain_id, to, calldata, value, source, tokens)` — high-level: resolves descriptor then formats (graceful degradation on NotFound)
-- `format_with_from(chain_id, to, calldata, value, from, source, tokens)` — high-level with `@.from` support
+- `format(tx, source, tokens, opts)` — high-level: resolves descriptor then formats (graceful degradation on NotFound); `opts.implementation_address` overrides `tx.to` for resolution (proxy support)
 - `format_typed(data, source, tokens)` — high-level: resolves descriptor then formats EIP-712 typed data (graceful degradation on NotFound)
-- `format_calldata(descriptor, chain_id, to, calldata, value, tokens)` — low-level: format with pre-resolved descriptor
-- `format_calldata_with_from(descriptor, chain_id, to, calldata, value, from, tokens)` — low-level with `@.from` container value support
-- `format_calldata_multi(descriptors, chain_id, to, calldata, value, from, tokens)` — low-level with multiple pre-resolved descriptors for nested calldata (Safe/4337)
+- `format_calldata(descriptor, tx, tokens)` — low-level: format with pre-resolved descriptor
+- `format_calldata_multi(descriptors, tx, tokens)` — low-level with multiple pre-resolved descriptors for nested calldata (Safe/4337)
 - `format_typed_data(descriptor, data, tokens)` — low-level EIP-712 typed data formatting
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
-- `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, tokens)` — high-level with GitHub registry resolution (requires `github-registry` feature)
+- `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, implementation_address, tokens)` — high-level with GitHub registry resolution (requires `github-registry` feature)
 - `erc7730_format_typed(typed_data_json, tokens)` — high-level EIP-712 with GitHub registry resolution (requires `github-registry` feature)
 - `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level
 - `erc7730_format_calldata_multi(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level with multiple descriptors for nested calldata

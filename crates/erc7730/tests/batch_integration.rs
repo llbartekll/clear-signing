@@ -8,7 +8,9 @@ use erc7730::decoder::parse_signature;
 use erc7730::resolver::ResolvedDescriptor;
 use erc7730::token::{EmptyTokenSource, StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, format_calldata_multi, DisplayEntry, DisplayModel};
+use erc7730::{
+    format_calldata, format_calldata_multi, DisplayEntry, DisplayModel, TransactionContext,
+};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
@@ -58,11 +60,7 @@ fn build_erc20_approve_calldata(spender: &str, amount: u128) -> Vec<u8> {
 fn join_intents(models: &[&DisplayModel]) -> String {
     models
         .iter()
-        .map(|m| {
-            m.interpolated_intent
-                .as_deref()
-                .unwrap_or(&m.intent)
-        })
+        .map(|m| m.interpolated_intent.as_deref().unwrap_or(&m.intent))
         .collect::<Vec<_>>()
         .join(" and ")
 }
@@ -129,12 +127,24 @@ fn wallet_batch_two_erc20_transfers() {
 
     // Wallet calls format_calldata once per inner call
     let calldata_a = build_erc20_transfer_calldata(recipient_a, 1_000_000); // 1 USDC
-    let result_a =
-        format_calldata(&descriptor, 1, usdc_addr, &calldata_a, None, &tokens).unwrap();
+    let tx_a = TransactionContext {
+        chain_id: 1,
+        to: usdc_addr,
+        calldata: &calldata_a,
+        value: None,
+        from: None,
+    };
+    let result_a = format_calldata(&descriptor, &tx_a, &tokens).unwrap();
 
     let calldata_b = build_erc20_transfer_calldata(recipient_b, 5_000_000); // 5 USDC
-    let result_b =
-        format_calldata(&descriptor, 1, usdc_addr, &calldata_b, None, &tokens).unwrap();
+    let tx_b = TransactionContext {
+        chain_id: 1,
+        to: usdc_addr,
+        calldata: &calldata_b,
+        value: None,
+        from: None,
+    };
+    let result_b = format_calldata(&descriptor, &tx_b, &tokens).unwrap();
 
     // Each produces correct DisplayModel
     assert_eq!(result_a.intent, "Transfer tokens");
@@ -182,22 +192,27 @@ fn wallet_batch_mixed_known_unknown() {
 
     // Known call: ERC-20 transfer — full formatting
     let known_calldata = build_erc20_transfer_calldata(recipient, 2_000_000);
-    let known_result =
-        format_calldata(&descriptor, 1, usdc_addr, &known_calldata, None, &tokens).unwrap();
+    let known_tx = TransactionContext {
+        chain_id: 1,
+        to: usdc_addr,
+        calldata: &known_calldata,
+        value: None,
+        from: None,
+    };
+    let known_result = format_calldata(&descriptor, &known_tx, &tokens).unwrap();
 
     // Unknown call: random selector not in descriptor — graceful degradation
     let unknown_calldata =
         hex::decode("deadbeef000000000000000000000000000000000000000000000000000000000000002a")
             .unwrap();
-    let unknown_result = format_calldata(
-        &descriptor,
-        1,
-        unknown_addr,
-        &unknown_calldata,
-        None,
-        &EmptyTokenSource,
-    )
-    .unwrap();
+    let unknown_tx = TransactionContext {
+        chain_id: 1,
+        to: unknown_addr,
+        calldata: &unknown_calldata,
+        value: None,
+        from: None,
+    };
+    let unknown_result = format_calldata(&descriptor, &unknown_tx, &EmptyTokenSource).unwrap();
 
     // Known call: full formatting with intent and token amounts
     assert_eq!(known_result.intent, "Transfer tokens");
@@ -287,31 +302,41 @@ fn wallet_batch_intent_concatenation() {
 
     // Call 1: approve
     let approve_calldata = build_erc20_approve_calldata(spender, 10_000_000);
-    let approve_result =
-        format_calldata(&approve_descriptor, 1, usdc_addr, &approve_calldata, None, &tokens)
-            .unwrap();
+    let approve_tx = TransactionContext {
+        chain_id: 1,
+        to: usdc_addr,
+        calldata: &approve_calldata,
+        value: None,
+        from: None,
+    };
+    let approve_result = format_calldata(&approve_descriptor, &approve_tx, &tokens).unwrap();
 
     // Call 2: transfer
     let recipient = "0x3333333333333333333333333333333333333333";
     let transfer_calldata = build_erc20_transfer_calldata(recipient, 10_000_000);
-    let transfer_result =
-        format_calldata(&transfer_descriptor, 1, usdc_addr, &transfer_calldata, None, &tokens)
-            .unwrap();
+    let transfer_tx = TransactionContext {
+        chain_id: 1,
+        to: usdc_addr,
+        calldata: &transfer_calldata,
+        value: None,
+        from: None,
+    };
+    let transfer_result = format_calldata(&transfer_descriptor, &transfer_tx, &tokens).unwrap();
 
     // Call 3: deposit
     let deposit_sig = parse_signature("deposit(uint256)").unwrap();
     let mut deposit_calldata = Vec::new();
     deposit_calldata.extend_from_slice(&deposit_sig.selector);
     deposit_calldata.extend_from_slice(&uint_word(5_000_000));
-    let deposit_result = format_calldata(
-        &deposit_descriptor,
-        1,
-        deposit_addr,
-        &deposit_calldata,
-        None,
-        &EmptyTokenSource,
-    )
-    .unwrap();
+    let deposit_tx = TransactionContext {
+        chain_id: 1,
+        to: deposit_addr,
+        calldata: &deposit_calldata,
+        value: None,
+        from: None,
+    };
+    let deposit_result =
+        format_calldata(&deposit_descriptor, &deposit_tx, &EmptyTokenSource).unwrap();
 
     // Verify individual intents
     assert_eq!(approve_result.intent, "Approve token spending");
@@ -323,7 +348,11 @@ fn wallet_batch_intent_concatenation() {
 
     // Verify the joined summary contains all three intents
     let parts: Vec<&str> = batch_summary.split(" and ").collect();
-    assert_eq!(parts.len(), 3, "expected 3 parts joined by ' and ', got: {batch_summary}");
+    assert_eq!(
+        parts.len(),
+        3,
+        "expected 3 parts joined by ' and ', got: {batch_summary}"
+    );
 
     // approve has interpolatedIntent, so it should use that
     assert!(
@@ -363,15 +392,14 @@ fn wallet_batch_with_safe_wrapper() {
     let inner_calldata = build_erc20_transfer_calldata(recipient, 1_000_000); // 1 USDC
 
     // --- Step 1: Wallet formats the inner call individually for display ---
-    let inner_display = format_calldata(
-        &erc20_descriptor,
-        1,
-        usdc_addr,
-        &inner_calldata,
-        None,
-        &tokens,
-    )
-    .unwrap();
+    let inner_tx = TransactionContext {
+        chain_id: 1,
+        to: usdc_addr,
+        calldata: &inner_calldata,
+        value: None,
+        from: None,
+    };
+    let inner_display = format_calldata(&erc20_descriptor, &inner_tx, &tokens).unwrap();
 
     assert_eq!(inner_display.intent, "Transfer tokens");
     if let DisplayEntry::Item(ref item) = inner_display.entries[1] {
@@ -397,16 +425,14 @@ fn wallet_batch_with_safe_wrapper() {
         },
     ];
 
-    let safe_result = format_calldata_multi(
-        &descriptors,
-        1,
-        safe_addr,
-        &outer_calldata,
-        None,
-        None,
-        &tokens,
-    )
-    .unwrap();
+    let outer_tx = TransactionContext {
+        chain_id: 1,
+        to: safe_addr,
+        calldata: &outer_calldata,
+        value: None,
+        from: None,
+    };
+    let safe_result = format_calldata_multi(&descriptors, &outer_tx, &tokens).unwrap();
 
     // Verify outer Safe formatting
     assert_eq!(safe_result.intent, "Execute Safe transaction");
