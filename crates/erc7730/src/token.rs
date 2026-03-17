@@ -1,5 +1,10 @@
-//! Token metadata resolution via the [`TokenSource`] trait.
+//! Token metadata types and built-in providers.
 //! Uses CAIP-19 keys (`eip155:{chain}/erc20:{addr}`) for cross-chain lookups.
+
+use std::future::Future;
+use std::pin::Pin;
+
+use crate::provider::DataProvider;
 
 /// Token metadata.
 #[derive(Debug, Clone)]
@@ -18,20 +23,6 @@ impl TokenLookupKey {
     pub fn new(chain_id: u64, address: &str) -> Self {
         let addr = address.to_lowercase();
         Self(format!("eip155:{chain_id}/erc20:{addr}"))
-    }
-}
-
-/// Trait for token metadata providers.
-pub trait TokenSource: Send + Sync {
-    fn lookup(&self, key: &TokenLookupKey) -> Option<TokenMeta>;
-}
-
-/// A no-op token source that always returns None.
-pub struct EmptyTokenSource;
-
-impl TokenSource for EmptyTokenSource {
-    fn lookup(&self, _key: &TokenLookupKey) -> Option<TokenMeta> {
-        None
     }
 }
 
@@ -66,9 +57,15 @@ impl Default for WellKnownTokenSource {
     }
 }
 
-impl TokenSource for WellKnownTokenSource {
-    fn lookup(&self, key: &TokenLookupKey) -> Option<TokenMeta> {
-        self.tokens.get(key).cloned()
+impl DataProvider for WellKnownTokenSource {
+    fn resolve_token(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Pin<Box<dyn Future<Output = Option<TokenMeta>> + Send + '_>> {
+        let key = TokenLookupKey::new(chain_id, address);
+        let result = self.tokens.get(&key).cloned();
+        Box::pin(async move { result })
     }
 }
 
@@ -79,25 +76,83 @@ struct WellKnownEntry {
     name: String,
 }
 
-/// Composite token source that chains multiple sources, returning the first match.
-pub struct CompositeTokenSource {
-    sources: Vec<Box<dyn TokenSource + Send + Sync>>,
+/// Composite data provider that chains multiple providers, returning the first match.
+pub struct CompositeDataProvider {
+    providers: Vec<Box<dyn DataProvider>>,
 }
 
-impl CompositeTokenSource {
-    pub fn new(sources: Vec<Box<dyn TokenSource + Send + Sync>>) -> Self {
-        Self { sources }
+impl CompositeDataProvider {
+    pub fn new(providers: Vec<Box<dyn DataProvider>>) -> Self {
+        Self { providers }
     }
 }
 
-impl TokenSource for CompositeTokenSource {
-    fn lookup(&self, key: &TokenLookupKey) -> Option<TokenMeta> {
-        for source in &self.sources {
-            if let Some(meta) = source.lookup(key) {
-                return Some(meta);
+impl DataProvider for CompositeDataProvider {
+    fn resolve_token(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Pin<Box<dyn Future<Output = Option<TokenMeta>> + Send + '_>> {
+        let address = address.to_string();
+        Box::pin(async move {
+            for provider in &self.providers {
+                if let Some(meta) = provider.resolve_token(chain_id, &address).await {
+                    return Some(meta);
+                }
             }
-        }
-        None
+            None
+        })
+    }
+
+    fn resolve_ens_name(
+        &self,
+        address: &str,
+        chain_id: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let address = address.to_string();
+        Box::pin(async move {
+            for provider in &self.providers {
+                if let Some(name) = provider.resolve_ens_name(&address, chain_id).await {
+                    return Some(name);
+                }
+            }
+            None
+        })
+    }
+
+    fn resolve_local_name(
+        &self,
+        address: &str,
+        chain_id: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let address = address.to_string();
+        Box::pin(async move {
+            for provider in &self.providers {
+                if let Some(name) = provider.resolve_local_name(&address, chain_id).await {
+                    return Some(name);
+                }
+            }
+            None
+        })
+    }
+
+    fn resolve_nft_collection_name(
+        &self,
+        collection_address: &str,
+        chain_id: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let collection_address = collection_address.to_string();
+        Box::pin(async move {
+            for provider in &self.providers {
+                if let Some(name) = provider
+                    .resolve_nft_collection_name(&collection_address, chain_id)
+                    .await
+                {
+                    return Some(name);
+                }
+            }
+            None
+        })
     }
 }
 
@@ -125,9 +180,15 @@ impl Default for StaticTokenSource {
     }
 }
 
-impl TokenSource for StaticTokenSource {
-    fn lookup(&self, key: &TokenLookupKey) -> Option<TokenMeta> {
-        self.tokens.get(key).cloned()
+impl DataProvider for StaticTokenSource {
+    fn resolve_token(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Pin<Box<dyn Future<Output = Option<TokenMeta>> + Send + '_>> {
+        let key = TokenLookupKey::new(chain_id, address);
+        let result = self.tokens.get(&key).cloned();
+        Box::pin(async move { result })
     }
 }
 
@@ -135,35 +196,39 @@ impl TokenSource for StaticTokenSource {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_well_known_usdc_mainnet() {
+    #[tokio::test]
+    async fn test_well_known_usdc_mainnet() {
         let source = WellKnownTokenSource::new();
-        let key = TokenLookupKey::new(1, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
         let meta = source
-            .lookup(&key)
+            .resolve_token(1, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+            .await
             .expect("USDC should be in well-known tokens");
         assert_eq!(meta.symbol, "USDC");
         assert_eq!(meta.decimals, 6);
     }
 
-    #[test]
-    fn test_well_known_usdc_base() {
+    #[tokio::test]
+    async fn test_well_known_usdc_base() {
         let source = WellKnownTokenSource::new();
-        let key = TokenLookupKey::new(8453, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
-        let meta = source.lookup(&key).expect("USDC on Base should be found");
+        let meta = source
+            .resolve_token(8453, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
+            .await
+            .expect("USDC on Base should be found");
         assert_eq!(meta.symbol, "USDC");
         assert_eq!(meta.decimals, 6);
     }
 
-    #[test]
-    fn test_well_known_not_found() {
+    #[tokio::test]
+    async fn test_well_known_not_found() {
         let source = WellKnownTokenSource::new();
-        let key = TokenLookupKey::new(1, "0x0000000000000000000000000000000000000001");
-        assert!(source.lookup(&key).is_none());
+        assert!(source
+            .resolve_token(1, "0x0000000000000000000000000000000000000001")
+            .await
+            .is_none());
     }
 
-    #[test]
-    fn test_composite_source_fallthrough() {
+    #[tokio::test]
+    async fn test_composite_source_fallthrough() {
         let mut custom = StaticTokenSource::new();
         custom.insert(
             1,
@@ -175,19 +240,23 @@ mod tests {
             },
         );
 
-        let composite = CompositeTokenSource::new(vec![
+        let composite = CompositeDataProvider::new(vec![
             Box::new(custom),
             Box::new(WellKnownTokenSource::new()),
         ]);
 
         // Custom takes precedence
-        let key = TokenLookupKey::new(1, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48");
-        let meta = composite.lookup(&key).unwrap();
+        let meta = composite
+            .resolve_token(1, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")
+            .await
+            .unwrap();
         assert_eq!(meta.symbol, "CUSTOM_USDC");
 
         // Falls through to well-known for tokens not in custom
-        let key2 = TokenLookupKey::new(1, "0xdac17f958d2ee523a2206206994597c13d831ec7");
-        let meta2 = composite.lookup(&key2).unwrap();
+        let meta2 = composite
+            .resolve_token(1, "0xdac17f958d2ee523a2206206994597c13d831ec7")
+            .await
+            .unwrap();
         assert_eq!(meta2.symbol, "USDT");
     }
 }

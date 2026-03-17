@@ -11,7 +11,7 @@ use crate::{
 use crate::resolver::GitHubRegistrySource;
 
 #[cfg(feature = "github-registry")]
-use crate::token::{CompositeTokenSource, WellKnownTokenSource};
+use crate::token::{CompositeDataProvider, WellKnownTokenSource};
 
 #[cfg(feature = "github-registry")]
 const DEFAULT_REGISTRY_URL: &str =
@@ -75,8 +75,8 @@ impl From<Error> for FfiError {
     }
 }
 
-#[uniffi::export]
-pub fn erc7730_format_calldata(
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn erc7730_format_calldata(
     descriptor_json: String,
     chain_id: u64,
     to: String,
@@ -143,7 +143,7 @@ pub fn erc7730_format_calldata(
         value: value.as_deref(),
         from: from_address.as_deref(),
     };
-    let result = crate::format_calldata(&descriptor, &tx, &token_source);
+    let result = crate::format_calldata(&descriptor, &tx, &token_source).await;
 
     match &result {
         Ok(model) => {
@@ -164,8 +164,8 @@ pub fn erc7730_format_calldata(
     result.map_err(Into::into)
 }
 
-#[uniffi::export]
-pub fn erc7730_format_typed_data(
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn erc7730_format_typed_data(
     descriptor_json: String,
     typed_data_json: String,
     tokens: Vec<TokenMetaInput>,
@@ -215,7 +215,7 @@ pub fn erc7730_format_typed_data(
     };
 
     let token_source = build_token_source(&tokens);
-    let result = format_typed_data(&descriptor, &typed_data, &token_source);
+    let result = format_typed_data(&descriptor, &typed_data, &token_source).await;
 
     match &result {
         Ok(model) => {
@@ -264,7 +264,7 @@ pub async fn erc7730_format(
 
     let caller_tokens = build_token_source(&tokens);
     let well_known = WellKnownTokenSource::new();
-    let composite = CompositeTokenSource::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
+    let composite = CompositeDataProvider::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
 
     let tx = crate::TransactionContext {
         chain_id,
@@ -320,7 +320,7 @@ pub async fn erc7730_format_typed(
 
     let caller_tokens = build_token_source(&tokens);
     let well_known = WellKnownTokenSource::new();
-    let composite = CompositeTokenSource::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
+    let composite = CompositeDataProvider::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
 
     let result = crate::format_typed(&typed_data, source, &composite).await;
 
@@ -337,8 +337,8 @@ pub async fn erc7730_format_typed(
     result.map_err(Into::into)
 }
 
-#[uniffi::export]
-pub fn erc7730_format_calldata_multi(
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn erc7730_format_calldata_multi(
     descriptors_json: Vec<String>,
     chain_id: u64,
     to: String,
@@ -379,7 +379,9 @@ pub fn erc7730_format_calldata_multi(
         value: value.as_deref(),
         from: from_address.as_deref(),
     };
-    crate::format_calldata_multi(&descriptors, &tx, &token_source).map_err(Into::into)
+    crate::format_calldata_multi(&descriptors, &tx, &token_source)
+        .await
+        .map_err(Into::into)
 }
 
 enum HexContext {
@@ -537,8 +539,8 @@ mod tests {
         "a9059cbb000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000003e8"
     }
 
-    #[test]
-    fn format_calldata_success() {
+    #[tokio::test]
+    async fn format_calldata_success() {
         let result = erc7730_format_calldata(
             calldata_descriptor_json().to_string(),
             1,
@@ -548,6 +550,7 @@ mod tests {
             None,
             vec![],
         )
+        .await
         .expect("calldata formatting should succeed");
 
         assert_eq!(result.intent, "Transfer tokens");
@@ -563,21 +566,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn format_typed_success() {
+    #[tokio::test]
+    async fn format_typed_success() {
         let result = erc7730_format_typed_data(
             typed_descriptor_json().to_string(),
             typed_data_json().to_string(),
             vec![],
         )
+        .await
         .expect("typed formatting should succeed");
 
         assert_eq!(result.intent, "Sign mail");
         assert_eq!(result.entries.len(), 2);
     }
 
-    #[test]
-    fn format_calldata_invalid_descriptor_json() {
+    #[tokio::test]
+    async fn format_calldata_invalid_descriptor_json() {
         let err = erc7730_format_calldata(
             "{".to_string(),
             1,
@@ -587,22 +591,24 @@ mod tests {
             None,
             vec![],
         )
+        .await
         .expect_err("invalid descriptor should fail");
 
         assert!(matches!(err, FfiError::InvalidDescriptorJson(_)));
     }
 
-    #[test]
-    fn format_typed_invalid_typed_data_json() {
+    #[tokio::test]
+    async fn format_typed_invalid_typed_data_json() {
         let err =
             erc7730_format_typed_data(typed_descriptor_json().to_string(), "{".to_string(), vec![])
+                .await
                 .expect_err("invalid typed data should fail");
 
         assert!(matches!(err, FfiError::InvalidTypedDataJson(_)));
     }
 
-    #[test]
-    fn format_calldata_invalid_calldata_hex() {
+    #[tokio::test]
+    async fn format_calldata_invalid_calldata_hex() {
         let err = erc7730_format_calldata(
             calldata_descriptor_json().to_string(),
             1,
@@ -612,13 +618,14 @@ mod tests {
             None,
             vec![],
         )
+        .await
         .expect_err("invalid calldata hex should fail");
 
         assert!(matches!(err, FfiError::InvalidCalldataHex(_)));
     }
 
-    #[test]
-    fn format_calldata_invalid_value_hex() {
+    #[tokio::test]
+    async fn format_calldata_invalid_value_hex() {
         let err = erc7730_format_calldata(
             calldata_descriptor_json().to_string(),
             1,
@@ -628,13 +635,14 @@ mod tests {
             None,
             vec![],
         )
+        .await
         .expect_err("invalid value hex should fail");
 
         assert!(matches!(err, FfiError::InvalidValueHex(_)));
     }
 
-    #[test]
-    fn format_calldata_accepts_0x_prefix() {
+    #[tokio::test]
+    async fn format_calldata_accepts_0x_prefix() {
         let no_prefix = erc7730_format_calldata(
             calldata_descriptor_json().to_string(),
             1,
@@ -644,6 +652,7 @@ mod tests {
             None,
             vec![],
         )
+        .await
         .expect("no-prefix calldata should succeed");
 
         let with_prefix = erc7730_format_calldata(
@@ -655,6 +664,7 @@ mod tests {
             None,
             vec![],
         )
+        .await
         .expect("prefixed calldata should succeed");
 
         assert_eq!(no_prefix.intent, with_prefix.intent);

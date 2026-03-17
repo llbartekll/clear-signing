@@ -1,7 +1,7 @@
 //! Integration tests using real Aave v2/v3 registry descriptors.
 
 use erc7730::decoder::parse_signature;
-use erc7730::token::{CompositeTokenSource, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use erc7730::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 
@@ -43,7 +43,7 @@ fn max_uint256_word() -> Vec<u8> {
     vec![0xff; 32]
 }
 
-fn aave_token_source() -> CompositeTokenSource {
+fn aave_token_source() -> CompositeDataProvider {
     let mut custom = StaticTokenSource::new();
     // Aave uses these token addresses in tests
     custom.insert(
@@ -82,7 +82,7 @@ fn aave_token_source() -> CompositeTokenSource {
             name: "USD Coin".to_string(),
         },
     );
-    CompositeTokenSource::new(vec![
+    CompositeDataProvider::new(vec![
         Box::new(custom),
         Box::new(WellKnownTokenSource::new()),
     ])
@@ -100,8 +100,8 @@ fn get_entry_value(model: &DisplayModel, label: &str) -> String {
 
 // --- LPv3 Tests ---
 
-#[test]
-fn aave_supply_usdc_mainnet() {
+#[tokio::test]
+async fn aave_supply_usdc_mainnet() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let sig = parse_signature("supply(address,uint256,address,uint16)").unwrap();
     let tokens = aave_token_source();
@@ -126,14 +126,14 @@ fn aave_supply_usdc_mainnet() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "1000 USDC");
 }
 
-#[test]
-fn aave_supply_usdc_base() {
+#[tokio::test]
+async fn aave_supply_usdc_base() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let sig = parse_signature("supply(address,uint256,address,uint16)").unwrap();
     let tokens = aave_token_source();
@@ -158,14 +158,14 @@ fn aave_supply_usdc_base() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "500 USDC");
 }
 
-#[test]
-fn aave_repay_all_dai() {
+#[tokio::test]
+async fn aave_repay_all_dai() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let sig = parse_signature("repay(address,uint256,uint256,address)").unwrap();
     let tokens = aave_token_source();
@@ -190,15 +190,15 @@ fn aave_repay_all_dai() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Repay loan");
     assert_eq!(get_entry_value(&result, "Amount to repay"), "All DAI");
     assert_eq!(get_entry_value(&result, "Interest rate mode"), "variable");
 }
 
-#[test]
-fn aave_withdraw_max() {
+#[tokio::test]
+async fn aave_withdraw_max() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let sig = parse_signature("withdraw(address,uint256,address)").unwrap();
     let tokens = aave_token_source();
@@ -222,14 +222,14 @@ fn aave_withdraw_max() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "Max USDC");
 }
 
-#[test]
-fn aave_borrow_variable() {
+#[tokio::test]
+async fn aave_borrow_variable() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let sig = parse_signature("borrow(address,uint256,uint256,uint16,address)").unwrap();
     let tokens = aave_token_source();
@@ -255,15 +255,15 @@ fn aave_borrow_variable() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Borrow");
     assert_eq!(get_entry_value(&result, "Amount to borrow"), "5 USDT");
     assert_eq!(get_entry_value(&result, "Interest Rate mode"), "variable");
 }
 
-#[test]
-fn aave_set_collateral() {
+#[tokio::test]
+async fn aave_set_collateral() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let sig = parse_signature("setUserUseReserveAsCollateral(address,bool)").unwrap();
     let tokens = aave_token_source();
@@ -285,7 +285,7 @@ fn aave_set_collateral() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Manage collateral");
     assert_eq!(get_entry_value(&result, "Enable use as collateral"), "true");
@@ -293,8 +293,8 @@ fn aave_set_collateral() {
 
 // --- LPv2 Tests ---
 
-#[test]
-fn aave_deposit_usdc_mainnet() {
+#[tokio::test]
+async fn aave_deposit_usdc_mainnet() {
     let descriptor = load_descriptor("aave-lpv2.json");
     let sig = parse_signature("deposit(address,uint256,address,uint16)").unwrap();
     let tokens = aave_token_source();
@@ -319,7 +319,7 @@ fn aave_deposit_usdc_mainnet() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "1000 USDC");
@@ -327,8 +327,8 @@ fn aave_deposit_usdc_mainnet() {
 
 // --- WrappedTokenGatewayV3 Tests ---
 
-#[test]
-fn gateway_deposit_eth() {
+#[tokio::test]
+async fn gateway_deposit_eth() {
     let descriptor = load_descriptor("aave-gateway.json");
     let sig = parse_signature("depositETH(address,address,uint16)").unwrap();
     let tokens = aave_token_source();
@@ -355,7 +355,7 @@ fn gateway_deposit_eth() {
         value: Some(&value),
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     // @.value should be formatted as native currency (ETH with 18 decimals)
@@ -363,8 +363,8 @@ fn gateway_deposit_eth() {
     assert_eq!(amount, "1 ETH");
 }
 
-#[test]
-fn gateway_borrow_eth_with_from() {
+#[tokio::test]
+async fn gateway_borrow_eth_with_from() {
     let descriptor = load_descriptor("aave-gateway.json");
     let sig = parse_signature("borrowETH(address,uint256,uint16)").unwrap();
     let tokens = aave_token_source();
@@ -389,7 +389,7 @@ fn gateway_borrow_eth_with_from() {
         value: None,
         from: Some(from_addr),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Borrow");
     // @.from should be resolved (EIP-55 checksummed)
@@ -402,8 +402,8 @@ fn gateway_borrow_eth_with_from() {
 
 /// Real wallet request: depositETH with value=0x5af3107a4000 (0.0001 ETH) on mainnet.
 /// Verifies @.value with format "amount" renders native currency (decimals + symbol).
-#[test]
-fn real_wallet_supply_eth_mainnet() {
+#[tokio::test]
+async fn real_wallet_supply_eth_mainnet() {
     let descriptor = load_descriptor("aave-gateway.json");
     let tokens = aave_token_source();
 
@@ -427,7 +427,7 @@ fn real_wallet_supply_eth_mainnet() {
         value: Some(&value_bytes),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "0.0001 ETH");
@@ -444,8 +444,8 @@ fn real_wallet_supply_eth_mainnet() {
     );
 }
 
-#[test]
-fn aave_interpolated_intent() {
+#[tokio::test]
+async fn aave_interpolated_intent() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let sig = parse_signature("supply(address,uint256,address,uint16)").unwrap();
     let tokens = aave_token_source();
@@ -470,7 +470,7 @@ fn aave_interpolated_intent() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     // interpolatedIntent: "Supply {amount} for {onBehalfOf}"
     let intent = result.interpolated_intent.as_deref().unwrap();
@@ -486,8 +486,8 @@ fn aave_interpolated_intent() {
 
 // --- Graceful Degradation Test ---
 
-#[test]
-fn graceful_fallback_unknown_selector() {
+#[tokio::test]
+async fn graceful_fallback_unknown_selector() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -504,7 +504,7 @@ fn graceful_fallback_unknown_selector() {
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert!(result.intent.contains("0xdeadbeef"));
     assert!(!result.warnings.is_empty());
@@ -516,8 +516,8 @@ fn graceful_fallback_unknown_selector() {
 // where params are packed into a single bytes32 instead of separate args.
 // The descriptor only has withdraw(address,uint256,address) (selector 0x69328dec),
 // so the L2 variant withdraw(bytes32) (selector 0x8e19899e) falls back to raw preview.
-#[test]
-fn aave_withdraw_bytes32_optimism_graceful_fallback() {
+#[tokio::test]
+async fn aave_withdraw_bytes32_optimism_graceful_fallback() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -533,7 +533,7 @@ fn aave_withdraw_bytes32_optimism_graceful_fallback() {
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     // No format key matches selector 0x8e19899e, so we get graceful fallback
     assert!(
@@ -554,8 +554,8 @@ fn aave_withdraw_bytes32_optimism_graceful_fallback() {
 /// data=0x69328dec... (withdraw(address,uint256,address))
 /// from=0xbf01daf454dce008d3e2bfd47d5e186f71477253
 /// value=0x0
-#[test]
-fn real_wallet_withdraw_usdc_mainnet() {
+#[tokio::test]
+async fn real_wallet_withdraw_usdc_mainnet() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -574,7 +574,7 @@ fn real_wallet_withdraw_usdc_mainnet() {
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "Max USDC");
@@ -600,8 +600,8 @@ fn real_wallet_withdraw_usdc_mainnet() {
 
 /// Exact eth_sendTransaction: withdraw 0.1 USDC (100000 raw, 6 decimals) on mainnet.
 /// Verifies interpolated intent renders formatted token amount, not raw integer.
-#[test]
-fn real_wallet_withdraw_0_1_usdc_mainnet() {
+#[tokio::test]
+async fn real_wallet_withdraw_0_1_usdc_mainnet() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -620,7 +620,7 @@ fn real_wallet_withdraw_0_1_usdc_mainnet() {
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "0.1 USDC");
@@ -671,8 +671,8 @@ async fn filesystem_source_aave() {
 
 /// Real tx 0xae03ca4d: borrow 100 USDT variable rate on mainnet.
 /// Verifies enum interpolation renders "variable" not raw "2" in interpolated intent.
-#[test]
-fn real_tx_borrow_usdt_enum_interpolation() {
+#[tokio::test]
+async fn real_tx_borrow_usdt_enum_interpolation() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -693,7 +693,7 @@ fn real_tx_borrow_usdt_enum_interpolation() {
         value: None,
         from: Some("0x694278718ecb91113a4c6141cc579dc105187a8a"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Borrow");
     assert_eq!(get_entry_value(&result, "Amount to borrow"), "100 USDT");
@@ -716,8 +716,8 @@ fn real_tx_borrow_usdt_enum_interpolation() {
 
 /// Real tx 0x6a49bcf0: repay 99.348201 USDC variable rate on mainnet.
 /// Verifies enum + tokenAmount interpolation together.
-#[test]
-fn real_tx_repay_usdc_enum_interpolation() {
+#[tokio::test]
+async fn real_tx_repay_usdc_enum_interpolation() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -737,7 +737,7 @@ fn real_tx_repay_usdc_enum_interpolation() {
         value: None,
         from: Some("0xad8c1b5b4d5dfe7fbe508ba57b1e05b33391f94a"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Repay loan");
     assert_eq!(
@@ -759,8 +759,8 @@ fn real_tx_repay_usdc_enum_interpolation() {
 
 /// Real tx 0x9acfc63d: repay All USDT variable rate on mainnet.
 /// Verifies threshold/message + enum interpolation together.
-#[test]
-fn real_tx_repay_all_usdt_enum_interpolation() {
+#[tokio::test]
+async fn real_tx_repay_all_usdt_enum_interpolation() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -780,7 +780,7 @@ fn real_tx_repay_all_usdt_enum_interpolation() {
         value: None,
         from: Some("0x0b5a6a15b975fd35f0b301748c8dabd35b50d8c5"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Repay loan");
     assert_eq!(get_entry_value(&result, "Amount to repay"), "All USDT");
@@ -803,8 +803,8 @@ fn real_tx_repay_all_usdt_enum_interpolation() {
 
 /// Real tx 0x3b5748a6: withdraw Max WETH on mainnet.
 /// Verifies threshold/message interpolation with a token not in default well-known set.
-#[test]
-fn real_tx_withdraw_max_weth() {
+#[tokio::test]
+async fn real_tx_withdraw_max_weth() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let mut custom = StaticTokenSource::new();
     custom.insert(
@@ -816,7 +816,7 @@ fn real_tx_withdraw_max_weth() {
             name: "Wrapped Ether".to_string(),
         },
     );
-    let tokens = CompositeTokenSource::new(vec![
+    let tokens = CompositeDataProvider::new(vec![
         Box::new(custom),
         Box::new(WellKnownTokenSource::new()),
     ]);
@@ -836,7 +836,7 @@ fn real_tx_withdraw_max_weth() {
         value: None,
         from: Some("0x2f45665810956929bbfaa984d70a511ad08b0b54"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "Max WETH");
@@ -850,8 +850,8 @@ fn real_tx_withdraw_max_weth() {
 
 /// Real tx 0x1f7166e2: supplyWithPermit 13400 USDC on mainnet.
 /// Verifies permit variant formatting with real data.
-#[test]
-fn real_tx_supply_with_permit_usdc() {
+#[tokio::test]
+async fn real_tx_supply_with_permit_usdc() {
     let descriptor = load_descriptor("aave-lpv3.json");
     let tokens = aave_token_source();
 
@@ -875,7 +875,7 @@ fn real_tx_supply_with_permit_usdc() {
         value: None,
         from: Some("0x44f2a3aa7fdda16a7bf66c68fba96508078d2bdc"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "13400 USDC");

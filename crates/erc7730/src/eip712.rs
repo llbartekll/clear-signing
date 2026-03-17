@@ -2,14 +2,15 @@
 //! a [`DisplayModel`](crate::engine::DisplayModel) using the same descriptor format as calldata.
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
-use crate::address_book::AddressBook;
 use crate::engine::{DisplayEntry, DisplayItem, DisplayModel, GroupIteration};
 use crate::error::Error;
+use crate::provider::DataProvider;
 use crate::resolver::ResolvedDescriptor;
-use crate::token::{TokenLookupKey, TokenSource};
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
     DisplayField, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleRule,
@@ -57,31 +58,30 @@ pub struct TypedDataDomain {
 }
 
 /// Format EIP-712 typed data into a display model.
-pub fn format_typed_data(
+pub async fn format_typed_data(
     descriptor: &Descriptor,
     data: &TypedData,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
-    format_typed_data_inner(descriptor, data, token_source, &[])
+    format_typed_data_inner(descriptor, data, data_provider, &[]).await
 }
 
 /// Format EIP-712 typed data with pre-resolved inner descriptors for nested calldata support.
-pub fn format_typed_data_multi(
+pub async fn format_typed_data_multi(
     descriptor: &Descriptor,
     data: &TypedData,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
-    format_typed_data_inner(descriptor, data, token_source, descriptors)
+    format_typed_data_inner(descriptor, data, data_provider, descriptors).await
 }
 
-fn format_typed_data_inner(
+async fn format_typed_data_inner(
     descriptor: &Descriptor,
     data: &TypedData,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
-    let address_book = AddressBook::from_descriptor(&descriptor.context, &descriptor.metadata);
     let chain_id = data.domain.chain_id.unwrap_or(1);
 
     // Find format by primary type name
@@ -98,12 +98,12 @@ fn format_typed_data_inner(
         &data.message,
         &format.fields,
         chain_id,
-        token_source,
-        &address_book,
+        data_provider,
         &mut warnings,
         descriptors,
         0,
-    )?;
+    )
+    .await?;
 
     Ok(DisplayModel {
         intent: format
@@ -120,122 +120,128 @@ fn format_typed_data_inner(
 }
 
 /// Render typed data fields recursively.
+///
+/// Uses `Pin<Box<dyn Future>>` to support recursive calls.
 #[allow(clippy::too_many_arguments)]
-fn render_typed_fields(
-    descriptor: &Descriptor,
-    message: &serde_json::Value,
+fn render_typed_fields<'a>(
+    descriptor: &'a Descriptor,
+    message: &'a serde_json::Value,
     fields: &[DisplayField],
     chain_id: u64,
-    token_source: &dyn TokenSource,
-    address_book: &AddressBook,
-    warnings: &mut Vec<String>,
-    descriptors: &[ResolvedDescriptor],
+    data_provider: &'a dyn DataProvider,
+    warnings: &'a mut Vec<String>,
+    descriptors: &'a [ResolvedDescriptor],
     depth: u8,
-) -> Result<Vec<DisplayEntry>, Error> {
-    let mut entries = Vec::new();
+) -> Pin<Box<dyn Future<Output = Result<Vec<DisplayEntry>, Error>> + Send + 'a>> {
+    let fields = fields.to_vec();
+    Box::pin(async move {
+        let mut entries = Vec::new();
 
-    for field in fields {
-        match field {
-            DisplayField::Reference { reference } => {
-                let key = reference
-                    .strip_prefix("#/definitions/")
-                    .unwrap_or(reference);
-                if let Some(resolved) = descriptor.display.definitions.get(key) {
-                    let mut sub = render_typed_fields(
+        for field in &fields {
+            match field {
+                DisplayField::Reference { reference } => {
+                    let key = reference
+                        .strip_prefix("#/definitions/")
+                        .unwrap_or(reference);
+                    if let Some(resolved) = descriptor.display.definitions.get(key) {
+                        let resolved_slice = vec![resolved.clone()];
+                        let mut sub = render_typed_fields(
+                            descriptor,
+                            message,
+                            &resolved_slice,
+                            chain_id,
+                            data_provider,
+                            warnings,
+                            descriptors,
+                            depth,
+                        )
+                        .await?;
+                        entries.append(&mut sub);
+                    } else {
+                        warnings.push(format!("unresolved reference: {reference}"));
+                    }
+                }
+                DisplayField::Group { field_group } => {
+                    if let Some(entry) = render_typed_field_group(
                         descriptor,
                         message,
-                        std::slice::from_ref(resolved),
+                        field_group,
                         chain_id,
-                        token_source,
-                        address_book,
+                        data_provider,
                         warnings,
                         descriptors,
                         depth,
-                    )?;
-                    entries.append(&mut sub);
-                } else {
-                    warnings.push(format!("unresolved reference: {reference}"));
+                    )
+                    .await?
+                    {
+                        entries.push(entry);
+                    }
                 }
-            }
-            DisplayField::Group { field_group } => {
-                if let Some(entry) = render_typed_field_group(
-                    descriptor,
-                    message,
-                    field_group,
-                    chain_id,
-                    token_source,
-                    address_book,
-                    warnings,
-                    descriptors,
-                    depth,
-                )? {
-                    entries.push(entry);
-                }
-            }
-            DisplayField::Simple {
-                path,
-                label,
-                format,
-                params,
-                visible,
-            } => {
-                let value = resolve_typed_path(message, path);
+                DisplayField::Simple {
+                    path,
+                    label,
+                    format,
+                    params,
+                    visible,
+                } => {
+                    let value = resolve_typed_path(message, path);
 
-                // Check visibility
-                if !check_typed_visibility(visible, &value) {
-                    continue;
-                }
+                    // Check visibility
+                    if !check_typed_visibility(visible, &value) {
+                        continue;
+                    }
 
-                // Intercept calldata format
-                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
-                    let entry = render_typed_calldata_field(
+                    // Intercept calldata format
+                    if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                        let entry = render_typed_calldata_field(
+                            descriptor,
+                            message,
+                            &value,
+                            params.as_ref(),
+                            label,
+                            chain_id,
+                            data_provider,
+                            descriptors,
+                            depth,
+                        )
+                        .await?;
+                        entries.push(entry);
+                        continue;
+                    }
+
+                    let formatted = format_typed_value(
                         descriptor,
-                        message,
                         &value,
+                        format.as_ref(),
                         params.as_ref(),
-                        label,
                         chain_id,
-                        token_source,
-                        descriptors,
-                        depth,
-                    )?;
-                    entries.push(entry);
-                    continue;
+                        message,
+                        data_provider,
+                        warnings,
+                    )
+                    .await?;
+
+                    entries.push(DisplayEntry::Item(DisplayItem {
+                        label: label.clone(),
+                        value: formatted,
+                    }));
                 }
-
-                let formatted = format_typed_value(
-                    descriptor,
-                    &value,
-                    format.as_ref(),
-                    params.as_ref(),
-                    chain_id,
-                    message,
-                    token_source,
-                    address_book,
-                    warnings,
-                )?;
-
-                entries.push(DisplayEntry::Item(DisplayItem {
-                    label: label.clone(),
-                    value: formatted,
-                }));
             }
         }
-    }
 
-    Ok(entries)
+        Ok(entries)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_typed_field_group(
-    descriptor: &Descriptor,
-    message: &serde_json::Value,
+async fn render_typed_field_group<'a>(
+    descriptor: &'a Descriptor,
+    message: &'a serde_json::Value,
     group: &FieldGroup,
     chain_id: u64,
-    token_source: &dyn TokenSource,
-    address_book: &AddressBook,
-    warnings: &mut Vec<String>,
-    descriptors: &[ResolvedDescriptor],
+    data_provider: &'a dyn DataProvider,
+    warnings: &'a mut Vec<String>,
+    descriptors: &'a [ResolvedDescriptor],
     depth: u8,
 ) -> Result<Option<DisplayEntry>, Error> {
     let sub = render_typed_fields(
@@ -243,12 +249,12 @@ fn render_typed_field_group(
         message,
         &group.fields,
         chain_id,
-        token_source,
-        address_book,
+        data_provider,
         warnings,
         descriptors,
         depth,
-    )?;
+    )
+    .await?;
 
     let items: Vec<DisplayItem> = sub
         .into_iter()
@@ -284,14 +290,14 @@ fn render_typed_field_group(
 ///
 /// The `#.` path prefix resolves from message fields (EIP-712 specific).
 #[allow(clippy::too_many_arguments)]
-fn render_typed_calldata_field(
+async fn render_typed_calldata_field(
     _descriptor: &Descriptor,
     message: &serde_json::Value,
     val: &Option<serde_json::Value>,
     params: Option<&FormatParams>,
     label: &str,
     chain_id: u64,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
     depth: u8,
 ) -> Result<DisplayEntry, Error> {
@@ -465,9 +471,10 @@ fn render_typed_calldata_field(
         &callee,
         &decoded,
         amount_bytes.as_deref(),
-        token_source,
+        data_provider,
         descriptors,
-    )?;
+    )
+    .await?;
 
     Ok(DisplayEntry::Nested {
         label: label.to_string(),
@@ -582,15 +589,14 @@ fn check_typed_visibility(rule: &VisibleRule, value: &Option<serde_json::Value>)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn format_typed_value(
+async fn format_typed_value(
     descriptor: &Descriptor,
     value: &Option<serde_json::Value>,
     format: Option<&FieldFormat>,
     params: Option<&FormatParams>,
     chain_id: u64,
     message: &serde_json::Value,
-    token_source: &dyn TokenSource,
-    address_book: &AddressBook,
+    data_provider: &dyn DataProvider,
     warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
     let Some(val) = value else {
@@ -626,8 +632,11 @@ fn format_typed_value(
         FieldFormat::Address => Ok(json_value_to_string(val)),
         FieldFormat::AddressName => {
             let addr = json_value_to_string(val);
-            if let Some(label) = address_book.resolve(&addr) {
-                Ok(label.to_string())
+            // Try local name first, then ENS, then fall back to raw address
+            if let Some(name) = data_provider.resolve_local_name(&addr, chain_id).await {
+                Ok(name)
+            } else if let Some(name) = data_provider.resolve_ens_name(&addr, chain_id).await {
+                Ok(name)
             } else {
                 Ok(addr)
             }
@@ -644,8 +653,7 @@ fn format_typed_value(
                 if let Some(ref token_path) = params.token_path {
                     let token_addr = resolve_typed_path(message, token_path);
                     if let Some(serde_json::Value::String(addr)) = token_addr {
-                        let key = TokenLookupKey::new(lookup_chain, &addr);
-                        token_source.lookup(&key)
+                        data_provider.resolve_token(lookup_chain, &addr).await
                     } else {
                         None
                     }
@@ -706,8 +714,7 @@ fn format_typed_value(
         FieldFormat::TokenTicker => {
             let lookup_chain = resolve_typed_chain_id(params, chain_id, message);
             let addr = json_value_to_string(val);
-            let key = TokenLookupKey::new(lookup_chain, &addr);
-            if let Some(meta) = token_source.lookup(&key) {
+            if let Some(meta) = data_provider.resolve_token(lookup_chain, &addr).await {
                 Ok(meta.symbol)
             } else {
                 warnings.push("token ticker not found".to_string());
@@ -879,8 +886,8 @@ mod tests {
         assert_eq!(json_value_to_string(&serde_json::json!(true)), "true");
     }
 
-    #[test]
-    fn test_permit_graceful_fallback() {
+    #[tokio::test]
+    async fn test_permit_graceful_fallback() {
         // Real USDC Permit typed data from wallet — no descriptor format for "Permit"
         let typed_data_json = r#"{
             "types": {
@@ -929,7 +936,6 @@ mod tests {
                 "owner": "test",
                 "enums": {},
                 "constants": {},
-                "addressBook": {},
                 "maps": {}
             },
             "display": {
@@ -939,9 +945,11 @@ mod tests {
         }"#;
 
         let descriptor = Descriptor::from_json(descriptor_json).unwrap();
-        let token_source = crate::token::EmptyTokenSource;
+        let provider = crate::provider::EmptyDataProvider;
 
-        let result = format_typed_data(&descriptor, &typed_data, &token_source).unwrap();
+        let result = format_typed_data(&descriptor, &typed_data, &provider)
+            .await
+            .unwrap();
 
         assert_eq!(result.intent, "Permit");
         assert!(!result.warnings.is_empty());

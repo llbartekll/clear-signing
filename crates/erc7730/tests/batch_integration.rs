@@ -5,8 +5,9 @@
 //! These tests document and validate the expected wallet-side batch usage pattern.
 
 use erc7730::decoder::parse_signature;
+use erc7730::provider::EmptyDataProvider;
 use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{EmptyTokenSource, StaticTokenSource, TokenMeta};
+use erc7730::token::{StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{
     format_calldata, format_calldata_multi, DisplayEntry, DisplayModel, TransactionContext,
@@ -107,8 +108,8 @@ fn build_exec_transaction_calldata(
 /// Wallet calls `format_calldata()` twice for two ERC-20 transfers to different
 /// recipients. Verifies each produces a correct `DisplayModel` with intent and
 /// formatted amounts. Joins intents with " and ".
-#[test]
-fn wallet_batch_two_erc20_transfers() {
+#[tokio::test]
+async fn wallet_batch_two_erc20_transfers() {
     let descriptor = load_descriptor("erc20-transfer.json");
     let usdc_addr = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
     let recipient_a = "0x1111111111111111111111111111111111111111";
@@ -134,7 +135,7 @@ fn wallet_batch_two_erc20_transfers() {
         value: None,
         from: None,
     };
-    let result_a = format_calldata(&descriptor, &tx_a, &tokens).unwrap();
+    let result_a = format_calldata(&descriptor, &tx_a, &tokens).await.unwrap();
 
     let calldata_b = build_erc20_transfer_calldata(recipient_b, 5_000_000); // 5 USDC
     let tx_b = TransactionContext {
@@ -144,7 +145,7 @@ fn wallet_batch_two_erc20_transfers() {
         value: None,
         from: None,
     };
-    let result_b = format_calldata(&descriptor, &tx_b, &tokens).unwrap();
+    let result_b = format_calldata(&descriptor, &tx_b, &tokens).await.unwrap();
 
     // Each produces correct DisplayModel
     assert_eq!(result_a.intent, "Transfer tokens");
@@ -172,8 +173,8 @@ fn wallet_batch_two_erc20_transfers() {
 /// Wallet calls `format_calldata()` for a known contract (ERC-20 transfer) and an
 /// unknown contract. Known call produces full formatting, unknown call degrades
 /// gracefully to raw preview.
-#[test]
-fn wallet_batch_mixed_known_unknown() {
+#[tokio::test]
+async fn wallet_batch_mixed_known_unknown() {
     let descriptor = load_descriptor("erc20-transfer.json");
     let usdc_addr = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
     let unknown_addr = "0x0000000000000000000000000000000000000042";
@@ -199,7 +200,9 @@ fn wallet_batch_mixed_known_unknown() {
         value: None,
         from: None,
     };
-    let known_result = format_calldata(&descriptor, &known_tx, &tokens).unwrap();
+    let known_result = format_calldata(&descriptor, &known_tx, &tokens)
+        .await
+        .unwrap();
 
     // Unknown call: random selector not in descriptor — graceful degradation
     let unknown_calldata =
@@ -212,7 +215,9 @@ fn wallet_batch_mixed_known_unknown() {
         value: None,
         from: None,
     };
-    let unknown_result = format_calldata(&descriptor, &unknown_tx, &EmptyTokenSource).unwrap();
+    let unknown_result = format_calldata(&descriptor, &unknown_tx, &EmptyDataProvider)
+        .await
+        .unwrap();
 
     // Known call: full formatting with intent and token amounts
     assert_eq!(known_result.intent, "Transfer tokens");
@@ -243,8 +248,8 @@ fn wallet_batch_mixed_known_unknown() {
 /// Wallet calls `format_calldata()` for 3 calls (approve + transfer + deposit).
 /// Verifies `interpolated_intent` concatenation with " and " separator matches
 /// the spec expectation.
-#[test]
-fn wallet_batch_intent_concatenation() {
+#[tokio::test]
+async fn wallet_batch_intent_concatenation() {
     let approve_descriptor = load_descriptor("erc20-approve.json");
     let transfer_descriptor = load_descriptor("erc20-transfer.json");
 
@@ -309,7 +314,9 @@ fn wallet_batch_intent_concatenation() {
         value: None,
         from: None,
     };
-    let approve_result = format_calldata(&approve_descriptor, &approve_tx, &tokens).unwrap();
+    let approve_result = format_calldata(&approve_descriptor, &approve_tx, &tokens)
+        .await
+        .unwrap();
 
     // Call 2: transfer
     let recipient = "0x3333333333333333333333333333333333333333";
@@ -321,7 +328,9 @@ fn wallet_batch_intent_concatenation() {
         value: None,
         from: None,
     };
-    let transfer_result = format_calldata(&transfer_descriptor, &transfer_tx, &tokens).unwrap();
+    let transfer_result = format_calldata(&transfer_descriptor, &transfer_tx, &tokens)
+        .await
+        .unwrap();
 
     // Call 3: deposit
     let deposit_sig = parse_signature("deposit(uint256)").unwrap();
@@ -335,8 +344,9 @@ fn wallet_batch_intent_concatenation() {
         value: None,
         from: None,
     };
-    let deposit_result =
-        format_calldata(&deposit_descriptor, &deposit_tx, &EmptyTokenSource).unwrap();
+    let deposit_result = format_calldata(&deposit_descriptor, &deposit_tx, &EmptyDataProvider)
+        .await
+        .unwrap();
 
     // Verify individual intents
     assert_eq!(approve_result.intent, "Approve token spending");
@@ -369,8 +379,8 @@ fn wallet_batch_intent_concatenation() {
 /// Full wallet flow: `format_calldata()` per inner call for display, then
 /// `format_calldata_multi()` for the outer Safe `execTransaction` wrapper.
 /// Verifies both layers produce valid output independently.
-#[test]
-fn wallet_batch_with_safe_wrapper() {
+#[tokio::test]
+async fn wallet_batch_with_safe_wrapper() {
     let erc20_descriptor = load_descriptor("erc20-transfer.json");
     let safe_descriptor = load_descriptor("safe-exec-transaction.json");
 
@@ -399,7 +409,9 @@ fn wallet_batch_with_safe_wrapper() {
         value: None,
         from: None,
     };
-    let inner_display = format_calldata(&erc20_descriptor, &inner_tx, &tokens).unwrap();
+    let inner_display = format_calldata(&erc20_descriptor, &inner_tx, &tokens)
+        .await
+        .unwrap();
 
     assert_eq!(inner_display.intent, "Transfer tokens");
     if let DisplayEntry::Item(ref item) = inner_display.entries[1] {
@@ -432,7 +444,9 @@ fn wallet_batch_with_safe_wrapper() {
         value: None,
         from: None,
     };
-    let safe_result = format_calldata_multi(&descriptors, &outer_tx, &tokens).unwrap();
+    let safe_result = format_calldata_multi(&descriptors, &outer_tx, &tokens)
+        .await
+        .unwrap();
 
     // Verify outer Safe formatting
     assert_eq!(safe_result.intent, "Execute Safe transaction");

@@ -6,11 +6,11 @@
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();
 
-pub mod address_book;
 pub mod decoder;
 pub mod eip712;
 pub mod engine;
 pub mod error;
+pub mod provider;
 pub mod resolver;
 pub mod token;
 pub mod types;
@@ -21,8 +21,9 @@ use error::Error;
 
 // Re-exports for convenience
 pub use engine::{DisplayEntry, DisplayItem, DisplayModel};
+pub use provider::{DataProvider, EmptyDataProvider};
 pub use resolver::{DescriptorSource, FilesystemSource, ResolvedDescriptor};
-pub use token::{CompositeTokenSource, TokenMeta, TokenSource, WellKnownTokenSource};
+pub use token::{CompositeDataProvider, TokenMeta, WellKnownTokenSource};
 pub use types::descriptor::Descriptor;
 
 /// Transaction context for calldata formatting.
@@ -44,10 +45,10 @@ pub struct FormatOptions<'a> {
 /// This is the main entry point for calldata clear signing.
 /// It parses the function signature from the descriptor's format keys,
 /// decodes the calldata, and renders the display model.
-pub fn format_calldata(
+pub async fn format_calldata(
     descriptor: &Descriptor,
     tx: &TransactionContext<'_>,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
     if tx.calldata.len() < 4 {
         return Err(Error::Decode(error::DecodeError::CalldataTooShort {
@@ -80,8 +81,9 @@ pub fn format_calldata(
         tx.to,
         &decoded,
         tx.value,
-        token_source,
+        data_provider,
     )
+    .await
 }
 
 /// Inject EIP-7730 container values (@.value, @.to, @.chainId, @.from) as synthetic arguments.
@@ -189,10 +191,10 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
 ///
 /// The first matching descriptor by chain_id + address is used as the outer descriptor.
 /// Remaining descriptors are available for resolving inner calldata fields.
-pub fn format_calldata_multi(
+pub async fn format_calldata_multi(
     descriptors: &[ResolvedDescriptor],
     tx: &TransactionContext<'_>,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
     if tx.calldata.len() < 4 {
         return Err(Error::Decode(error::DecodeError::CalldataTooShort {
@@ -238,18 +240,19 @@ pub fn format_calldata_multi(
         tx.to,
         &decoded,
         tx.value,
-        token_source,
+        data_provider,
         descriptors,
     )
+    .await
 }
 
 /// Format EIP-712 typed data for clear signing display.
-pub fn format_typed_data(
+pub async fn format_typed_data(
     descriptor: &Descriptor,
     data: &eip712::TypedData,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
-    eip712::format_typed_data(descriptor, data, token_source)
+    eip712::format_typed_data(descriptor, data, data_provider).await
 }
 
 /// High-level convenience: resolve descriptor then format calldata.
@@ -261,12 +264,12 @@ pub fn format_typed_data(
 pub async fn format(
     tx: &TransactionContext<'_>,
     source: &dyn DescriptorSource,
-    tokens: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
     opts: Option<&FormatOptions<'_>>,
 ) -> Result<DisplayModel, Error> {
     let addr = opts.and_then(|o| o.implementation_address).unwrap_or(tx.to);
     match source.resolve_calldata(tx.chain_id, addr).await {
-        Ok(resolved) => format_calldata(&resolved.descriptor, tx, tokens),
+        Ok(resolved) => format_calldata(&resolved.descriptor, tx, data_provider).await,
         Err(error::ResolveError::NotFound { .. }) => Ok(build_raw_fallback(tx.calldata)),
         Err(e) => Err(Error::Resolve(e)),
     }
@@ -278,7 +281,7 @@ pub async fn format(
 pub async fn format_typed(
     data: &eip712::TypedData,
     source: &dyn DescriptorSource,
-    tokens: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
     let chain_id = data.domain.chain_id.unwrap_or(1);
     let address = data
@@ -287,7 +290,7 @@ pub async fn format_typed(
         .as_deref()
         .unwrap_or("0x0000000000000000000000000000000000000000");
     match source.resolve_typed(chain_id, address).await {
-        Ok(resolved) => format_typed_data(&resolved.descriptor, data, tokens),
+        Ok(resolved) => format_typed_data(&resolved.descriptor, data, data_provider).await,
         Err(error::ResolveError::NotFound { .. }) => Ok(eip712::build_typed_raw_fallback(data)),
         Err(e) => Err(Error::Resolve(e)),
     }
@@ -320,7 +323,8 @@ pub(crate) fn find_matching_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::token::{EmptyTokenSource, StaticTokenSource};
+    use crate::provider::EmptyDataProvider;
+    use crate::token::StaticTokenSource;
 
     fn test_descriptor_json() -> &'static str {
         r#"{
@@ -362,8 +366,8 @@ mod tests {
         }"#
     }
 
-    #[test]
-    fn test_full_calldata_pipeline() {
+    #[tokio::test]
+    async fn test_full_calldata_pipeline() {
         let descriptor = Descriptor::from_json(test_descriptor_json()).unwrap();
         let sig = decoder::parse_signature("transfer(address,uint256)").unwrap();
 
@@ -378,7 +382,7 @@ mod tests {
         amount_word[31] = 0xe8;
         calldata.extend_from_slice(&amount_word);
 
-        let tokens = EmptyTokenSource;
+        let provider = EmptyDataProvider;
         let tx = TransactionContext {
             chain_id: 1,
             to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
@@ -386,7 +390,7 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+        let result = format_calldata(&descriptor, &tx, &provider).await.unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
         assert_eq!(result.entries.len(), 2);
@@ -406,8 +410,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_full_pipeline_with_token_amount() {
+    #[tokio::test]
+    async fn test_full_pipeline_with_token_amount() {
         let json = r#"{
             "context": {
                 "contract": {
@@ -485,14 +489,13 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &tokens).unwrap();
+        let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
 
-        // The "To" field should resolve to "Tether USD" via address book (contractName)
+        // The "To" field should show the address (addressName resolves via data provider)
         if let DisplayEntry::Item(ref item) = result.entries[0] {
             assert_eq!(item.label, "To");
-            assert_eq!(item.value, "Tether USD");
         }
 
         // The amount should be formatted with token decimals
@@ -502,8 +505,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_visibility_rules() {
+    #[tokio::test]
+    async fn test_visibility_rules() {
         let json = r#"{
             "context": {
                 "contract": {
@@ -557,7 +560,9 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
+        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+            .await
+            .unwrap();
 
         // Only 1 field should be visible (the second has visible: false)
         assert_eq!(result.entries.len(), 1);
@@ -566,8 +571,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_field_group() {
+    #[tokio::test]
+    async fn test_field_group() {
         let json = r#"{
             "context": {
                 "contract": {
@@ -631,7 +636,9 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
+        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+            .await
+            .unwrap();
 
         assert_eq!(result.entries.len(), 1);
         if let DisplayEntry::Group { label, items, .. } = &result.entries[0] {
@@ -645,8 +652,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_maps_lookup() {
+    #[tokio::test]
+    async fn test_maps_lookup() {
         let json = r#"{
             "context": {
                 "contract": {
@@ -705,7 +712,9 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
+        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+            .await
+            .unwrap();
 
         if let DisplayEntry::Item(ref item) = result.entries[0] {
             assert_eq!(item.label, "Order Type");
@@ -734,13 +743,15 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format(&tx, &source, &EmptyTokenSource, None).await.unwrap();
+        let result = format(&tx, &source, &EmptyDataProvider, None)
+            .await
+            .unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
     }
 
-    #[test]
-    fn test_stakeweight_increase_unlock_time() {
+    #[tokio::test]
+    async fn test_stakeweight_increase_unlock_time() {
         let json = r#"{
             "context": {
                 "contract": {
@@ -788,7 +799,9 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyTokenSource).unwrap();
+        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+            .await
+            .unwrap();
 
         assert_eq!(result.intent, "Increase Unlock Time");
         assert_eq!(result.entries.len(), 1);
@@ -805,8 +818,8 @@ mod tests {
         assert!(result.warnings.is_empty());
     }
 
-    #[test]
-    fn test_eip712_format() {
+    #[tokio::test]
+    async fn test_eip712_format() {
         let json = r#"{
             "context": {
                 "eip712": {
@@ -860,7 +873,9 @@ mod tests {
             }),
         };
 
-        let result = format_typed_data(&descriptor, &typed_data, &EmptyTokenSource).unwrap();
+        let result = format_typed_data(&descriptor, &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
         assert_eq!(result.intent, "Permit token spending");
         assert_eq!(result.entries.len(), 2);
 

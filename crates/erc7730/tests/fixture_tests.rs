@@ -5,9 +5,9 @@
 //!
 //! When `expected` is `null`, capture mode: populate and rewrite `tests.json`.
 
-use erc7730::token::{CompositeTokenSource, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use erc7730::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
 use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, DisplayModel, TransactionContext};
+use erc7730::{format_calldata, DataProvider, DisplayModel, TransactionContext};
 use std::path::{Path, PathBuf};
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -63,7 +63,7 @@ fn load_descriptor(base_dir: &Path, relative: &str) -> Descriptor {
     Descriptor::from_json(&json).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()))
 }
 
-fn build_token_source(tokens: &[TokenEntry]) -> CompositeTokenSource {
+fn build_token_source(tokens: &[TokenEntry]) -> CompositeDataProvider {
     let mut custom = StaticTokenSource::new();
     for t in tokens {
         custom.insert(
@@ -76,7 +76,7 @@ fn build_token_source(tokens: &[TokenEntry]) -> CompositeTokenSource {
             },
         );
     }
-    CompositeTokenSource::new(vec![
+    CompositeDataProvider::new(vec![
         Box::new(custom),
         Box::new(WellKnownTokenSource::new()),
     ])
@@ -102,9 +102,9 @@ fn value_bytes(hex_str: &str) -> Option<Vec<u8>> {
     Some(padded)
 }
 
-fn run_test_case(
+async fn run_test_case(
     descriptor: &Descriptor,
-    token_source: &dyn erc7730::TokenSource,
+    data_provider: &dyn DataProvider,
     tc: &TestCase,
 ) -> Result<DisplayModel, String> {
     let calldata = decode_hex(&tc.calldata);
@@ -117,11 +117,13 @@ fn run_test_case(
         value: val.as_deref(),
         from: Some(tc.from.as_str()),
     };
-    format_calldata(descriptor, &tx, token_source).map_err(|e| format!("{e}"))
+    format_calldata(descriptor, &tx, data_provider)
+        .await
+        .map_err(|e| format!("{e}"))
 }
 
-#[test]
-fn fixture_snapshot_tests() {
+#[tokio::test]
+async fn fixture_snapshot_tests() {
     let suites = discover_fixture_suites();
     if suites.is_empty() {
         // No fixture directories yet — test is a no-op
@@ -144,7 +146,7 @@ fn fixture_snapshot_tests() {
         let token_source = build_token_source(&suite.tokens);
 
         for tc in &mut suite.tests {
-            let result = run_test_case(&descriptor, &token_source, tc);
+            let result = run_test_case(&descriptor, &token_source, tc).await;
 
             match (&tc.expected, &result) {
                 (None, Ok(model)) => {

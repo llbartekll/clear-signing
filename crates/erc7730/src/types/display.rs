@@ -256,6 +256,36 @@ pub struct FormatParams {
     #[serde(rename = "spenderPath")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spender_path: Option<String>,
+
+    /// Address types for addressName format (spec: "eoa", "contract", etc.).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub types: Option<Vec<String>>,
+
+    /// Trusted name sources for addressName format (spec: "ens", "local").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<String>>,
+
+    /// Sender address check for addressName format.
+    #[serde(rename = "senderAddress")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_address: Option<SenderAddress>,
+
+    /// Path to the collection address for nftName format.
+    #[serde(rename = "collectionPath")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection_path: Option<String>,
+
+    /// Constant collection address for nftName format.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
+}
+
+/// Sender address — can be a single address or an array of addresses/paths.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SenderAddress {
+    Single(String),
+    Multiple(Vec<String>),
 }
 
 /// Encryption parameters for encrypted fields.

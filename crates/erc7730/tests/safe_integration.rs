@@ -1,8 +1,9 @@
 //! Integration tests for nested calldata (Safe execTransaction wrapping inner calls).
 
 use erc7730::decoder::parse_signature;
+use erc7730::provider::EmptyDataProvider;
 use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{EmptyTokenSource, StaticTokenSource, TokenMeta};
+use erc7730::token::{StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{format_calldata_multi, DisplayEntry, TransactionContext};
 
@@ -97,8 +98,8 @@ fn build_erc20_transfer_calldata(to: &str, amount: u128) -> Vec<u8> {
     calldata
 }
 
-#[test]
-fn safe_exec_transaction_wrapping_erc20_transfer() {
+#[tokio::test]
+async fn safe_exec_transaction_wrapping_erc20_transfer() {
     let safe_descriptor = load_descriptor("safe-exec-transaction.json");
     let erc20_descriptor = load_descriptor("erc20-transfer.json");
 
@@ -141,7 +142,9 @@ fn safe_exec_transaction_wrapping_erc20_transfer() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &tokens).unwrap();
+    let result = format_calldata_multi(&descriptors, &tx, &tokens)
+        .await
+        .unwrap();
 
     assert_eq!(result.intent, "Execute Safe transaction");
 
@@ -216,8 +219,8 @@ fn safe_exec_transaction_wrapping_erc20_transfer() {
     }
 }
 
-#[test]
-fn safe_exec_transaction_no_inner_descriptor() {
+#[tokio::test]
+async fn safe_exec_transaction_no_inner_descriptor() {
     let safe_descriptor = load_descriptor("safe-exec-transaction.json");
     let safe_addr = "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552";
     let unknown_contract = "0x0000000000000000000000000000000000000042";
@@ -241,7 +244,9 @@ fn safe_exec_transaction_no_inner_descriptor() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &EmptyTokenSource).unwrap();
+    let result = format_calldata_multi(&descriptors, &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
 
     assert_eq!(result.intent, "Execute Safe transaction");
 
@@ -269,8 +274,8 @@ fn safe_exec_transaction_no_inner_descriptor() {
     }
 }
 
-#[test]
-fn safe_exec_transaction_container_value_propagation() {
+#[tokio::test]
+async fn safe_exec_transaction_container_value_propagation() {
     let safe_descriptor = load_descriptor("safe-exec-transaction.json");
     let erc20_descriptor = load_descriptor("erc20-transfer.json");
 
@@ -314,7 +319,9 @@ fn safe_exec_transaction_container_value_propagation() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &tokens).unwrap();
+    let result = format_calldata_multi(&descriptors, &tx, &tokens)
+        .await
+        .unwrap();
 
     // The inner call should still decode properly
     match &result.entries[2] {
@@ -332,8 +339,8 @@ fn safe_exec_transaction_container_value_propagation() {
     }
 }
 
-#[test]
-fn safe_exec_transaction_depth_limit() {
+#[tokio::test]
+async fn safe_exec_transaction_depth_limit() {
     // Create a descriptor that wraps itself (depth test)
     let safe_descriptor = load_descriptor("safe-exec-transaction.json");
     let safe_addr = "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552";
@@ -378,7 +385,9 @@ fn safe_exec_transaction_depth_limit() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &EmptyTokenSource).unwrap();
+    let result = format_calldata_multi(&descriptors, &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
 
     // Verify the result doesn't panic and has nested structure
     assert_eq!(result.intent, "Execute Safe transaction");

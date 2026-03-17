@@ -5,8 +5,9 @@
 
 use erc7730::decoder::parse_signature;
 use erc7730::eip712::TypedData;
+use erc7730::provider::EmptyDataProvider;
 use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{EmptyTokenSource, StaticTokenSource, TokenMeta};
+use erc7730::token::{StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::DisplayEntry;
 
@@ -101,8 +102,8 @@ fn build_userop_typed_data(sender: &str, call_data: &[u8]) -> TypedData {
     serde_json::from_value(typed_data_json).unwrap()
 }
 
-#[test]
-fn userop_with_erc20_transfer_via_execute() {
+#[tokio::test]
+async fn userop_with_erc20_transfer_via_execute() {
     // Three-level nesting: UserOp (EIP-712) → execute (calldata) → transfer (calldata)
     let userop_descriptor = load_descriptor("userops-eip712.json");
     let account_descriptor = load_descriptor("smart-account-execute.json");
@@ -151,6 +152,7 @@ fn userop_with_erc20_transfer_via_execute() {
         &tokens,
         &descriptors,
     )
+    .await
     .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
@@ -249,8 +251,8 @@ fn userop_with_erc20_transfer_via_execute() {
     }
 }
 
-#[test]
-fn userop_direct_erc20_transfer() {
+#[tokio::test]
+async fn userop_direct_erc20_transfer() {
     // Two-level nesting: UserOp (EIP-712) → transfer (calldata directly in callData)
     // Simulates an account whose callData IS the target call (no execute wrapper)
     let userop_descriptor = load_descriptor("userops-eip712.json");
@@ -286,6 +288,7 @@ fn userop_direct_erc20_transfer() {
         &tokens,
         &descriptors,
     )
+    .await
     .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
@@ -312,8 +315,8 @@ fn userop_direct_erc20_transfer() {
     }
 }
 
-#[test]
-fn userop_no_matching_inner_descriptor() {
+#[tokio::test]
+async fn userop_no_matching_inner_descriptor() {
     // UserOp with callData pointing to an unknown contract — graceful degradation
     let userop_descriptor = load_descriptor("userops-eip712.json");
     let unknown_sender = "0x9999999999999999999999999999999999999999";
@@ -327,9 +330,10 @@ fn userop_no_matching_inner_descriptor() {
     let result = erc7730::eip712::format_typed_data_multi(
         &userop_descriptor,
         &typed_data,
-        &EmptyTokenSource,
+        &EmptyDataProvider,
         &[],
     )
+    .await
     .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
@@ -358,8 +362,8 @@ fn userop_no_matching_inner_descriptor() {
     }
 }
 
-#[test]
-fn userop_hash_prefix_resolves_from_message() {
+#[tokio::test]
+async fn userop_hash_prefix_resolves_from_message() {
     // Verify that `#.sender` resolves from the EIP-712 message field, not from calldata
     let userop_descriptor = load_descriptor("userops-eip712.json");
     let erc20_descriptor = load_descriptor("erc20-transfer.json");
@@ -380,9 +384,10 @@ fn userop_hash_prefix_resolves_from_message() {
     let result = erc7730::eip712::format_typed_data_multi(
         &userop_descriptor,
         &typed_data,
-        &EmptyTokenSource,
+        &EmptyDataProvider,
         &descriptors,
     )
+    .await
     .unwrap();
 
     // The #.sender path should have resolved to the sender address from the message,

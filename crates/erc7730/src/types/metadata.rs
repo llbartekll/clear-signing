@@ -26,11 +26,6 @@ pub struct Metadata {
     #[serde(default)]
     pub constants: HashMap<String, serde_json::Value>,
 
-    /// Address book: address → label.
-    #[serde(rename = "addressBook")]
-    #[serde(default)]
-    pub address_book: HashMap<String, String>,
-
     /// Contract name for display.
     #[serde(rename = "contractName")]
     #[serde(skip_serializing_if = "Option::is_none")]

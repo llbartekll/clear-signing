@@ -1,16 +1,19 @@
 //! Formatting pipeline: resolves display fields, formats decoded values,
 //! and produces a [`DisplayModel`] with labeled entries for wallet UIs.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use num_bigint::BigUint;
 
-use crate::address_book::AddressBook;
 use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::error::Error;
+use crate::provider::DataProvider;
 use crate::resolver::ResolvedDescriptor;
-use crate::token::{TokenLookupKey, TokenSource};
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
-    DisplayField, DisplayFormat, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleRule,
+    DisplayField, DisplayFormat, FieldFormat, FieldGroup, FormatParams, Iteration, SenderAddress,
+    VisibleRule,
 };
 
 /// Maximum recursion depth for nested calldata formatting.
@@ -84,26 +87,24 @@ fn chain_name(chain_id: u64) -> String {
     }
 }
 
-/// Rendering context passed through the pipeline.
+/// Rendering context passed through the pipeline (immutable).
 struct RenderContext<'a> {
     descriptor: &'a Descriptor,
     decoded: &'a DecodedArguments,
     chain_id: u64,
-    token_source: &'a dyn TokenSource,
-    address_book: &'a AddressBook,
-    warnings: Vec<String>,
+    data_provider: &'a dyn DataProvider,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
 }
 
 /// Format calldata into a display model using a descriptor.
-pub fn format_calldata(
+pub async fn format_calldata(
     descriptor: &Descriptor,
     chain_id: u64,
     _to: &str,
     decoded: &DecodedArguments,
     _value: Option<&[u8]>,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
     format_calldata_inner(
         descriptor,
@@ -111,19 +112,20 @@ pub fn format_calldata(
         _to,
         decoded,
         _value,
-        token_source,
+        data_provider,
         &[],
     )
+    .await
 }
 
 /// Format calldata with pre-resolved inner descriptors for nested calldata support.
-pub fn format_calldata_multi(
+pub async fn format_calldata_multi(
     descriptor: &Descriptor,
     chain_id: u64,
     to: &str,
     decoded: &DecodedArguments,
     value: Option<&[u8]>,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
     format_calldata_inner(
@@ -132,42 +134,40 @@ pub fn format_calldata_multi(
         to,
         decoded,
         value,
-        token_source,
+        data_provider,
         descriptors,
     )
+    .await
 }
 
-fn format_calldata_inner(
+async fn format_calldata_inner(
     descriptor: &Descriptor,
     chain_id: u64,
     _to: &str,
     decoded: &DecodedArguments,
     _value: Option<&[u8]>,
-    token_source: &dyn TokenSource,
+    data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
-    let address_book = AddressBook::from_descriptor(&descriptor.context, &descriptor.metadata);
-
     // Find matching format by function name + signature
     let format = find_format(descriptor, &decoded.function_name, &decoded.selector)?;
 
-    let mut ctx = RenderContext {
+    let ctx = RenderContext {
         descriptor,
         decoded,
         chain_id,
-        token_source,
-        address_book: &address_book,
-        warnings: Vec::new(),
+        data_provider,
         descriptors,
         depth: 0,
     };
 
-    let entries = render_fields(&mut ctx, &format.fields)?;
+    let mut warnings = Vec::new();
+    let entries = render_fields(&ctx, &format.fields, &mut warnings).await?;
 
-    let interpolated = format
-        .interpolated_intent
-        .as_ref()
-        .map(|template| interpolate_intent(template, &ctx, &format.fields));
+    let interpolated = match format.interpolated_intent.as_ref() {
+        Some(template) => Some(interpolate_intent(template, &ctx, &format.fields).await),
+        None => None,
+    };
 
     Ok(DisplayModel {
         intent: format
@@ -176,7 +176,7 @@ fn format_calldata_inner(
             .unwrap_or_else(|| decoded.function_name.clone()),
         interpolated_intent: interpolated,
         entries,
-        warnings: ctx.warnings,
+        warnings,
     })
 }
 
@@ -211,87 +211,101 @@ fn find_format<'a>(
 }
 
 /// Render a list of display fields into display entries.
-fn render_fields(
-    ctx: &mut RenderContext<'_>,
+///
+/// Uses `Pin<Box<dyn Future>>` to support recursive calls (references, groups).
+fn render_fields<'a>(
+    ctx: &'a RenderContext<'a>,
     fields: &[DisplayField],
-) -> Result<Vec<DisplayEntry>, Error> {
-    let mut entries = Vec::new();
+    warnings: &'a mut Vec<String>,
+) -> Pin<Box<dyn Future<Output = Result<Vec<DisplayEntry>, Error>> + Send + 'a>> {
+    let fields = fields.to_vec();
+    Box::pin(async move {
+        let mut entries = Vec::new();
 
-    for field in fields {
-        match field {
-            DisplayField::Reference { reference } => {
-                if let Some(resolved) = resolve_reference(ctx.descriptor, reference) {
-                    let mut sub = render_fields(ctx, std::slice::from_ref(&resolved))?;
-                    entries.append(&mut sub);
-                } else {
-                    ctx.warnings
-                        .push(format!("unresolved reference: {reference}"));
+        for field in &fields {
+            match field {
+                DisplayField::Reference { reference } => {
+                    if let Some(resolved) = resolve_reference(ctx.descriptor, reference) {
+                        let resolved_slice = vec![resolved];
+                        let mut sub = render_fields(ctx, &resolved_slice, warnings).await?;
+                        entries.append(&mut sub);
+                    } else {
+                        warnings.push(format!("unresolved reference: {reference}"));
+                    }
                 }
-            }
-            DisplayField::Group { field_group } => {
-                if let Some(entry) = render_field_group(ctx, field_group)? {
-                    entries.push(entry);
+                DisplayField::Group { field_group } => {
+                    if let Some(entry) = render_field_group(ctx, field_group, warnings).await? {
+                        entries.push(entry);
+                    }
                 }
-            }
-            DisplayField::Simple {
-                path,
-                label,
-                format,
-                params,
-                visible,
-            } => {
-                // Resolve the value from decoded arguments
-                let value = resolve_path(ctx.decoded, path);
+                DisplayField::Simple {
+                    path,
+                    label,
+                    format,
+                    params,
+                    visible,
+                } => {
+                    // Resolve the value from decoded arguments
+                    let value = resolve_path(ctx.decoded, path);
 
-                // Check visibility
-                if !check_visibility(visible, &value) {
-                    continue;
+                    // Check visibility
+                    if !check_visibility(visible, &value) {
+                        continue;
+                    }
+
+                    // Intercept calldata format — produces a Nested entry instead of a flat value
+                    if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                        let entry =
+                            render_calldata_field(ctx, &value, params.as_ref(), label).await?;
+                        entries.push(entry);
+                        continue;
+                    }
+
+                    let formatted = format_value(
+                        ctx,
+                        &value,
+                        format.as_ref(),
+                        params.as_ref(),
+                        path,
+                        label,
+                        warnings,
+                    )
+                    .await?;
+
+                    entries.push(DisplayEntry::Item(DisplayItem {
+                        label: label.clone(),
+                        value: formatted,
+                    }));
                 }
-
-                // Intercept calldata format — produces a Nested entry instead of a flat value
-                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
-                    let entry = render_calldata_field(ctx, &value, params.as_ref(), label)?;
-                    entries.push(entry);
-                    continue;
-                }
-
-                let formatted =
-                    format_value(ctx, &value, format.as_ref(), params.as_ref(), path, label)?;
-
-                entries.push(DisplayEntry::Item(DisplayItem {
-                    label: label.clone(),
-                    value: formatted,
-                }));
             }
         }
-    }
 
-    Ok(entries)
+        Ok(entries)
+    })
 }
 
 /// Render a field group recursively.
-fn render_field_group(
-    ctx: &mut RenderContext<'_>,
+async fn render_field_group<'a>(
+    ctx: &'a RenderContext<'a>,
     group: &FieldGroup,
+    warnings: &'a mut Vec<String>,
 ) -> Result<Option<DisplayEntry>, Error> {
     let mut items = Vec::new();
 
-    for field in &group.fields {
-        let sub_entries = render_fields(ctx, std::slice::from_ref(field))?;
-        for entry in sub_entries {
-            match entry {
-                DisplayEntry::Item(item) => items.push(item),
-                DisplayEntry::Group {
-                    items: sub_items, ..
-                } => {
-                    items.extend(sub_items);
-                }
-                DisplayEntry::Nested { intent, .. } => {
-                    items.push(DisplayItem {
-                        label: "Nested call".to_string(),
-                        value: intent,
-                    });
-                }
+    let sub_entries = render_fields(ctx, &group.fields, warnings).await?;
+    for entry in sub_entries {
+        match entry {
+            DisplayEntry::Item(item) => items.push(item),
+            DisplayEntry::Group {
+                items: sub_items, ..
+            } => {
+                items.extend(sub_items);
+            }
+            DisplayEntry::Nested { intent, .. } => {
+                items.push(DisplayItem {
+                    label: "Nested call".to_string(),
+                    value: intent,
+                });
             }
         }
     }
@@ -430,16 +444,17 @@ fn check_visibility(rule: &VisibleRule, value: &Option<ArgumentValue>) -> bool {
 }
 
 /// Format a decoded value according to its format type.
-fn format_value(
-    ctx: &mut RenderContext<'_>,
+async fn format_value(
+    ctx: &RenderContext<'_>,
     value: &Option<ArgumentValue>,
     format: Option<&FieldFormat>,
     params: Option<&FormatParams>,
     path: &str,
     label: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
     let Some(val) = value else {
-        ctx.warnings.push(format!(
+        warnings.push(format!(
             "could not resolve path: {} for field '{}'",
             path, label
         ));
@@ -469,39 +484,35 @@ fn format_value(
     };
 
     match fmt {
-        FieldFormat::TokenAmount => format_token_amount(ctx, val, params, label, path),
+        FieldFormat::TokenAmount => {
+            format_token_amount(ctx, val, params, label, path, warnings).await
+        }
         FieldFormat::Amount => format_amount(ctx, val, path),
         FieldFormat::Date => format_date(val),
         FieldFormat::Enum => format_enum(ctx, val, params),
         FieldFormat::Address => Ok(format_address(val)),
-        FieldFormat::AddressName => Ok(format_address_name(ctx, val)),
+        FieldFormat::AddressName => format_address_name(ctx, val, params).await,
         FieldFormat::Number => Ok(format_number(val)),
         FieldFormat::Raw => Ok(format_raw(val)),
-        FieldFormat::TokenTicker => format_token_ticker(ctx, val, params),
+        FieldFormat::TokenTicker => format_token_ticker(ctx, val, params, warnings).await,
         FieldFormat::ChainId => format_chain_id(val),
         FieldFormat::Duration => Ok(format_duration(val)),
         FieldFormat::Unit => Ok(format_unit(val, params)),
         FieldFormat::Calldata => {
             // Should not reach here — calldata format is intercepted in render_fields
-            ctx.warnings.push(format!(
+            warnings.push(format!(
                 "calldata format should be handled by render_calldata_field for field '{}' (path: {})",
                 label, path
             ));
             Ok(format_raw(val))
         }
-        FieldFormat::NftName => {
-            ctx.warnings.push(format!(
-                "format {:?} not yet implemented for field '{}' (path: {})",
-                fmt, label, path
-            ));
-            Ok(format_raw(val))
-        }
+        FieldFormat::NftName => format_nft_name(ctx, val, params, label, path, warnings).await,
     }
 }
 
 /// Render a nested calldata field by decoding the inner call and recursively formatting it.
-fn render_calldata_field(
-    ctx: &mut RenderContext<'_>,
+async fn render_calldata_field(
+    ctx: &RenderContext<'_>,
     val: &Option<ArgumentValue>,
     params: Option<&FormatParams>,
     label: &str,
@@ -630,8 +641,6 @@ fn render_calldata_field(
     );
 
     // Build inner render context
-    let inner_address_book =
-        AddressBook::from_descriptor(&inner_descriptor.context, &inner_descriptor.metadata);
     let inner_format =
         match find_format(inner_descriptor, &decoded.function_name, &decoded.selector) {
             Ok(f) => f,
@@ -640,19 +649,18 @@ fn render_calldata_field(
             }
         };
 
-    let mut inner_ctx = RenderContext {
+    let inner_ctx = RenderContext {
         descriptor: inner_descriptor,
         decoded: &decoded,
         chain_id: ctx.chain_id,
-        token_source: ctx.token_source,
-        address_book: &inner_address_book,
-        warnings: Vec::new(),
+        data_provider: ctx.data_provider,
         descriptors: ctx.descriptors,
         depth: ctx.depth + 1,
     };
 
-    let inner_entries = render_fields(&mut inner_ctx, &inner_format.fields)?;
-    let inner_warnings = inner_ctx.warnings;
+    let mut inner_warnings = Vec::new();
+    let inner_entries =
+        render_fields(&inner_ctx, &inner_format.fields, &mut inner_warnings).await?;
 
     let intent = inner_format
         .intent
@@ -727,16 +735,82 @@ fn format_address(val: &ArgumentValue) -> String {
     }
 }
 
-fn format_address_name(ctx: &RenderContext<'_>, val: &ArgumentValue) -> String {
-    if let ArgumentValue::Address(addr) = val {
-        let hex_addr = format!("0x{}", hex::encode(addr));
-        if let Some(label) = ctx.address_book.resolve(&hex_addr) {
-            return label.to_string();
+/// Format an address as a trusted name (spec: addressName).
+///
+/// 1. Check senderAddress match → "Sender"
+/// 2. Try local name via provider
+/// 3. Try ENS name via provider
+/// 4. Fallback → EIP-55 checksum
+async fn format_address_name(
+    ctx: &RenderContext<'_>,
+    val: &ArgumentValue,
+    params: Option<&FormatParams>,
+) -> Result<String, Error> {
+    let ArgumentValue::Address(addr) = val else {
+        return Ok(format_raw(val));
+    };
+
+    let hex_addr = format!("0x{}", hex::encode(addr));
+
+    // 1. Check senderAddress
+    if let Some(params) = params {
+        if let Some(ref sender) = params.sender_address {
+            let sender_addrs = match sender {
+                SenderAddress::Single(s) => vec![s.as_str()],
+                SenderAddress::Multiple(v) => v.iter().map(|s| s.as_str()).collect(),
+            };
+            for sender_ref in &sender_addrs {
+                // Resolve path references like "@.from"
+                let resolved_addr = if sender_ref.starts_with("@.") || sender_ref.starts_with('#') {
+                    resolve_path(ctx.decoded, sender_ref).and_then(|v| match v {
+                        ArgumentValue::Address(a) => Some(format!("0x{}", hex::encode(a))),
+                        _ => None,
+                    })
+                } else {
+                    Some(sender_ref.to_string())
+                };
+                if let Some(resolved) = resolved_addr {
+                    if resolved.to_lowercase() == hex_addr.to_lowercase() {
+                        return Ok("Sender".to_string());
+                    }
+                }
+            }
         }
-        eip55_checksum(addr)
-    } else {
-        format_raw(val)
     }
+
+    // 2. Determine allowed sources (default: both)
+    let sources = params.and_then(|p| p.sources.as_ref());
+    let local_allowed = sources
+        .map(|s| s.iter().any(|src| src == "local"))
+        .unwrap_or(true);
+    let ens_allowed = sources
+        .map(|s| s.iter().any(|src| src == "ens"))
+        .unwrap_or(true);
+
+    // 3. Try local name
+    if local_allowed {
+        if let Some(name) = ctx
+            .data_provider
+            .resolve_local_name(&hex_addr, ctx.chain_id)
+            .await
+        {
+            return Ok(name);
+        }
+    }
+
+    // 4. Try ENS name
+    if ens_allowed {
+        if let Some(name) = ctx
+            .data_provider
+            .resolve_ens_name(&hex_addr, ctx.chain_id)
+            .await
+        {
+            return Ok(name);
+        }
+    }
+
+    // 5. Fallback: EIP-55 checksum
+    Ok(eip55_checksum(addr))
 }
 
 /// EIP-55 mixed-case checksum encoding.
@@ -775,12 +849,13 @@ fn format_number(val: &ArgumentValue) -> String {
     }
 }
 
-fn format_token_amount(
-    ctx: &mut RenderContext<'_>,
+async fn format_token_amount(
+    ctx: &RenderContext<'_>,
     val: &ArgumentValue,
     params: Option<&FormatParams>,
     label: &str,
     path: &str,
+    warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
     let raw_amount = match val {
         ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
@@ -803,12 +878,14 @@ fn format_token_amount(
                     if addr_hex.to_lowercase() == native.to_lowercase() {
                         Some(native_token_meta(lookup_chain_id))
                     } else {
-                        let key = TokenLookupKey::new(lookup_chain_id, &addr_hex);
-                        ctx.token_source.lookup(&key)
+                        ctx.data_provider
+                            .resolve_token(lookup_chain_id, &addr_hex)
+                            .await
                     }
                 } else {
-                    let key = TokenLookupKey::new(lookup_chain_id, &addr_hex);
-                    ctx.token_source.lookup(&key)
+                    ctx.data_provider
+                        .resolve_token(lookup_chain_id, &addr_hex)
+                        .await
                 }
             } else {
                 None
@@ -838,7 +915,7 @@ fn format_token_amount(
         let formatted = format_with_decimals(&raw_amount, meta.decimals);
         Ok(format!("{} {}", formatted, meta.symbol))
     } else {
-        ctx.warnings.push(format!(
+        warnings.push(format!(
             "token metadata not found for field '{}' (path: {})",
             label, path
         ));
@@ -872,22 +949,26 @@ fn parse_constant_to_biguint(val: &serde_json::Value) -> Option<BigUint> {
     }
 }
 
-fn format_token_ticker(
-    ctx: &mut RenderContext<'_>,
+async fn format_token_ticker(
+    ctx: &RenderContext<'_>,
     val: &ArgumentValue,
     params: Option<&FormatParams>,
+    warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
     let lookup_chain_id = resolve_chain_id(ctx, params);
 
     if let ArgumentValue::Address(addr) = val {
         let addr_hex = format!("0x{}", hex::encode(addr));
-        let key = TokenLookupKey::new(lookup_chain_id, &addr_hex);
-        if let Some(meta) = ctx.token_source.lookup(&key) {
+        if let Some(meta) = ctx
+            .data_provider
+            .resolve_token(lookup_chain_id, &addr_hex)
+            .await
+        {
             return Ok(meta.symbol);
         }
     }
 
-    ctx.warnings.push("token ticker not found".to_string());
+    warnings.push("token ticker not found".to_string());
     Ok(format_raw(val))
 }
 
@@ -984,7 +1065,7 @@ fn format_date(val: &ArgumentValue) -> Result<String, Error> {
 }
 
 fn format_enum(
-    ctx: &mut RenderContext<'_>,
+    ctx: &RenderContext<'_>,
     val: &ArgumentValue,
     params: Option<&FormatParams>,
 ) -> Result<String, Error> {
@@ -1052,12 +1133,68 @@ pub(crate) fn format_with_decimals(amount: &BigUint, decimals: u8) -> String {
     }
 }
 
+/// Format an NFT name: "{collection_name} #{token_id}" or "#{token_id}" fallback.
+async fn format_nft_name(
+    ctx: &RenderContext<'_>,
+    val: &ArgumentValue,
+    params: Option<&FormatParams>,
+    label: &str,
+    path: &str,
+    warnings: &mut Vec<String>,
+) -> Result<String, Error> {
+    // Extract token_id from uint value
+    let token_id = match val {
+        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
+            BigUint::from_bytes_be(bytes).to_string()
+        }
+        _ => return Ok(format_raw(val)),
+    };
+
+    // Resolve collection address
+    let collection_addr = params.and_then(|p| {
+        // Try collectionPath first
+        if let Some(ref cpath) = p.collection_path {
+            let resolved = resolve_path(ctx.decoded, cpath);
+            if let Some(ArgumentValue::Address(addr)) = resolved {
+                return Some(format!("0x{}", hex::encode(addr)));
+            }
+        }
+        // Fallback to constant collection address
+        p.collection.clone()
+    });
+
+    let Some(collection_addr) = collection_addr else {
+        warnings.push(format!(
+            "no collection address for nftName field '{}' (path: {})",
+            label, path
+        ));
+        return Ok(token_id);
+    };
+
+    // Ask the provider for the collection name
+    if let Some(name) = ctx
+        .data_provider
+        .resolve_nft_collection_name(&collection_addr, ctx.chain_id)
+        .await
+    {
+        Ok(format!("{} #{}", name, token_id))
+    } else {
+        warnings.push(format!(
+            "NFT collection not found for '{}' (address: {})",
+            label, collection_addr
+        ));
+        Ok(format!("#{}", token_id))
+    }
+}
+
 /// Interpolate `${path}` and `{name}` templates in an intent string.
 ///
 /// Supports both v1 `${path}` and v2 `{paramName}` interpolation patterns.
-/// When `fields` contains a matching `DisplayField::Simple` with a stateless format
-/// (Date, Number, Address), uses that formatter instead of raw formatting.
-fn interpolate_intent(template: &str, ctx: &RenderContext<'_>, fields: &[DisplayField]) -> String {
+async fn interpolate_intent(
+    template: &str,
+    ctx: &RenderContext<'_>,
+    fields: &[DisplayField],
+) -> String {
     let mut result = template.to_string();
 
     // First pass: replace ${path} patterns (v1)
@@ -1066,8 +1203,8 @@ fn interpolate_intent(template: &str, ctx: &RenderContext<'_>, fields: &[Display
             Some(e) => start + e,
             None => break,
         };
-        let path = &result[start + 2..end];
-        let replacement = resolve_and_format_for_interpolation(ctx, fields, path);
+        let path = result[start + 2..end].to_string();
+        let replacement = resolve_and_format_for_interpolation(ctx, fields, &path).await;
         result.replace_range(start..=end, &replacement);
     }
 
@@ -1086,7 +1223,7 @@ fn interpolate_intent(template: &str, ctx: &RenderContext<'_>, fields: &[Display
                 None => break,
             };
             let path = result[start + 1..end].to_string();
-            let replacement = resolve_and_format_for_interpolation(ctx, fields, &path);
+            let replacement = resolve_and_format_for_interpolation(ctx, fields, &path).await;
             result.replace_range(start..=end, &replacement);
             pos = start + replacement.len();
         } else {
@@ -1171,60 +1308,61 @@ fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> String {
     }
 }
 
-fn resolve_and_format_for_interpolation(
+async fn resolve_and_format_for_interpolation(
     ctx: &RenderContext<'_>,
     fields: &[DisplayField],
     path: &str,
 ) -> String {
-    resolve_path(ctx.decoded, path)
-        .map(|v| {
-            let (field_format, field_params) = fields
-                .iter()
-                .find_map(|f| {
-                    if let DisplayField::Simple {
-                        path: fp,
-                        format,
-                        params,
-                        ..
-                    } = f
-                    {
-                        if fp == path {
-                            Some((format.as_ref(), params.as_ref()))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or((None, None));
-            match field_format {
-                Some(FieldFormat::Date) => format_date(&v).unwrap_or_else(|_| format_raw(&v)),
-                Some(FieldFormat::Number) => format_number(&v),
-                Some(FieldFormat::Address) => format_address(&v),
-                Some(FieldFormat::TokenAmount) => {
-                    format_token_amount_for_interpolation(ctx, &v, field_params)
+    let Some(v) = resolve_path(ctx.decoded, path) else {
+        return "<?>".to_string();
+    };
+
+    let (field_format, field_params) = fields
+        .iter()
+        .find_map(|f| {
+            if let DisplayField::Simple {
+                path: fp,
+                format,
+                params,
+                ..
+            } = f
+            {
+                if fp == path {
+                    Some((format.as_ref(), params.as_ref()))
+                } else {
+                    None
                 }
-                Some(FieldFormat::Amount) => {
-                    if path.starts_with("@.value") {
-                        let meta = native_token_meta(ctx.chain_id);
-                        match &v {
-                            ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
-                                let n = BigUint::from_bytes_be(bytes);
-                                let formatted = format_with_decimals(&n, meta.decimals);
-                                format!("{} {}", formatted, meta.symbol)
-                            }
-                            _ => format_raw(&v),
-                        }
-                    } else {
-                        format_raw(&v)
-                    }
-                }
-                Some(FieldFormat::Enum) => format_enum_for_interpolation(ctx, &v, field_params),
-                _ => format_raw(&v),
+            } else {
+                None
             }
         })
-        .unwrap_or_else(|| "<?>".to_string())
+        .unwrap_or((None, None));
+
+    match field_format {
+        Some(FieldFormat::Date) => format_date(&v).unwrap_or_else(|_| format_raw(&v)),
+        Some(FieldFormat::Number) => format_number(&v),
+        Some(FieldFormat::Address) => format_address(&v),
+        Some(FieldFormat::TokenAmount) => {
+            format_token_amount_for_interpolation(ctx, &v, field_params).await
+        }
+        Some(FieldFormat::Amount) => {
+            if path.starts_with("@.value") {
+                let meta = native_token_meta(ctx.chain_id);
+                match &v {
+                    ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
+                        let n = BigUint::from_bytes_be(bytes);
+                        let formatted = format_with_decimals(&n, meta.decimals);
+                        format!("{} {}", formatted, meta.symbol)
+                    }
+                    _ => format_raw(&v),
+                }
+            } else {
+                format_raw(&v)
+            }
+        }
+        Some(FieldFormat::Enum) => format_enum_for_interpolation(ctx, &v, field_params),
+        _ => format_raw(&v),
+    }
 }
 
 /// Resolve an enum value for interpolation using descriptor metadata.
@@ -1256,7 +1394,7 @@ fn format_enum_for_interpolation(
 }
 
 /// Format a token amount for interpolation (simplified version of format_token_amount).
-fn format_token_amount_for_interpolation(
+async fn format_token_amount_for_interpolation(
     ctx: &RenderContext<'_>,
     val: &ArgumentValue,
     params: Option<&FormatParams>,
@@ -1268,23 +1406,33 @@ fn format_token_amount_for_interpolation(
 
     let lookup_chain_id = resolve_chain_id(ctx, params);
 
-    let token_meta = params.and_then(|p| {
-        p.token_path.as_ref().and_then(|token_path| {
+    let token_meta = if let Some(p) = params {
+        if let Some(ref token_path) = p.token_path {
             let token_addr = resolve_path(ctx.decoded, token_path);
             if let Some(ArgumentValue::Address(addr)) = token_addr {
                 let addr_hex = format!("0x{}", hex::encode(addr));
                 if let Some(ref native) = p.native_currency_address {
                     if addr_hex.to_lowercase() == native.to_lowercase() {
-                        return Some(native_token_meta(lookup_chain_id));
+                        Some(native_token_meta(lookup_chain_id))
+                    } else {
+                        ctx.data_provider
+                            .resolve_token(lookup_chain_id, &addr_hex)
+                            .await
                     }
+                } else {
+                    ctx.data_provider
+                        .resolve_token(lookup_chain_id, &addr_hex)
+                        .await
                 }
-                let key = TokenLookupKey::new(lookup_chain_id, &addr_hex);
-                ctx.token_source.lookup(&key)
             } else {
                 None
             }
-        })
-    });
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     // Check threshold/message
     if let Some(p) = params {
@@ -1347,10 +1495,10 @@ mod tests {
         assert_eq!(checksummed, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
     }
 
-    #[test]
-    fn test_interpolate_intent() {
+    #[tokio::test]
+    async fn test_interpolate_intent() {
         use crate::decoder::{DecodedArgument, ParamType};
-        use crate::token::EmptyTokenSource;
+        use crate::provider::EmptyDataProvider;
 
         let decoded = DecodedArguments {
             function_name: "transfer".to_string(),
@@ -1375,22 +1523,19 @@ mod tests {
         };
 
         let descriptor: Descriptor = serde_json::from_str(
-            r#"{"context":{"contract":{"deployments":[]}},"metadata":{"owner":"test","enums":{},"constants":{},"addressBook":{},"maps":{}},"display":{"definitions":{},"formats":{}}}"#
+            r#"{"context":{"contract":{"deployments":[]}},"metadata":{"owner":"test","enums":{},"constants":{},"maps":{}},"display":{"definitions":{},"formats":{}}}"#
         ).unwrap();
-        let token_source = EmptyTokenSource;
-        let address_book = AddressBook::from_descriptor(&descriptor.context, &descriptor.metadata);
+        let data_provider = EmptyDataProvider;
         let ctx = RenderContext {
             descriptor: &descriptor,
             decoded: &decoded,
             chain_id: 1,
-            token_source: &token_source,
-            address_book: &address_book,
-            warnings: Vec::new(),
+            data_provider: &data_provider,
             descriptors: &[],
             depth: 0,
         };
 
-        let result = interpolate_intent("Send ${1} to ${0}", &ctx, &[]);
+        let result = interpolate_intent("Send ${1} to ${0}", &ctx, &[]).await;
         assert_eq!(
             result,
             "Send 1000 to 0x0000000000000000000000000000000000000000"
