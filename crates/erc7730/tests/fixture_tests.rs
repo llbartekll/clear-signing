@@ -5,6 +5,7 @@
 //!
 //! When `expected` is `null`, capture mode: populate and rewrite `tests.json`.
 
+use erc7730::resolver::ResolvedDescriptor;
 use erc7730::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{format_calldata, DataProvider, DisplayModel, TransactionContext};
@@ -117,7 +118,12 @@ async fn run_test_case(
         value: val.as_deref(),
         from: Some(tc.from.as_str()),
     };
-    format_calldata(descriptor, &tx, data_provider)
+    let descriptors = vec![ResolvedDescriptor {
+        descriptor: descriptor.clone(),
+        chain_id: tc.chain_id,
+        address: tc.to.to_lowercase(),
+    }];
+    format_calldata(&descriptors, &tx, data_provider)
         .await
         .map_err(|e| format!("{e}"))
 }

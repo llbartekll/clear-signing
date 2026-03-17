@@ -14,7 +14,7 @@ UniFFI bindings (Kotlin + Swift) are implemented in the same crate via a statele
 
 ```sh
 cargo build          # Build
-cargo test           # Run default tests (35 unit + 21 integration)
+cargo test           # Run default tests (32 unit + 33 integration)
 cargo clippy         # Lint
 cargo fmt --check    # Format check
 ```
@@ -23,7 +23,7 @@ UniFFI checks and binding generation:
 
 ```sh
 cargo check -p erc7730 --features uniffi,github-registry
-cargo test -p erc7730 --features uniffi,github-registry     # 42 unit tests + 30 integration
+cargo test -p erc7730 --features uniffi,github-registry     # 39 unit tests + 33 integration
 cargo clippy -p erc7730 --all-targets --features uniffi,github-registry -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
@@ -57,21 +57,16 @@ Repository policy:
 
 Shared types in `lib.rs`:
 - `TransactionContext { chain_id, to, calldata, value, from }` — transaction parameters bundled into a single struct
-- `FormatOptions { implementation_address }` — resolution options (e.g. proxy support)
 
 Entry points in `lib.rs`:
-- `format(tx, source, tokens, opts)` — high-level: resolves descriptor then formats (graceful degradation on NotFound); `opts.implementation_address` overrides `tx.to` for resolution (proxy support)
-- `format_typed(data, source, tokens)` — high-level: resolves descriptor then formats EIP-712 typed data (graceful degradation on NotFound)
-- `format_calldata(descriptor, tx, tokens)` — low-level: format with pre-resolved descriptor
-- `format_calldata_multi(descriptors, tx, tokens)` — low-level with multiple pre-resolved descriptors for nested calldata (Safe/4337)
-- `format_typed_data(descriptor, data, tokens)` — low-level EIP-712 typed data formatting
+- `format_calldata(descriptors, tx, data_provider)` — format calldata with pre-resolved descriptors; outer descriptor matched by chain_id + tx.to; remaining descriptors for nested calldata (Safe/4337); single-element slice = simple case
+- `format_typed_data(descriptors, data, data_provider)` — format EIP-712 typed data with pre-resolved descriptors; outer descriptor matched by chain_id + verifying_contract
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
 - `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, implementation_address, tokens)` — high-level with GitHub registry resolution (requires `github-registry` feature)
 - `erc7730_format_typed(typed_data_json, tokens)` — high-level EIP-712 with GitHub registry resolution (requires `github-registry` feature)
-- `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level
-- `erc7730_format_calldata_multi(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level with multiple descriptors for nested calldata
-- `erc7730_format_typed_data(descriptor_json, typed_data_json, tokens)` — low-level
+- `erc7730_format_calldata(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level calldata formatting
+- `erc7730_format_typed_data(descriptors_json, typed_data_json, tokens)` — low-level EIP-712 formatting
 
 Local Swift package product:
 - `Erc7730` (binary target + Swift wrapper target)
@@ -83,7 +78,7 @@ Local Swift package product:
 | `engine.rs` | `DisplayModel`, `DisplayEntry` (Item/Group/Nested), `DisplayItem` | Main formatting pipeline + nested calldata |
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
-| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `FilesystemSource`, `GitHubRegistrySource` | Descriptor resolution (static, filesystem, HTTP) |
+| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource` | Descriptor resolution (static, HTTP) |
 | `token.rs` | `TokenSource` (trait), `TokenMeta`, `WellKnownTokenSource`, `CompositeTokenSource` | Token metadata (CAIP-19 keys, embedded well-known tokens) |
 | `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
 | `uniffi_compat/` | `TokenMetaInput`, `FfiError`, exported FFI functions | Stateless UniFFI wrapper layer |
@@ -103,7 +98,7 @@ The library supports v2 registry descriptor features:
 - **Graceful degradation**: Unknown selectors return raw preview instead of errors
 - **`duration`/`unit` formatters**: Seconds → human-readable, numeric + unit symbol
 - **`FieldFormat::Calldata`**: Nested calldata decoding (Safe `execTransaction`, ERC-4337 UserOps) — recursive rendering with `DisplayEntry::Nested`, `calleePath`/`amountPath`/`spenderPath` params, depth limit of 3
-- **Batch operations (`wallet_sendCalls`)**: Handled wallet-side per spec — wallet calls `format()` per inner call, joins `interpolatedIntent` strings with " and ". No batch splitting in the engine.
+- **Batch operations (`wallet_sendCalls`)**: Handled wallet-side per spec — wallet calls `format_calldata()` per inner call, joins `interpolatedIntent` strings with " and ". No batch splitting in the engine.
 - **`@.` container value priority**: Paths with `@.` prefix prefer container values over same-named function params (search from end)
 
 Optional features:

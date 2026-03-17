@@ -146,14 +146,15 @@ async fn userop_with_erc20_transfer_via_execute() {
         },
     );
 
-    let result = erc7730::eip712::format_typed_data_multi(
-        &userop_descriptor,
-        &typed_data,
-        &tokens,
-        &descriptors,
-    )
-    .await
-    .unwrap();
+    let mut all_descriptors = vec![ResolvedDescriptor {
+        descriptor: userop_descriptor,
+        chain_id: 1,
+        address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
+    }];
+    all_descriptors.extend(descriptors);
+    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &tokens)
+        .await
+        .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
 
@@ -282,14 +283,15 @@ async fn userop_direct_erc20_transfer() {
         },
     );
 
-    let result = erc7730::eip712::format_typed_data_multi(
-        &userop_descriptor,
-        &typed_data,
-        &tokens,
-        &descriptors,
-    )
-    .await
-    .unwrap();
+    let mut all_descriptors = vec![ResolvedDescriptor {
+        descriptor: userop_descriptor,
+        chain_id: 1,
+        address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
+    }];
+    all_descriptors.extend(descriptors);
+    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &tokens)
+        .await
+        .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
 
@@ -327,14 +329,14 @@ async fn userop_no_matching_inner_descriptor() {
     let typed_data = build_userop_typed_data(unknown_sender, &random_calldata);
 
     // No inner descriptors provided
-    let result = erc7730::eip712::format_typed_data_multi(
-        &userop_descriptor,
-        &typed_data,
-        &EmptyDataProvider,
-        &[],
-    )
-    .await
-    .unwrap();
+    let all_descriptors = vec![ResolvedDescriptor {
+        descriptor: userop_descriptor,
+        chain_id: 1,
+        address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
+    }];
+    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
 
@@ -381,14 +383,15 @@ async fn userop_hash_prefix_resolves_from_message() {
         address: sender.to_string(), // sender == USDC contract
     }];
 
-    let result = erc7730::eip712::format_typed_data_multi(
-        &userop_descriptor,
-        &typed_data,
-        &EmptyDataProvider,
-        &descriptors,
-    )
-    .await
-    .unwrap();
+    let mut all_descriptors = vec![ResolvedDescriptor {
+        descriptor: userop_descriptor,
+        chain_id: 1,
+        address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
+    }];
+    all_descriptors.extend(descriptors);
+    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
 
     // The #.sender path should have resolved to the sender address from the message,
     // matched against the ERC-20 descriptor, and decoded the transfer calldata

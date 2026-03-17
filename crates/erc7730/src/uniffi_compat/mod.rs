@@ -1,14 +1,14 @@
 use crate::{
     eip712::TypedData,
     error::Error,
-    format_typed_data,
+    resolver::ResolvedDescriptor,
     token::{StaticTokenSource, TokenMeta},
     types::descriptor::Descriptor,
     DisplayModel,
 };
 
 #[cfg(feature = "github-registry")]
-use crate::resolver::GitHubRegistrySource;
+use crate::resolver::{DescriptorSource, GitHubRegistrySource};
 
 #[cfg(feature = "github-registry")]
 use crate::token::{CompositeDataProvider, WellKnownTokenSource};
@@ -77,7 +77,7 @@ impl From<Error> for FfiError {
 
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn erc7730_format_calldata(
-    descriptor_json: String,
+    descriptors_json: Vec<String>,
     chain_id: u64,
     to: String,
     calldata_hex: String,
@@ -85,55 +85,13 @@ pub async fn erc7730_format_calldata(
     from_address: Option<String>,
     tokens: Vec<TokenMetaInput>,
 ) -> Result<DisplayModel, FfiError> {
-    println!("[erc7730] format_calldata called");
-    println!("[erc7730]   chain_id={}", chain_id);
-    println!("[erc7730]   to={}", to);
-    println!(
-        "[erc7730]   calldata_hex={}",
-        &calldata_hex[..std::cmp::min(20, calldata_hex.len())]
-    );
-    println!("[erc7730]   value_hex={:?}", value_hex);
-    println!("[erc7730]   from_address={:?}", from_address);
-    println!("[erc7730]   tokens count={}", tokens.len());
-    println!(
-        "[erc7730]   descriptor_json length={}",
-        descriptor_json.len()
-    );
-
-    let descriptor = match Descriptor::from_json(&descriptor_json) {
-        Ok(d) => {
-            println!("[erc7730]   descriptor parsed OK");
-            println!(
-                "[erc7730]   format keys: {:?}",
-                d.display.formats.keys().collect::<Vec<_>>()
-            );
-            println!(
-                "[erc7730]   context is_contract={} deployments={:?}",
-                d.context.is_contract(),
-                d.context.deployments()
-            );
-            d
-        }
-        Err(err) => {
-            println!("[erc7730]   descriptor parse FAILED: {}", err);
-            return Err(FfiError::InvalidDescriptorJson(err.to_string()));
-        }
-    };
+    let descriptors = parse_descriptors(&descriptors_json, chain_id, &to)?;
 
     let calldata = decode_hex(&calldata_hex, HexContext::Calldata)?;
-    println!("[erc7730]   calldata decoded, {} bytes", calldata.len());
-    if calldata.len() >= 4 {
-        println!("[erc7730]   selector=0x{}", hex::encode(&calldata[..4]));
-    }
-
     let value = match value_hex {
         Some(hex_value) => Some(decode_hex(&hex_value, HexContext::Value)?),
         None => None,
     };
-    println!(
-        "[erc7730]   value decoded, {} bytes",
-        value.as_ref().map_or(0, |v| v.len())
-    );
 
     let token_source = build_token_source(&tokens);
     let tx = crate::TransactionContext {
@@ -143,94 +101,32 @@ pub async fn erc7730_format_calldata(
         value: value.as_deref(),
         from: from_address.as_deref(),
     };
-    let result = crate::format_calldata(&descriptor, &tx, &token_source).await;
-
-    match &result {
-        Ok(model) => {
-            println!("[erc7730]   format OK: intent={}", model.intent);
-            println!("[erc7730]   entries count={}", model.entries.len());
-            if let Some(ref interp) = model.interpolated_intent {
-                println!("[erc7730]   interpolated_intent={}", interp);
-            }
-            if !model.warnings.is_empty() {
-                println!("[erc7730]   warnings={:?}", model.warnings);
-            }
-        }
-        Err(err) => {
-            println!("[erc7730]   format FAILED: {}", err);
-        }
-    }
-
-    result.map_err(Into::into)
+    crate::format_calldata(&descriptors, &tx, &token_source)
+        .await
+        .map_err(Into::into)
 }
 
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn erc7730_format_typed_data(
-    descriptor_json: String,
+    descriptors_json: Vec<String>,
     typed_data_json: String,
     tokens: Vec<TokenMetaInput>,
 ) -> Result<DisplayModel, FfiError> {
-    println!("[erc7730] format_typed_data called");
-    println!(
-        "[erc7730]   descriptor_json length={}",
-        descriptor_json.len()
-    );
-    println!(
-        "[erc7730]   typed_data_json length={}",
-        typed_data_json.len()
-    );
-    println!("[erc7730]   tokens count={}", tokens.len());
+    let typed_data: TypedData = serde_json::from_str::<TypedData>(&typed_data_json)
+        .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
 
-    let descriptor = match Descriptor::from_json(&descriptor_json) {
-        Ok(d) => {
-            println!("[erc7730]   descriptor parsed OK");
-            println!(
-                "[erc7730]   format keys: {:?}",
-                d.display.formats.keys().collect::<Vec<_>>()
-            );
-            d
-        }
-        Err(err) => {
-            println!("[erc7730]   descriptor parse FAILED: {}", err);
-            return Err(FfiError::InvalidDescriptorJson(err.to_string()));
-        }
-    };
-
-    let typed_data: TypedData = match serde_json::from_str::<TypedData>(&typed_data_json) {
-        Ok(td) => {
-            println!(
-                "[erc7730]   typed_data parsed OK, primaryType={}",
-                td.primary_type
-            );
-            println!(
-                "[erc7730]   domain: name={:?} chainId={:?} verifyingContract={:?}",
-                td.domain.name, td.domain.chain_id, td.domain.verifying_contract
-            );
-            td
-        }
-        Err(err) => {
-            println!("[erc7730]   typed_data parse FAILED: {}", err);
-            return Err(FfiError::InvalidTypedDataJson(err.to_string()));
-        }
-    };
+    let chain_id = typed_data.domain.chain_id.unwrap_or(1);
+    let address = typed_data
+        .domain
+        .verifying_contract
+        .as_deref()
+        .unwrap_or("0x0000000000000000000000000000000000000000");
+    let descriptors = parse_descriptors(&descriptors_json, chain_id, address)?;
 
     let token_source = build_token_source(&tokens);
-    let result = format_typed_data(&descriptor, &typed_data, &token_source).await;
-
-    match &result {
-        Ok(model) => {
-            println!("[erc7730]   format OK: intent={}", model.intent);
-            println!("[erc7730]   entries count={}", model.entries.len());
-            if !model.warnings.is_empty() {
-                println!("[erc7730]   warnings={:?}", model.warnings);
-            }
-        }
-        Err(err) => {
-            println!("[erc7730]   format FAILED: {}", err);
-        }
-    }
-
-    result.map_err(Into::into)
+    crate::format_typed_data(&descriptors, &typed_data, &token_source)
+        .await
+        .map_err(Into::into)
 }
 
 /// High-level: resolve descriptor from GitHub registry, then format calldata.
@@ -247,15 +143,17 @@ pub async fn erc7730_format(
     implementation_address: Option<String>,
     tokens: Vec<TokenMetaInput>,
 ) -> Result<DisplayModel, FfiError> {
-    println!("[erc7730] format called (high-level, registry)");
-    println!("[erc7730]   chain_id={}", chain_id);
-    println!("[erc7730]   to={}", to);
-    println!(
-        "[erc7730]   calldata_hex={}",
-        &calldata_hex[..std::cmp::min(20, calldata_hex.len())]
-    );
-
     let source = get_registry_source().await?;
+    let resolve_addr = implementation_address.as_deref().unwrap_or(&to);
+    let resolved = match source.resolve_calldata(chain_id, resolve_addr).await {
+        Ok(rd) => rd,
+        Err(crate::error::ResolveError::NotFound { .. }) => {
+            let calldata = decode_hex(&calldata_hex, HexContext::Calldata)?;
+            return Ok(crate::build_raw_fallback(&calldata));
+        }
+        Err(e) => return Err(FfiError::Resolve(e.to_string())),
+    };
+
     let calldata = decode_hex(&calldata_hex, HexContext::Calldata)?;
     let value = match value_hex {
         Some(hex_value) => Some(decode_hex(&hex_value, HexContext::Value)?),
@@ -273,24 +171,9 @@ pub async fn erc7730_format(
         value: value.as_deref(),
         from: from_address.as_deref(),
     };
-    let opts = implementation_address
-        .as_deref()
-        .map(|addr| crate::FormatOptions {
-            implementation_address: Some(addr),
-        });
-    let result = crate::format(&tx, source, &composite, opts.as_ref()).await;
-
-    match &result {
-        Ok(model) => {
-            println!("[erc7730]   format OK: intent={}", model.intent);
-            println!("[erc7730]   entries count={}", model.entries.len());
-        }
-        Err(err) => {
-            println!("[erc7730]   format FAILED: {}", err);
-        }
-    }
-
-    result.map_err(Into::into)
+    crate::format_calldata(&[resolved], &tx, &composite)
+        .await
+        .map_err(Into::into)
 }
 
 /// High-level: resolve descriptor from GitHub registry, then format EIP-712 typed data.
@@ -302,84 +185,30 @@ pub async fn erc7730_format_typed(
     typed_data_json: String,
     tokens: Vec<TokenMetaInput>,
 ) -> Result<DisplayModel, FfiError> {
-    println!("[erc7730] format_typed called (high-level, registry)");
-    println!(
-        "[erc7730]   typed_data_json length={}",
-        typed_data_json.len()
-    );
-
     let typed_data: TypedData = serde_json::from_str::<TypedData>(&typed_data_json)
         .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
 
-    println!(
-        "[erc7730]   primaryType={} verifyingContract={:?}",
-        typed_data.primary_type, typed_data.domain.verifying_contract
-    );
+    let chain_id = typed_data.domain.chain_id.unwrap_or(1);
+    let address = typed_data
+        .domain
+        .verifying_contract
+        .as_deref()
+        .unwrap_or("0x0000000000000000000000000000000000000000");
 
     let source = get_registry_source().await?;
+    let resolved = match source.resolve_typed(chain_id, address).await {
+        Ok(rd) => rd,
+        Err(crate::error::ResolveError::NotFound { .. }) => {
+            return Ok(crate::eip712::build_typed_raw_fallback(&typed_data));
+        }
+        Err(e) => return Err(FfiError::Resolve(e.to_string())),
+    };
 
     let caller_tokens = build_token_source(&tokens);
     let well_known = WellKnownTokenSource::new();
     let composite = CompositeDataProvider::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
 
-    let result = crate::format_typed(&typed_data, source, &composite).await;
-
-    match &result {
-        Ok(model) => {
-            println!("[erc7730]   format OK: intent={}", model.intent);
-            println!("[erc7730]   entries count={}", model.entries.len());
-        }
-        Err(err) => {
-            println!("[erc7730]   format FAILED: {}", err);
-        }
-    }
-
-    result.map_err(Into::into)
-}
-
-#[uniffi::export(async_runtime = "tokio")]
-pub async fn erc7730_format_calldata_multi(
-    descriptors_json: Vec<String>,
-    chain_id: u64,
-    to: String,
-    calldata_hex: String,
-    value_hex: Option<String>,
-    from_address: Option<String>,
-    tokens: Vec<TokenMetaInput>,
-) -> Result<DisplayModel, FfiError> {
-    let mut descriptors = Vec::with_capacity(descriptors_json.len());
-    for json_str in &descriptors_json {
-        let descriptor = Descriptor::from_json(json_str)
-            .map_err(|e| FfiError::InvalidDescriptorJson(e.to_string()))?;
-        // Derive chain_id and address from descriptor context deployments
-        let (cid, addr) = descriptor
-            .context
-            .deployments()
-            .first()
-            .map(|dep| (dep.chain_id, dep.address.clone()))
-            .unwrap_or((chain_id, to.clone()));
-        descriptors.push(crate::ResolvedDescriptor {
-            descriptor,
-            chain_id: cid,
-            address: addr,
-        });
-    }
-
-    let calldata = decode_hex(&calldata_hex, HexContext::Calldata)?;
-    let value = match value_hex {
-        Some(hex_value) => Some(decode_hex(&hex_value, HexContext::Value)?),
-        None => None,
-    };
-
-    let token_source = build_token_source(&tokens);
-    let tx = crate::TransactionContext {
-        chain_id,
-        to: &to,
-        calldata: &calldata,
-        value: value.as_deref(),
-        from: from_address.as_deref(),
-    };
-    crate::format_calldata_multi(&descriptors, &tx, &token_source)
+    crate::format_typed_data(&[resolved], &typed_data, &composite)
         .await
         .map_err(Into::into)
 }
@@ -409,6 +238,30 @@ fn decode_hex(input: &str, context: HexContext) -> Result<Vec<u8>, FfiError> {
         HexContext::Calldata => FfiError::InvalidCalldataHex(err.to_string()),
         HexContext::Value => FfiError::InvalidValueHex(err.to_string()),
     })
+}
+
+fn parse_descriptors(
+    descriptors_json: &[String],
+    fallback_chain_id: u64,
+    fallback_address: &str,
+) -> Result<Vec<ResolvedDescriptor>, FfiError> {
+    let mut descriptors = Vec::with_capacity(descriptors_json.len());
+    for json_str in descriptors_json {
+        let descriptor = Descriptor::from_json(json_str)
+            .map_err(|e| FfiError::InvalidDescriptorJson(e.to_string()))?;
+        let (cid, addr) = descriptor
+            .context
+            .deployments()
+            .first()
+            .map(|dep| (dep.chain_id, dep.address.clone()))
+            .unwrap_or((fallback_chain_id, fallback_address.to_string()));
+        descriptors.push(ResolvedDescriptor {
+            descriptor,
+            chain_id: cid,
+            address: addr,
+        });
+    }
+    Ok(descriptors)
 }
 
 fn build_token_source(tokens: &[TokenMetaInput]) -> StaticTokenSource {
@@ -542,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn format_calldata_success() {
         let result = erc7730_format_calldata(
-            calldata_descriptor_json().to_string(),
+            vec![calldata_descriptor_json().to_string()],
             1,
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
@@ -569,7 +422,7 @@ mod tests {
     #[tokio::test]
     async fn format_typed_success() {
         let result = erc7730_format_typed_data(
-            typed_descriptor_json().to_string(),
+            vec![typed_descriptor_json().to_string()],
             typed_data_json().to_string(),
             vec![],
         )
@@ -583,7 +436,7 @@ mod tests {
     #[tokio::test]
     async fn format_calldata_invalid_descriptor_json() {
         let err = erc7730_format_calldata(
-            "{".to_string(),
+            vec!["{".to_string()],
             1,
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
@@ -599,10 +452,13 @@ mod tests {
 
     #[tokio::test]
     async fn format_typed_invalid_typed_data_json() {
-        let err =
-            erc7730_format_typed_data(typed_descriptor_json().to_string(), "{".to_string(), vec![])
-                .await
-                .expect_err("invalid typed data should fail");
+        let err = erc7730_format_typed_data(
+            vec![typed_descriptor_json().to_string()],
+            "{".to_string(),
+            vec![],
+        )
+        .await
+        .expect_err("invalid typed data should fail");
 
         assert!(matches!(err, FfiError::InvalidTypedDataJson(_)));
     }
@@ -610,7 +466,7 @@ mod tests {
     #[tokio::test]
     async fn format_calldata_invalid_calldata_hex() {
         let err = erc7730_format_calldata(
-            calldata_descriptor_json().to_string(),
+            vec![calldata_descriptor_json().to_string()],
             1,
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             "zz".to_string(),
@@ -627,7 +483,7 @@ mod tests {
     #[tokio::test]
     async fn format_calldata_invalid_value_hex() {
         let err = erc7730_format_calldata(
-            calldata_descriptor_json().to_string(),
+            vec![calldata_descriptor_json().to_string()],
             1,
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
@@ -644,7 +500,7 @@ mod tests {
     #[tokio::test]
     async fn format_calldata_accepts_0x_prefix() {
         let no_prefix = erc7730_format_calldata(
-            calldata_descriptor_json().to_string(),
+            vec![calldata_descriptor_json().to_string()],
             1,
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             transfer_calldata_hex().to_string(),
@@ -656,7 +512,7 @@ mod tests {
         .expect("no-prefix calldata should succeed");
 
         let with_prefix = erc7730_format_calldata(
-            calldata_descriptor_json().to_string(),
+            vec![calldata_descriptor_json().to_string()],
             1,
             "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             format!("0x{}", transfer_calldata_hex()),

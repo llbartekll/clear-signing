@@ -5,7 +5,7 @@ use erc7730::provider::EmptyDataProvider;
 use erc7730::resolver::ResolvedDescriptor;
 use erc7730::token::{StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata_multi, DisplayEntry, TransactionContext};
+use erc7730::{format_calldata, DisplayEntry, TransactionContext};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
@@ -142,9 +142,7 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &tokens)
-        .await
-        .unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Execute Safe transaction");
 
@@ -244,7 +242,7 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &EmptyDataProvider)
+    let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
         .unwrap();
 
@@ -319,9 +317,7 @@ async fn safe_exec_transaction_container_value_propagation() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &tokens)
-        .await
-        .unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     // The inner call should still decode properly
     match &result.entries[2] {
@@ -385,7 +381,7 @@ async fn safe_exec_transaction_depth_limit() {
         value: None,
         from: None,
     };
-    let result = format_calldata_multi(&descriptors, &tx, &EmptyDataProvider)
+    let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
         .unwrap();
 

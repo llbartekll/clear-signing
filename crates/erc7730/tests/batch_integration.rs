@@ -9,14 +9,20 @@ use erc7730::provider::EmptyDataProvider;
 use erc7730::resolver::ResolvedDescriptor;
 use erc7730::token::{StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
-use erc7730::{
-    format_calldata, format_calldata_multi, DisplayEntry, DisplayModel, TransactionContext,
-};
+use erc7730::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
     let json = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     Descriptor::from_json(&json).unwrap_or_else(|e| panic!("parse {path}: {e}"))
+}
+
+fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
+    vec![ResolvedDescriptor {
+        descriptor,
+        chain_id,
+        address: address.to_lowercase(),
+    }]
 }
 
 fn address_word(hex_addr: &str) -> Vec<u8> {
@@ -126,6 +132,8 @@ async fn wallet_batch_two_erc20_transfers() {
         },
     );
 
+    let descriptors = wrap_rd(descriptor, 1, usdc_addr);
+
     // Wallet calls format_calldata once per inner call
     let calldata_a = build_erc20_transfer_calldata(recipient_a, 1_000_000); // 1 USDC
     let tx_a = TransactionContext {
@@ -135,7 +143,7 @@ async fn wallet_batch_two_erc20_transfers() {
         value: None,
         from: None,
     };
-    let result_a = format_calldata(&descriptor, &tx_a, &tokens).await.unwrap();
+    let result_a = format_calldata(&descriptors, &tx_a, &tokens).await.unwrap();
 
     let calldata_b = build_erc20_transfer_calldata(recipient_b, 5_000_000); // 5 USDC
     let tx_b = TransactionContext {
@@ -145,7 +153,7 @@ async fn wallet_batch_two_erc20_transfers() {
         value: None,
         from: None,
     };
-    let result_b = format_calldata(&descriptor, &tx_b, &tokens).await.unwrap();
+    let result_b = format_calldata(&descriptors, &tx_b, &tokens).await.unwrap();
 
     // Each produces correct DisplayModel
     assert_eq!(result_a.intent, "Transfer tokens");
@@ -191,6 +199,9 @@ async fn wallet_batch_mixed_known_unknown() {
         },
     );
 
+    let known_descriptors = wrap_rd(descriptor.clone(), 1, usdc_addr);
+    let unknown_descriptors = wrap_rd(descriptor, 1, unknown_addr);
+
     // Known call: ERC-20 transfer — full formatting
     let known_calldata = build_erc20_transfer_calldata(recipient, 2_000_000);
     let known_tx = TransactionContext {
@@ -200,7 +211,7 @@ async fn wallet_batch_mixed_known_unknown() {
         value: None,
         from: None,
     };
-    let known_result = format_calldata(&descriptor, &known_tx, &tokens)
+    let known_result = format_calldata(&known_descriptors, &known_tx, &tokens)
         .await
         .unwrap();
 
@@ -215,7 +226,7 @@ async fn wallet_batch_mixed_known_unknown() {
         value: None,
         from: None,
     };
-    let unknown_result = format_calldata(&descriptor, &unknown_tx, &EmptyDataProvider)
+    let unknown_result = format_calldata(&unknown_descriptors, &unknown_tx, &EmptyDataProvider)
         .await
         .unwrap();
 
@@ -305,6 +316,10 @@ async fn wallet_batch_intent_concatenation() {
         },
     );
 
+    let approve_descriptors = wrap_rd(approve_descriptor, 1, usdc_addr);
+    let transfer_descriptors = wrap_rd(transfer_descriptor, 1, usdc_addr);
+    let deposit_descriptors = wrap_rd(deposit_descriptor, 1, deposit_addr);
+
     // Call 1: approve
     let approve_calldata = build_erc20_approve_calldata(spender, 10_000_000);
     let approve_tx = TransactionContext {
@@ -314,7 +329,7 @@ async fn wallet_batch_intent_concatenation() {
         value: None,
         from: None,
     };
-    let approve_result = format_calldata(&approve_descriptor, &approve_tx, &tokens)
+    let approve_result = format_calldata(&approve_descriptors, &approve_tx, &tokens)
         .await
         .unwrap();
 
@@ -328,7 +343,7 @@ async fn wallet_batch_intent_concatenation() {
         value: None,
         from: None,
     };
-    let transfer_result = format_calldata(&transfer_descriptor, &transfer_tx, &tokens)
+    let transfer_result = format_calldata(&transfer_descriptors, &transfer_tx, &tokens)
         .await
         .unwrap();
 
@@ -344,7 +359,7 @@ async fn wallet_batch_intent_concatenation() {
         value: None,
         from: None,
     };
-    let deposit_result = format_calldata(&deposit_descriptor, &deposit_tx, &EmptyDataProvider)
+    let deposit_result = format_calldata(&deposit_descriptors, &deposit_tx, &EmptyDataProvider)
         .await
         .unwrap();
 
@@ -377,7 +392,7 @@ async fn wallet_batch_intent_concatenation() {
 }
 
 /// Full wallet flow: `format_calldata()` per inner call for display, then
-/// `format_calldata_multi()` for the outer Safe `execTransaction` wrapper.
+/// `format_calldata()` with multiple descriptors for the outer Safe `execTransaction` wrapper.
 /// Verifies both layers produce valid output independently.
 #[tokio::test]
 async fn wallet_batch_with_safe_wrapper() {
@@ -402,6 +417,7 @@ async fn wallet_batch_with_safe_wrapper() {
     let inner_calldata = build_erc20_transfer_calldata(recipient, 1_000_000); // 1 USDC
 
     // --- Step 1: Wallet formats the inner call individually for display ---
+    let inner_descriptors = wrap_rd(erc20_descriptor.clone(), 1, usdc_addr);
     let inner_tx = TransactionContext {
         chain_id: 1,
         to: usdc_addr,
@@ -409,7 +425,7 @@ async fn wallet_batch_with_safe_wrapper() {
         value: None,
         from: None,
     };
-    let inner_display = format_calldata(&erc20_descriptor, &inner_tx, &tokens)
+    let inner_display = format_calldata(&inner_descriptors, &inner_tx, &tokens)
         .await
         .unwrap();
 
@@ -421,19 +437,19 @@ async fn wallet_batch_with_safe_wrapper() {
         panic!("expected Item for inner Amount");
     }
 
-    // --- Step 2: Wallet formats the outer Safe wrapper via format_calldata_multi ---
+    // --- Step 2: Wallet formats the outer Safe wrapper via format_calldata ---
     let outer_calldata = build_exec_transaction_calldata(usdc_addr, 0, &inner_calldata, 0);
 
     let descriptors = vec![
         ResolvedDescriptor {
             descriptor: safe_descriptor,
             chain_id: 1,
-            address: safe_addr.to_string(),
+            address: safe_addr.to_lowercase(),
         },
         ResolvedDescriptor {
             descriptor: erc20_descriptor,
             chain_id: 1,
-            address: usdc_addr.to_string(),
+            address: usdc_addr.to_lowercase(),
         },
     ];
 
@@ -444,7 +460,7 @@ async fn wallet_batch_with_safe_wrapper() {
         value: None,
         from: None,
     };
-    let safe_result = format_calldata_multi(&descriptors, &outer_tx, &tokens)
+    let safe_result = format_calldata(&descriptors, &outer_tx, &tokens)
         .await
         .unwrap();
 

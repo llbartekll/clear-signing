@@ -1,7 +1,7 @@
 //! ERC-7730 v2 clear signing library — decodes and formats contract calldata
 //! and EIP-712 typed data for human-readable display using JSON descriptors.
 //!
-//! Entry points: [`format_calldata()`], [`format_typed_data()`], [`format()`].
+//! Entry points: [`format_calldata()`], [`format_typed_data()`].
 
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();
@@ -22,7 +22,7 @@ use error::Error;
 // Re-exports for convenience
 pub use engine::{DisplayEntry, DisplayItem, DisplayModel};
 pub use provider::{DataProvider, EmptyDataProvider};
-pub use resolver::{DescriptorSource, FilesystemSource, ResolvedDescriptor};
+pub use resolver::{DescriptorSource, ResolvedDescriptor};
 pub use token::{CompositeDataProvider, TokenMeta, WellKnownTokenSource};
 pub use types::descriptor::Descriptor;
 
@@ -35,18 +35,14 @@ pub struct TransactionContext<'a> {
     pub from: Option<&'a str>,
 }
 
-/// Options controlling descriptor resolution behavior.
-pub struct FormatOptions<'a> {
-    pub implementation_address: Option<&'a str>,
-}
-
 /// Format contract calldata for clear signing display.
 ///
 /// This is the main entry point for calldata clear signing.
-/// It parses the function signature from the descriptor's format keys,
-/// decodes the calldata, and renders the display model.
+/// Takes a slice of pre-resolved descriptors. The outer descriptor is found by
+/// matching `chain_id + tx.to`. Remaining descriptors are available for nested calldata.
+/// Single-element slice = simple case, multi-element = nesting.
 pub async fn format_calldata(
-    descriptor: &Descriptor,
+    descriptors: &[ResolvedDescriptor],
     tx: &TransactionContext<'_>,
     data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
@@ -57,10 +53,29 @@ pub async fn format_calldata(
         }));
     }
 
+    // Find the outer descriptor matching chain_id + to address
+    let outer_idx = descriptors.iter().position(|rd| {
+        rd.descriptor.context.deployments().iter().any(|dep| {
+            dep.chain_id == tx.chain_id && dep.address.to_lowercase() == tx.to.to_lowercase()
+        })
+    });
+
+    let outer_idx = match outer_idx {
+        Some(idx) => idx,
+        None => {
+            if descriptors.is_empty() {
+                return Ok(build_raw_fallback(tx.calldata));
+            }
+            // Fallback to first descriptor
+            0
+        }
+    };
+
+    let outer_descriptor = &descriptors[outer_idx].descriptor;
     let actual_selector = &tx.calldata[..4];
 
     // Find matching format key and parse its signature
-    let (sig, _format_key) = match find_matching_signature(descriptor, actual_selector) {
+    let (sig, _format_key) = match find_matching_signature(outer_descriptor, actual_selector) {
         Ok(result) => result,
         Err(_) => {
             // Graceful fallback: return raw preview for unknown selectors
@@ -76,12 +91,13 @@ pub async fn format_calldata(
 
     // Render the display model
     engine::format_calldata(
-        descriptor,
+        outer_descriptor,
         tx.chain_id,
         tx.to,
         &decoded,
         tx.value,
         data_provider,
+        descriptors,
     )
     .await
 }
@@ -187,26 +203,28 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
     }
 }
 
-/// Format contract calldata with multiple pre-resolved descriptors for nested calldata.
+/// Format EIP-712 typed data for clear signing display.
 ///
-/// The first matching descriptor by chain_id + address is used as the outer descriptor.
-/// Remaining descriptors are available for resolving inner calldata fields.
-pub async fn format_calldata_multi(
+/// Takes a slice of pre-resolved descriptors. The outer descriptor is found by
+/// matching `chain_id + verifying_contract`. Remaining descriptors are available
+/// for nested calldata. Single-element slice = simple case, multi-element = nesting.
+pub async fn format_typed_data(
     descriptors: &[ResolvedDescriptor],
-    tx: &TransactionContext<'_>,
+    data: &eip712::TypedData,
     data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
-    if tx.calldata.len() < 4 {
-        return Err(Error::Decode(error::DecodeError::CalldataTooShort {
-            expected: 4,
-            actual: tx.calldata.len(),
-        }));
-    }
+    let chain_id = data.domain.chain_id.unwrap_or(1);
+    let verifying_contract = data
+        .domain
+        .verifying_contract
+        .as_deref()
+        .unwrap_or("0x0000000000000000000000000000000000000000");
 
-    // Find the outer descriptor matching chain_id + to address
+    // Find the outer descriptor matching chain_id + verifying_contract
     let outer_idx = descriptors.iter().position(|rd| {
         rd.descriptor.context.deployments().iter().any(|dep| {
-            dep.chain_id == tx.chain_id && dep.address.to_lowercase() == tx.to.to_lowercase()
+            dep.chain_id == chain_id
+                && dep.address.to_lowercase() == verifying_contract.to_lowercase()
         })
     });
 
@@ -214,7 +232,7 @@ pub async fn format_calldata_multi(
         Some(idx) => idx,
         None => {
             if descriptors.is_empty() {
-                return Ok(build_raw_fallback(tx.calldata));
+                return Ok(eip712::build_typed_raw_fallback(data));
             }
             // Fallback to first descriptor
             0
@@ -222,78 +240,7 @@ pub async fn format_calldata_multi(
     };
 
     let outer_descriptor = &descriptors[outer_idx].descriptor;
-    let actual_selector = &tx.calldata[..4];
-
-    let (sig, _format_key) = match find_matching_signature(outer_descriptor, actual_selector) {
-        Ok(result) => result,
-        Err(_) => {
-            return Ok(build_raw_fallback(tx.calldata));
-        }
-    };
-
-    let mut decoded = decoder::decode_calldata(&sig, tx.calldata)?;
-    inject_container_values(&mut decoded, tx.chain_id, tx.to, tx.value, tx.from);
-
-    engine::format_calldata_multi(
-        outer_descriptor,
-        tx.chain_id,
-        tx.to,
-        &decoded,
-        tx.value,
-        data_provider,
-        descriptors,
-    )
-    .await
-}
-
-/// Format EIP-712 typed data for clear signing display.
-pub async fn format_typed_data(
-    descriptor: &Descriptor,
-    data: &eip712::TypedData,
-    data_provider: &dyn DataProvider,
-) -> Result<DisplayModel, Error> {
-    eip712::format_typed_data(descriptor, data, data_provider).await
-}
-
-/// High-level convenience: resolve descriptor then format calldata.
-///
-/// Uses `opts.implementation_address` for descriptor resolution if provided (proxy support),
-/// falling back to `tx.to`.
-///
-/// Gracefully degrades to raw preview when no descriptor is found.
-pub async fn format(
-    tx: &TransactionContext<'_>,
-    source: &dyn DescriptorSource,
-    data_provider: &dyn DataProvider,
-    opts: Option<&FormatOptions<'_>>,
-) -> Result<DisplayModel, Error> {
-    let addr = opts.and_then(|o| o.implementation_address).unwrap_or(tx.to);
-    match source.resolve_calldata(tx.chain_id, addr).await {
-        Ok(resolved) => format_calldata(&resolved.descriptor, tx, data_provider).await,
-        Err(error::ResolveError::NotFound { .. }) => Ok(build_raw_fallback(tx.calldata)),
-        Err(e) => Err(Error::Resolve(e)),
-    }
-}
-
-/// High-level convenience: resolve descriptor then format EIP-712 typed data.
-///
-/// Gracefully degrades to raw preview when no descriptor is found.
-pub async fn format_typed(
-    data: &eip712::TypedData,
-    source: &dyn DescriptorSource,
-    data_provider: &dyn DataProvider,
-) -> Result<DisplayModel, Error> {
-    let chain_id = data.domain.chain_id.unwrap_or(1);
-    let address = data
-        .domain
-        .verifying_contract
-        .as_deref()
-        .unwrap_or("0x0000000000000000000000000000000000000000");
-    match source.resolve_typed(chain_id, address).await {
-        Ok(resolved) => format_typed_data(&resolved.descriptor, data, data_provider).await,
-        Err(error::ResolveError::NotFound { .. }) => Ok(eip712::build_typed_raw_fallback(data)),
-        Err(e) => Err(Error::Resolve(e)),
-    }
+    eip712::format_typed_data(outer_descriptor, data, data_provider, descriptors).await
 }
 
 /// Find a format key whose signature matches the calldata selector.
@@ -325,6 +272,14 @@ mod tests {
     use super::*;
     use crate::provider::EmptyDataProvider;
     use crate::token::StaticTokenSource;
+
+    fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
+        vec![ResolvedDescriptor {
+            descriptor,
+            chain_id,
+            address: address.to_lowercase(),
+        }]
+    }
 
     fn test_descriptor_json() -> &'static str {
         r#"{
@@ -383,14 +338,16 @@ mod tests {
         calldata.extend_from_slice(&amount_word);
 
         let provider = EmptyDataProvider;
+        let addr = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+        let descriptors = wrap_rd(descriptor, 1, addr);
         let tx = TransactionContext {
             chain_id: 1,
-            to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            to: addr,
             calldata: &calldata,
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &provider).await.unwrap();
+        let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
         assert_eq!(result.entries.len(), 2);
@@ -482,14 +439,16 @@ mod tests {
             },
         );
 
+        let addr = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+        let descriptors = wrap_rd(descriptor, 1, addr);
         let tx = TransactionContext {
             chain_id: 1,
-            to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            to: addr,
             calldata: &calldata,
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+        let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
         assert_eq!(result.intent, "Transfer tokens");
 
@@ -553,6 +512,7 @@ mod tests {
         calldata.extend_from_slice(&[0u8; 32]); // arg 0
         calldata.extend_from_slice(&[0u8; 32]); // arg 1
 
+        let descriptors = wrap_rd(descriptor, 1, "0xabc");
         let tx = TransactionContext {
             chain_id: 1,
             to: "0xabc",
@@ -560,7 +520,7 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+        let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
             .unwrap();
 
@@ -629,6 +589,7 @@ mod tests {
         amount[31] = 100;
         calldata.extend_from_slice(&amount);
 
+        let descriptors = wrap_rd(descriptor, 1, "0xabc");
         let tx = TransactionContext {
             chain_id: 1,
             to: "0xabc",
@@ -636,7 +597,7 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+        let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
             .unwrap();
 
@@ -705,6 +666,7 @@ mod tests {
         word[31] = 1; // value = 1 → "Limit"
         calldata.extend_from_slice(&word);
 
+        let descriptors = wrap_rd(descriptor, 1, "0xabc");
         let tx = TransactionContext {
             chain_id: 1,
             to: "0xabc",
@@ -712,7 +674,7 @@ mod tests {
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+        let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
             .unwrap();
 
@@ -722,32 +684,6 @@ mod tests {
         } else {
             panic!("expected Item");
         }
-    }
-
-    #[tokio::test]
-    async fn test_high_level_format() {
-        let descriptor = Descriptor::from_json(test_descriptor_json()).unwrap();
-        let mut source = resolver::StaticSource::new();
-        source.add_calldata(1, "0xdac17f958d2ee523a2206206994597c13d831ec7", descriptor);
-
-        let sig = decoder::parse_signature("transfer(address,uint256)").unwrap();
-        let mut calldata = Vec::new();
-        calldata.extend_from_slice(&sig.selector);
-        calldata.extend_from_slice(&[0u8; 32]); // to
-        calldata.extend_from_slice(&[0u8; 32]); // amount
-
-        let tx = TransactionContext {
-            chain_id: 1,
-            to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
-            calldata: &calldata,
-            value: None,
-            from: None,
-        };
-        let result = format(&tx, &source, &EmptyDataProvider, None)
-            .await
-            .unwrap();
-
-        assert_eq!(result.intent, "Transfer tokens");
     }
 
     #[tokio::test]
@@ -792,14 +728,16 @@ mod tests {
             hex::decode("7c616fe6000000000000000000000000000000000000000000000000000000006945563d")
                 .unwrap();
 
+        let addr = "0x521B4C065Bbdbe3E20B3727340730936912DfA46";
+        let descriptors = wrap_rd(descriptor, 10, addr);
         let tx = TransactionContext {
             chain_id: 10,
-            to: "0x521B4C065Bbdbe3E20B3727340730936912DfA46",
+            to: addr,
             calldata: &calldata,
             value: None,
             from: None,
         };
-        let result = format_calldata(&descriptor, &tx, &EmptyDataProvider)
+        let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
             .unwrap();
 
@@ -873,7 +811,8 @@ mod tests {
             }),
         };
 
-        let result = format_typed_data(&descriptor, &typed_data, &EmptyDataProvider)
+        let descriptors = wrap_rd(descriptor, 1, "0xabc");
+        let result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
             .await
             .unwrap();
         assert_eq!(result.intent, "Permit token spending");

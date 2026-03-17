@@ -1,6 +1,7 @@
 //! Integration tests using real Aave v2/v3 registry descriptors.
 
 use erc7730::decoder::parse_signature;
+use erc7730::resolver::ResolvedDescriptor;
 use erc7730::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
@@ -88,6 +89,14 @@ fn aave_token_source() -> CompositeDataProvider {
     ])
 }
 
+fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
+    vec![ResolvedDescriptor {
+        descriptor,
+        chain_id,
+        address: address.to_lowercase(),
+    }]
+}
+
 fn get_entry_value(model: &DisplayModel, label: &str) -> String {
     for entry in &model.entries {
         match entry {
@@ -119,14 +128,16 @@ async fn aave_supply_usdc_mainnet() {
         ],
     );
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "1000 USDC");
@@ -151,14 +162,16 @@ async fn aave_supply_usdc_base() {
         ],
     );
 
+    let to = "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5";
+    let descriptors = wrap_rd(descriptor, 8453, to);
     let tx = TransactionContext {
         chain_id: 8453,
-        to: "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "500 USDC");
@@ -183,14 +196,16 @@ async fn aave_repay_all_dai() {
         ],
     );
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Repay loan");
     assert_eq!(get_entry_value(&result, "Amount to repay"), "All DAI");
@@ -215,14 +230,16 @@ async fn aave_withdraw_max() {
         ],
     );
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "Max USDC");
@@ -248,14 +265,16 @@ async fn aave_borrow_variable() {
         ],
     );
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Borrow");
     assert_eq!(get_entry_value(&result, "Amount to borrow"), "5 USDT");
@@ -278,14 +297,16 @@ async fn aave_set_collateral() {
         ],
     );
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Manage collateral");
     assert_eq!(get_entry_value(&result, "Enable use as collateral"), "true");
@@ -312,14 +333,16 @@ async fn aave_deposit_usdc_mainnet() {
         ],
     );
 
+    let to = "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "1000 USDC");
@@ -348,14 +371,16 @@ async fn gateway_deposit_eth() {
     // 1 ETH = 10^18 wei
     let value = uint_word(1_000_000_000_000_000_000);
 
+    let to = "0xd01607c3C5eCABa394D8be377a08590149325722";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0xd01607c3C5eCABa394D8be377a08590149325722",
+        to,
         calldata: &calldata,
         value: Some(&value),
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     // @.value should be formatted as native currency (ETH with 18 decimals)
@@ -382,14 +407,16 @@ async fn gateway_borrow_eth_with_from() {
 
     let from_addr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
+    let to = "0xd01607c3C5eCABa394D8be377a08590149325722";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0xd01607c3C5eCABa394D8be377a08590149325722",
+        to,
         calldata: &calldata,
         value: None,
         from: Some(from_addr),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Borrow");
     // @.from should be resolved (EIP-55 checksummed)
@@ -420,14 +447,16 @@ async fn real_wallet_supply_eth_mainnet() {
     let value_bytes =
         hex::decode("00000000000000000000000000000000000000000000000000005af3107a4000").unwrap();
 
+    let to = "0xd01607c3C5eCABa394D8be377a08590149325722";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0xd01607c3C5eCABa394D8be377a08590149325722",
+        to,
         calldata: &calldata,
         value: Some(&value_bytes),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "0.0001 ETH");
@@ -463,14 +492,16 @@ async fn aave_interpolated_intent() {
         ],
     );
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     // interpolatedIntent: "Supply {amount} for {onBehalfOf}"
     let intent = result.interpolated_intent.as_deref().unwrap();
@@ -497,14 +528,16 @@ async fn graceful_fallback_unknown_selector() {
     )
     .unwrap();
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: None,
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert!(result.intent.contains("0xdeadbeef"));
     assert!(!result.warnings.is_empty());
@@ -526,14 +559,16 @@ async fn aave_withdraw_bytes32_optimism_graceful_fallback() {
         hex::decode("8e19899e0000000000000000000000000000ffffffffffffffffffffffffffffffff0005")
             .unwrap();
 
+    let to = "0x794a61358d6845594f94dc1db02a252b5b4814ad";
+    let descriptors = wrap_rd(descriptor, 10, to);
     let tx = TransactionContext {
         chain_id: 10,
-        to: "0x794a61358d6845594f94dc1db02a252b5b4814ad",
+        to,
         calldata: &calldata,
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     // No format key matches selector 0x8e19899e, so we get graceful fallback
     assert!(
@@ -567,14 +602,16 @@ async fn real_wallet_withdraw_usdc_mainnet() {
     )
     .unwrap();
 
+    let to = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+        to,
         calldata: &calldata,
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "Max USDC");
@@ -613,14 +650,16 @@ async fn real_wallet_withdraw_0_1_usdc_mainnet() {
     )
     .unwrap();
 
+    let to = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
+        to,
         calldata: &calldata,
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "0.1 USDC");
@@ -635,36 +674,6 @@ async fn real_wallet_withdraw_0_1_usdc_mainnet() {
         !interp.contains("100000"),
         "interpolated intent should NOT contain raw '100000': {interp}"
     );
-}
-
-// --- FilesystemSource Test ---
-
-#[tokio::test]
-async fn filesystem_source_aave() {
-    use erc7730::resolver::{DescriptorSource, FilesystemSource};
-
-    let fixtures_dir = format!("{}/tests/fixtures", env!("CARGO_MANIFEST_DIR"));
-    let source = FilesystemSource::from_directory(std::path::Path::new(&fixtures_dir)).unwrap();
-
-    // LPv3 on mainnet
-    let resolved = source
-        .resolve_calldata(1, "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2")
-        .await
-        .unwrap();
-    assert_eq!(resolved.chain_id, 1);
-
-    // LPv3 on Base
-    let resolved = source
-        .resolve_calldata(8453, "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5")
-        .await
-        .unwrap();
-    assert_eq!(resolved.chain_id, 8453);
-
-    // Not found
-    let err = source
-        .resolve_calldata(1, "0x0000000000000000000000000000000000000001")
-        .await;
-    assert!(err.is_err());
 }
 
 // --- Real Transaction Tests (from Etherscan mainnet, generate-tests skill) ---
@@ -686,14 +695,16 @@ async fn real_tx_borrow_usdt_enum_interpolation() {
     )
     .unwrap();
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: Some("0x694278718ecb91113a4c6141cc579dc105187a8a"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Borrow");
     assert_eq!(get_entry_value(&result, "Amount to borrow"), "100 USDT");
@@ -730,14 +741,16 @@ async fn real_tx_repay_usdc_enum_interpolation() {
     )
     .unwrap();
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: Some("0xad8c1b5b4d5dfe7fbe508ba57b1e05b33391f94a"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Repay loan");
     assert_eq!(
@@ -773,14 +786,16 @@ async fn real_tx_repay_all_usdt_enum_interpolation() {
     )
     .unwrap();
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: Some("0x0b5a6a15b975fd35f0b301748c8dabd35b50d8c5"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Repay loan");
     assert_eq!(get_entry_value(&result, "Amount to repay"), "All USDT");
@@ -829,14 +844,16 @@ async fn real_tx_withdraw_max_weth() {
     )
     .unwrap();
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: Some("0x2f45665810956929bbfaa984d70a511ad08b0b54"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Withdraw");
     assert_eq!(get_entry_value(&result, "Amount to withdraw"), "Max WETH");
@@ -868,14 +885,16 @@ async fn real_tx_supply_with_permit_usdc() {
     )
     .unwrap();
 
+    let to = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2";
+    let descriptors = wrap_rd(descriptor, 1, to);
     let tx = TransactionContext {
         chain_id: 1,
-        to: "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2",
+        to,
         calldata: &calldata,
         value: None,
         from: Some("0x44f2a3aa7fdda16a7bf66c68fba96508078d2bdc"),
     };
-    let result = format_calldata(&descriptor, &tx, &tokens).await.unwrap();
+    let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert_eq!(result.intent, "Supply");
     assert_eq!(get_entry_value(&result, "Amount to supply"), "13400 USDC");

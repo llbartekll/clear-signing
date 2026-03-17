@@ -58,25 +58,9 @@ pub struct TypedDataDomain {
 }
 
 /// Format EIP-712 typed data into a display model.
+///
+/// `descriptors` provides pre-resolved inner descriptors for nested calldata support.
 pub async fn format_typed_data(
-    descriptor: &Descriptor,
-    data: &TypedData,
-    data_provider: &dyn DataProvider,
-) -> Result<DisplayModel, Error> {
-    format_typed_data_inner(descriptor, data, data_provider, &[]).await
-}
-
-/// Format EIP-712 typed data with pre-resolved inner descriptors for nested calldata support.
-pub async fn format_typed_data_multi(
-    descriptor: &Descriptor,
-    data: &TypedData,
-    data_provider: &dyn DataProvider,
-    descriptors: &[ResolvedDescriptor],
-) -> Result<DisplayModel, Error> {
-    format_typed_data_inner(descriptor, data, data_provider, descriptors).await
-}
-
-async fn format_typed_data_inner(
     descriptor: &Descriptor,
     data: &TypedData,
     data_provider: &dyn DataProvider,
@@ -465,7 +449,7 @@ async fn render_typed_calldata_field(
     );
 
     // Use engine's format pipeline for the inner call
-    let result = crate::engine::format_calldata_multi(
+    let result = crate::engine::format_calldata(
         inner_descriptor,
         chain_id,
         &callee,
@@ -947,7 +931,7 @@ mod tests {
         let descriptor = Descriptor::from_json(descriptor_json).unwrap();
         let provider = crate::provider::EmptyDataProvider;
 
-        let result = format_typed_data(&descriptor, &typed_data, &provider)
+        let result = format_typed_data(&descriptor, &typed_data, &provider, &[])
             .await
             .unwrap();
 

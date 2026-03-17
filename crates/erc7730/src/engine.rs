@@ -98,49 +98,9 @@ struct RenderContext<'a> {
 }
 
 /// Format calldata into a display model using a descriptor.
+///
+/// `descriptors` provides pre-resolved inner descriptors for nested calldata support.
 pub async fn format_calldata(
-    descriptor: &Descriptor,
-    chain_id: u64,
-    _to: &str,
-    decoded: &DecodedArguments,
-    _value: Option<&[u8]>,
-    data_provider: &dyn DataProvider,
-) -> Result<DisplayModel, Error> {
-    format_calldata_inner(
-        descriptor,
-        chain_id,
-        _to,
-        decoded,
-        _value,
-        data_provider,
-        &[],
-    )
-    .await
-}
-
-/// Format calldata with pre-resolved inner descriptors for nested calldata support.
-pub async fn format_calldata_multi(
-    descriptor: &Descriptor,
-    chain_id: u64,
-    to: &str,
-    decoded: &DecodedArguments,
-    value: Option<&[u8]>,
-    data_provider: &dyn DataProvider,
-    descriptors: &[ResolvedDescriptor],
-) -> Result<DisplayModel, Error> {
-    format_calldata_inner(
-        descriptor,
-        chain_id,
-        to,
-        decoded,
-        value,
-        data_provider,
-        descriptors,
-    )
-    .await
-}
-
-async fn format_calldata_inner(
     descriptor: &Descriptor,
     chain_id: u64,
     _to: &str,
