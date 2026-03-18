@@ -25,6 +25,7 @@
 		D1000001000000000060 /* Starscream in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000061 /* Starscream */; };
 		D1000001000000000062 /* EvmSigningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000063 /* EvmSigningService.swift */; };
 		D1000001000000000064 /* YttriumUtilsWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000065 /* YttriumUtilsWrapper */; };
+		D1000001000000000066 /* MockDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000067 /* MockDataProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +45,7 @@
 		D1000001000000000040 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = SOURCE_ROOT; };
 		D1000001000000000041 /* Wallet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Wallet.entitlements; sourceTree = "<group>"; };
 		D1000001000000000063 /* EvmSigningService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvmSigningService.swift; sourceTree = "<group>"; };
+		D1000001000000000067 /* MockDataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockDataProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -109,6 +111,7 @@
 				D1000001000000000013 /* WalletConnectService.swift */,
 				D1000001000000000014 /* ClearSigningService.swift */,
 				D1000001000000000063 /* EvmSigningService.swift */,
+				D1000001000000000067 /* MockDataProvider.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -215,6 +218,7 @@
 				D1000001000000000003 /* WalletConnectService.swift in Sources */,
 				D1000001000000000004 /* ClearSigningService.swift in Sources */,
 				D1000001000000000062 /* EvmSigningService.swift in Sources */,
+				D1000001000000000066 /* MockDataProvider.swift in Sources */,
 				D1000001000000000005 /* DisplayModelView.swift in Sources */,
 				D1000001000000000006 /* KeyImportSection.swift in Sources */,
 				D1000001000000000007 /* QRScannerSheet.swift in Sources */,

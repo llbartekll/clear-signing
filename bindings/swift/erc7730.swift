@@ -13,8 +13,8 @@ import erc7730FFI
 
 fileprivate extension RustBuffer {
     // Allocate a new buffer, copying the contents of a `UInt8` array.
-    init(bytes: [UInt8]) {
-        let rbuf = bytes.withUnsafeBufferPointer { ptr in
+    init(byteArray: [UInt8]) {
+        let rbuf = byteArray.withUnsafeBufferPointer { ptr in
             RustBuffer.from(ptr)
         }
         self.init(capacity: rbuf.capacity, len: rbuf.len, data: rbuf.data)
@@ -209,7 +209,7 @@ extension FfiConverterRustBuffer {
     public static func lower(_ value: SwiftType) -> RustBuffer {
           var writer = createWriter()
           write(value, into: &writer)
-          return RustBuffer(bytes: writer)
+          return RustBuffer(byteArray: writer)
     }
 }
 // An error type for FFI errors. These errors occur at the UniFFI level, not
@@ -414,7 +414,13 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -488,6 +494,326 @@ fileprivate struct FfiConverterString: FfiConverter {
         writeBytes(&buf, value.utf8)
     }
 }
+
+
+
+
+/**
+ * Sync callback trait for wallet-side data resolution.
+ *
+ * Wallets implement this protocol (Swift/Kotlin) to provide token metadata,
+ * ENS names, local contact names, and NFT collection names during clear-sign
+ * formatting. Methods are synchronous across the FFI boundary — the proxy
+ * bridges them to the async `DataProvider` trait used internally.
+ */
+public protocol DataProviderFfi: AnyObject, Sendable {
+    
+    func resolveToken(chainId: UInt64, address: String)  -> TokenMetaFfi?
+    
+    func resolveEnsName(address: String, chainId: UInt64)  -> String?
+    
+    func resolveLocalName(address: String, chainId: UInt64)  -> String?
+    
+    func resolveNftCollectionName(collectionAddress: String, chainId: UInt64)  -> String?
+    
+}
+/**
+ * Sync callback trait for wallet-side data resolution.
+ *
+ * Wallets implement this protocol (Swift/Kotlin) to provide token metadata,
+ * ENS names, local contact names, and NFT collection names during clear-sign
+ * formatting. Methods are synchronous across the FFI boundary — the proxy
+ * bridges them to the async `DataProvider` trait used internally.
+ */
+open class DataProviderFfiImpl: DataProviderFfi, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_erc7730_fn_clone_dataproviderffi(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_erc7730_fn_free_dataproviderffi(handle, $0) }
+    }
+
+    
+
+    
+open func resolveToken(chainId: UInt64, address: String) -> TokenMetaFfi?  {
+    return try!  FfiConverterOptionTypeTokenMetaFfi.lift(try! rustCall() {
+    uniffi_erc7730_fn_method_dataproviderffi_resolve_token(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(chainId),
+        FfiConverterString.lower(address),$0
+    )
+})
+}
+    
+open func resolveEnsName(address: String, chainId: UInt64) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_erc7730_fn_method_dataproviderffi_resolve_ens_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),
+        FfiConverterUInt64.lower(chainId),$0
+    )
+})
+}
+    
+open func resolveLocalName(address: String, chainId: UInt64) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_erc7730_fn_method_dataproviderffi_resolve_local_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),
+        FfiConverterUInt64.lower(chainId),$0
+    )
+})
+}
+    
+open func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_erc7730_fn_method_dataproviderffi_resolve_nft_collection_name(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(collectionAddress),
+        FfiConverterUInt64.lower(chainId),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceDataProviderFfi] = [UniffiVTableCallbackInterfaceDataProviderFfi(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeDataProviderFfi.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface DataProviderFfi: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeDataProviderFfi.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface DataProviderFfi: handle missing in uniffiClone")
+            }
+        },
+        resolveToken: { (
+            uniffiHandle: UInt64,
+            chainId: UInt64,
+            address: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> TokenMetaFfi? in
+                guard let uniffiObj = try? FfiConverterTypeDataProviderFfi.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.resolveToken(
+                     chainId: try FfiConverterUInt64.lift(chainId),
+                     address: try FfiConverterString.lift(address)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionTypeTokenMetaFfi.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        resolveEnsName: { (
+            uniffiHandle: UInt64,
+            address: RustBuffer,
+            chainId: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String? in
+                guard let uniffiObj = try? FfiConverterTypeDataProviderFfi.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.resolveEnsName(
+                     address: try FfiConverterString.lift(address),
+                     chainId: try FfiConverterUInt64.lift(chainId)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        resolveLocalName: { (
+            uniffiHandle: UInt64,
+            address: RustBuffer,
+            chainId: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String? in
+                guard let uniffiObj = try? FfiConverterTypeDataProviderFfi.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.resolveLocalName(
+                     address: try FfiConverterString.lift(address),
+                     chainId: try FfiConverterUInt64.lift(chainId)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        resolveNftCollectionName: { (
+            uniffiHandle: UInt64,
+            collectionAddress: RustBuffer,
+            chainId: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String? in
+                guard let uniffiObj = try? FfiConverterTypeDataProviderFfi.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.resolveNftCollectionName(
+                     collectionAddress: try FfiConverterString.lift(collectionAddress),
+                     chainId: try FfiConverterUInt64.lift(chainId)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitDataProviderFfi() {
+    uniffi_erc7730_fn_init_callback_vtable_dataproviderffi(UniffiCallbackInterfaceDataProviderFfi.vtable)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDataProviderFfi: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<DataProviderFfi>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = DataProviderFfi
+
+    public static func lift(_ handle: UInt64) throws -> DataProviderFfi {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return DataProviderFfiImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: DataProviderFfi) -> UInt64 {
+         if let rustImpl = value as? DataProviderFfiImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DataProviderFfi {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: DataProviderFfi, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDataProviderFfi_lift(_ handle: UInt64) throws -> DataProviderFfi {
+    return try FfiConverterTypeDataProviderFfi.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDataProviderFfi_lower(_ value: DataProviderFfi) -> UInt64 {
+    return FfiConverterTypeDataProviderFfi.lower(value)
+}
+
+
 
 
 /**
@@ -609,6 +935,64 @@ public func FfiConverterTypeDisplayModel_lift(_ buf: RustBuffer) throws -> Displ
 #endif
 public func FfiConverterTypeDisplayModel_lower(_ value: DisplayModel) -> RustBuffer {
     return FfiConverterTypeDisplayModel.lower(value)
+}
+
+
+public struct TokenMetaFfi: Equatable, Hashable {
+    public var symbol: String
+    public var decimals: UInt8
+    public var name: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(symbol: String, decimals: UInt8, name: String) {
+        self.symbol = symbol
+        self.decimals = decimals
+        self.name = name
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TokenMetaFfi: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTokenMetaFfi: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TokenMetaFfi {
+        return
+            try TokenMetaFfi(
+                symbol: FfiConverterString.read(from: &buf), 
+                decimals: FfiConverterUInt8.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TokenMetaFfi, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.symbol, into: &buf)
+        FfiConverterUInt8.write(value.decimals, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTokenMetaFfi_lift(_ buf: RustBuffer) throws -> TokenMetaFfi {
+    return try FfiConverterTypeTokenMetaFfi.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTokenMetaFfi_lower(_ value: TokenMetaFfi) -> RustBuffer {
+    return FfiConverterTypeTokenMetaFfi.lower(value)
 }
 
 
@@ -1016,6 +1400,54 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeDataProviderFfi: FfiConverterRustBuffer {
+    typealias SwiftType = DataProviderFfi?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeDataProviderFfi.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeDataProviderFfi.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeTokenMetaFfi: FfiConverterRustBuffer {
+    typealias SwiftType = TokenMetaFfi?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeTokenMetaFfi.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeTokenMetaFfi.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1165,11 +1597,11 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
  *
  * Requires the `github-registry` feature.
  */
-public func erc7730Format(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, implementationAddress: String?, tokens: [TokenMetaInput])async throws  -> DisplayModel  {
+public func erc7730Format(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, implementationAddress: String?, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(to),FfiConverterString.lower(calldataHex),FfiConverterOptionString.lower(valueHex),FfiConverterOptionString.lower(fromAddress),FfiConverterOptionString.lower(implementationAddress),FfiConverterSequenceTypeTokenMetaInput.lower(tokens)
+                uniffi_erc7730_fn_func_erc7730_format(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(to),FfiConverterString.lower(calldataHex),FfiConverterOptionString.lower(valueHex),FfiConverterOptionString.lower(fromAddress),FfiConverterOptionString.lower(implementationAddress),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
                 )
             },
             pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
@@ -1179,42 +1611,30 @@ public func erc7730Format(chainId: UInt64, to: String, calldataHex: String, valu
             errorHandler: FfiConverterTypeFfiError_lift
         )
 }
-public func erc7730FormatCalldata(descriptorJson: String, chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, tokens: [TokenMetaInput])throws  -> DisplayModel  {
-    return try  FfiConverterTypeDisplayModel_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_erc7730_fn_func_erc7730_format_calldata(
-        FfiConverterString.lower(descriptorJson),
-        FfiConverterUInt64.lower(chainId),
-        FfiConverterString.lower(to),
-        FfiConverterString.lower(calldataHex),
-        FfiConverterOptionString.lower(valueHex),
-        FfiConverterOptionString.lower(fromAddress),
-        FfiConverterSequenceTypeTokenMetaInput.lower(tokens),$0
-    )
-})
-}
-public func erc7730FormatCalldataMulti(descriptorsJson: [String], chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, tokens: [TokenMetaInput])throws  -> DisplayModel  {
-    return try  FfiConverterTypeDisplayModel_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_erc7730_fn_func_erc7730_format_calldata_multi(
-        FfiConverterSequenceString.lower(descriptorsJson),
-        FfiConverterUInt64.lower(chainId),
-        FfiConverterString.lower(to),
-        FfiConverterString.lower(calldataHex),
-        FfiConverterOptionString.lower(valueHex),
-        FfiConverterOptionString.lower(fromAddress),
-        FfiConverterSequenceTypeTokenMetaInput.lower(tokens),$0
-    )
-})
+public func erc7730FormatCalldata(descriptorsJson: [String], chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_erc7730_fn_func_erc7730_format_calldata(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterUInt64.lower(chainId),FfiConverterString.lower(to),FfiConverterString.lower(calldataHex),FfiConverterOptionString.lower(valueHex),FfiConverterOptionString.lower(fromAddress),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
+                )
+            },
+            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
+            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
+            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDisplayModel_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
 }
 /**
  * High-level: resolve descriptor from GitHub registry, then format EIP-712 typed data.
  *
  * Requires the `github-registry` feature.
  */
-public func erc7730FormatTyped(typedDataJson: String, tokens: [TokenMetaInput])async throws  -> DisplayModel  {
+public func erc7730FormatTyped(typedDataJson: String, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format_typed(FfiConverterString.lower(typedDataJson),FfiConverterSequenceTypeTokenMetaInput.lower(tokens)
+                uniffi_erc7730_fn_func_erc7730_format_typed(FfiConverterString.lower(typedDataJson),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
                 )
             },
             pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
@@ -1224,12 +1644,30 @@ public func erc7730FormatTyped(typedDataJson: String, tokens: [TokenMetaInput])a
             errorHandler: FfiConverterTypeFfiError_lift
         )
 }
-public func erc7730FormatTypedData(descriptorJson: String, typedDataJson: String, tokens: [TokenMetaInput])throws  -> DisplayModel  {
-    return try  FfiConverterTypeDisplayModel_lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_erc7730_fn_func_erc7730_format_typed_data(
-        FfiConverterString.lower(descriptorJson),
-        FfiConverterString.lower(typedDataJson),
-        FfiConverterSequenceTypeTokenMetaInput.lower(tokens),$0
+public func erc7730FormatTypedData(descriptorsJson: [String], typedDataJson: String, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_erc7730_fn_func_erc7730_format_typed_data(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterString.lower(typedDataJson),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
+                )
+            },
+            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
+            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
+            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeDisplayModel_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+/**
+ * Merge two descriptor JSON strings (including + included).
+ *
+ * Returns merged JSON ready for use with `erc7730_format_calldata` / `erc7730_format_typed_data`.
+ */
+public func erc7730MergeDescriptors(includingJson: String, includedJson: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    uniffi_erc7730_fn_func_erc7730_merge_descriptors(
+        FfiConverterString.lower(includingJson),
+        FfiConverterString.lower(includedJson),$0
     )
 })
 }
@@ -1249,22 +1687,35 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format() != 11473) {
+    if (uniffi_erc7730_checksum_func_erc7730_format() != 41473) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 45099) {
+    if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 49102) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_calldata_multi() != 26428) {
+    if (uniffi_erc7730_checksum_func_erc7730_format_typed() != 39628) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_typed() != 55740) {
+    if (uniffi_erc7730_checksum_func_erc7730_format_typed_data() != 26187) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_typed_data() != 31759) {
+    if (uniffi_erc7730_checksum_func_erc7730_merge_descriptors() != 26679) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_token() != 7230) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_ens_name() != 13050) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_local_name() != 39357) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_nft_collection_name() != 61037) {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitDataProviderFfi()
     return InitializationResult.ok
 }()
 

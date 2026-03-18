@@ -1,8 +1,13 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use crate::{
     eip712::TypedData,
     error::Error,
+    provider::DataProvider,
     resolver::ResolvedDescriptor,
-    token::{StaticTokenSource, TokenMeta},
+    token::{CompositeDataProvider, StaticTokenSource, TokenMeta},
     types::descriptor::Descriptor,
     DisplayModel,
 };
@@ -11,7 +16,7 @@ use crate::{
 use crate::resolver::{DescriptorSource, GitHubRegistrySource};
 
 #[cfg(feature = "github-registry")]
-use crate::token::{CompositeDataProvider, WellKnownTokenSource};
+use crate::token::WellKnownTokenSource;
 
 #[cfg(feature = "github-registry")]
 const DEFAULT_REGISTRY_URL: &str =
@@ -31,6 +36,133 @@ async fn get_registry_source() -> Result<&'static GitHubRegistrySource, FfiError
         })
         .await
 }
+
+// ---------------------------------------------------------------------------
+// FFI-safe token metadata record
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct TokenMetaFfi {
+    pub symbol: String,
+    pub decimals: u8,
+    pub name: String,
+}
+
+impl From<TokenMetaFfi> for TokenMeta {
+    fn from(ffi: TokenMetaFfi) -> Self {
+        TokenMeta {
+            symbol: ffi.symbol,
+            decimals: ffi.decimals,
+            name: ffi.name,
+        }
+    }
+}
+
+impl From<TokenMeta> for TokenMetaFfi {
+    fn from(meta: TokenMeta) -> Self {
+        TokenMetaFfi {
+            symbol: meta.symbol,
+            decimals: meta.decimals,
+            name: meta.name,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Foreign data-provider trait (wallet implements this in Swift/Kotlin)
+// ---------------------------------------------------------------------------
+
+/// Sync callback trait for wallet-side data resolution.
+///
+/// Wallets implement this protocol (Swift/Kotlin) to provide token metadata,
+/// ENS names, local contact names, and NFT collection names during clear-sign
+/// formatting. Methods are synchronous across the FFI boundary — the proxy
+/// bridges them to the async `DataProvider` trait used internally.
+#[uniffi::export(with_foreign)]
+pub trait DataProviderFfi: Send + Sync {
+    fn resolve_token(&self, chain_id: u64, address: String) -> Option<TokenMetaFfi>;
+    fn resolve_ens_name(&self, address: String, chain_id: u64) -> Option<String>;
+    fn resolve_local_name(&self, address: String, chain_id: u64) -> Option<String>;
+    fn resolve_nft_collection_name(
+        &self,
+        collection_address: String,
+        chain_id: u64,
+    ) -> Option<String>;
+}
+
+// ---------------------------------------------------------------------------
+// Proxy: wraps Arc<dyn DataProviderFfi> → implements internal DataProvider
+// ---------------------------------------------------------------------------
+
+pub struct DataProviderFfiProxy(pub Arc<dyn DataProviderFfi>);
+
+impl DataProvider for DataProviderFfiProxy {
+    fn resolve_token(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> Pin<Box<dyn Future<Output = Option<TokenMeta>> + Send + '_>> {
+        let address = address.to_string();
+        let inner = Arc::clone(&self.0);
+        Box::pin(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                inner.resolve_token(chain_id, address)
+            })
+            .await;
+            result.ok().flatten().map(Into::into)
+        })
+    }
+
+    fn resolve_ens_name(
+        &self,
+        address: &str,
+        chain_id: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let address = address.to_string();
+        let inner = Arc::clone(&self.0);
+        Box::pin(async move {
+            let result =
+                tokio::task::spawn_blocking(move || inner.resolve_ens_name(address, chain_id))
+                    .await;
+            result.ok().flatten()
+        })
+    }
+
+    fn resolve_local_name(
+        &self,
+        address: &str,
+        chain_id: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let address = address.to_string();
+        let inner = Arc::clone(&self.0);
+        Box::pin(async move {
+            let result =
+                tokio::task::spawn_blocking(move || inner.resolve_local_name(address, chain_id))
+                    .await;
+            result.ok().flatten()
+        })
+    }
+
+    fn resolve_nft_collection_name(
+        &self,
+        collection_address: &str,
+        chain_id: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let collection_address = collection_address.to_string();
+        let inner = Arc::clone(&self.0);
+        Box::pin(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                inner.resolve_nft_collection_name(collection_address, chain_id)
+            })
+            .await;
+            result.ok().flatten()
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Legacy input record (kept for backwards compat)
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct TokenMetaInput {
@@ -75,6 +207,7 @@ impl From<Error> for FfiError {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn erc7730_format_calldata(
     descriptors_json: Vec<String>,
@@ -84,6 +217,7 @@ pub async fn erc7730_format_calldata(
     value_hex: Option<String>,
     from_address: Option<String>,
     tokens: Vec<TokenMetaInput>,
+    data_provider: Option<Arc<dyn DataProviderFfi>>,
 ) -> Result<DisplayModel, FfiError> {
     let descriptors = parse_descriptors(&descriptors_json, chain_id, &to)?;
 
@@ -93,7 +227,7 @@ pub async fn erc7730_format_calldata(
         None => None,
     };
 
-    let token_source = build_token_source(&tokens);
+    let provider = build_data_provider(&tokens, data_provider);
     let tx = crate::TransactionContext {
         chain_id,
         to: &to,
@@ -101,7 +235,7 @@ pub async fn erc7730_format_calldata(
         value: value.as_deref(),
         from: from_address.as_deref(),
     };
-    crate::format_calldata(&descriptors, &tx, &token_source)
+    crate::format_calldata(&descriptors, &tx, provider.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -111,6 +245,7 @@ pub async fn erc7730_format_typed_data(
     descriptors_json: Vec<String>,
     typed_data_json: String,
     tokens: Vec<TokenMetaInput>,
+    data_provider: Option<Arc<dyn DataProviderFfi>>,
 ) -> Result<DisplayModel, FfiError> {
     let typed_data: TypedData = serde_json::from_str::<TypedData>(&typed_data_json)
         .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
@@ -123,8 +258,8 @@ pub async fn erc7730_format_typed_data(
         .unwrap_or("0x0000000000000000000000000000000000000000");
     let descriptors = parse_descriptors(&descriptors_json, chain_id, address)?;
 
-    let token_source = build_token_source(&tokens);
-    crate::format_typed_data(&descriptors, &typed_data, &token_source)
+    let provider = build_data_provider(&tokens, data_provider);
+    crate::format_typed_data(&descriptors, &typed_data, provider.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -132,6 +267,7 @@ pub async fn erc7730_format_typed_data(
 /// High-level: resolve descriptor from GitHub registry, then format calldata.
 ///
 /// Requires the `github-registry` feature.
+#[allow(clippy::too_many_arguments)]
 #[cfg(feature = "github-registry")]
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn erc7730_format(
@@ -142,6 +278,7 @@ pub async fn erc7730_format(
     from_address: Option<String>,
     implementation_address: Option<String>,
     tokens: Vec<TokenMetaInput>,
+    data_provider: Option<Arc<dyn DataProviderFfi>>,
 ) -> Result<DisplayModel, FfiError> {
     let source = get_registry_source().await?;
     let resolve_addr = implementation_address.as_deref().unwrap_or(&to);
@@ -160,9 +297,7 @@ pub async fn erc7730_format(
         None => None,
     };
 
-    let caller_tokens = build_token_source(&tokens);
-    let well_known = WellKnownTokenSource::new();
-    let composite = CompositeDataProvider::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
+    let provider = build_data_provider_with_well_known(&tokens, data_provider);
 
     let tx = crate::TransactionContext {
         chain_id,
@@ -171,7 +306,7 @@ pub async fn erc7730_format(
         value: value.as_deref(),
         from: from_address.as_deref(),
     };
-    crate::format_calldata(&[resolved], &tx, &composite)
+    crate::format_calldata(&[resolved], &tx, provider.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -184,6 +319,7 @@ pub async fn erc7730_format(
 pub async fn erc7730_format_typed(
     typed_data_json: String,
     tokens: Vec<TokenMetaInput>,
+    data_provider: Option<Arc<dyn DataProviderFfi>>,
 ) -> Result<DisplayModel, FfiError> {
     let typed_data: TypedData = serde_json::from_str::<TypedData>(&typed_data_json)
         .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
@@ -204,11 +340,9 @@ pub async fn erc7730_format_typed(
         Err(e) => return Err(FfiError::Resolve(e.to_string())),
     };
 
-    let caller_tokens = build_token_source(&tokens);
-    let well_known = WellKnownTokenSource::new();
-    let composite = CompositeDataProvider::new(vec![Box::new(caller_tokens), Box::new(well_known)]);
+    let provider = build_data_provider_with_well_known(&tokens, data_provider);
 
-    crate::format_typed_data(&[resolved], &typed_data, &composite)
+    crate::format_typed_data(&[resolved], &typed_data, provider.as_ref())
         .await
         .map_err(Into::into)
 }
@@ -289,6 +423,36 @@ fn build_token_source(tokens: &[TokenMetaInput]) -> StaticTokenSource {
         );
     }
     source
+}
+
+/// Build a composite data provider from FFI provider + static tokens.
+/// Priority: FFI provider (if any) → static tokens from `tokens` vec.
+fn build_data_provider(
+    tokens: &[TokenMetaInput],
+    ffi_provider: Option<Arc<dyn DataProviderFfi>>,
+) -> Box<dyn DataProvider> {
+    let mut providers: Vec<Box<dyn DataProvider>> = Vec::new();
+    if let Some(ffi) = ffi_provider {
+        providers.push(Box::new(DataProviderFfiProxy(ffi)));
+    }
+    providers.push(Box::new(build_token_source(tokens)));
+    Box::new(CompositeDataProvider::new(providers))
+}
+
+/// Build a composite data provider including well-known tokens (for high-level fns).
+/// Priority: FFI provider → static tokens → well-known tokens.
+#[cfg(feature = "github-registry")]
+fn build_data_provider_with_well_known(
+    tokens: &[TokenMetaInput],
+    ffi_provider: Option<Arc<dyn DataProviderFfi>>,
+) -> Box<dyn DataProvider> {
+    let mut providers: Vec<Box<dyn DataProvider>> = Vec::new();
+    if let Some(ffi) = ffi_provider {
+        providers.push(Box::new(DataProviderFfiProxy(ffi)));
+    }
+    providers.push(Box::new(build_token_source(tokens)));
+    providers.push(Box::new(WellKnownTokenSource::new()));
+    Box::new(CompositeDataProvider::new(providers))
 }
 
 #[cfg(test)]
@@ -413,6 +577,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
         )
         .await
         .expect("calldata formatting should succeed");
@@ -436,6 +601,7 @@ mod tests {
             vec![typed_descriptor_json().to_string()],
             typed_data_json().to_string(),
             vec![],
+            None,
         )
         .await
         .expect("typed formatting should succeed");
@@ -454,6 +620,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
         )
         .await
         .expect_err("invalid descriptor should fail");
@@ -467,6 +634,7 @@ mod tests {
             vec![typed_descriptor_json().to_string()],
             "{".to_string(),
             vec![],
+            None,
         )
         .await
         .expect_err("invalid typed data should fail");
@@ -484,6 +652,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
         )
         .await
         .expect_err("invalid calldata hex should fail");
@@ -501,6 +670,7 @@ mod tests {
             Some("zz".to_string()),
             None,
             vec![],
+            None,
         )
         .await
         .expect_err("invalid value hex should fail");
@@ -518,6 +688,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
         )
         .await
         .expect("no-prefix calldata should succeed");
@@ -530,11 +701,115 @@ mod tests {
             Some("0x00".to_string()),
             None,
             vec![],
+            None,
         )
         .await
         .expect("prefixed calldata should succeed");
 
         assert_eq!(no_prefix.intent, with_prefix.intent);
         assert_eq!(no_prefix.entries.len(), with_prefix.entries.len());
+    }
+
+    // -----------------------------------------------------------------------
+    // Mock DataProviderFfi to validate end-to-end proxy wiring
+    // -----------------------------------------------------------------------
+
+    struct MockDataProviderFfi;
+
+    impl DataProviderFfi for MockDataProviderFfi {
+        fn resolve_token(&self, _chain_id: u64, _address: String) -> Option<TokenMetaFfi> {
+            None
+        }
+        fn resolve_ens_name(&self, _address: String, _chain_id: u64) -> Option<String> {
+            None
+        }
+        fn resolve_local_name(&self, address: String, _chain_id: u64) -> Option<String> {
+            if address.to_lowercase()
+                == "0x0000000000000000000000000000000000000001".to_lowercase()
+            {
+                Some("My Contact".to_string())
+            } else {
+                None
+            }
+        }
+        fn resolve_nft_collection_name(
+            &self,
+            _collection_address: String,
+            _chain_id: u64,
+        ) -> Option<String> {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn format_calldata_with_data_provider_ffi() {
+        // Descriptor that uses addressName format (triggers local name resolution)
+        let descriptor_json = r#"{
+            "context": {
+                "contract": {
+                    "deployments": [
+                        { "chainId": 1, "address": "0xdac17f958d2ee523a2206206994597c13d831ec7" }
+                    ]
+                }
+            },
+            "metadata": {
+                "owner": "test",
+                "contractName": "Tether USD",
+                "enums": {},
+                "constants": {},
+                "addressBook": {},
+                "maps": {}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "transfer(address,uint256)": {
+                        "intent": "Transfer tokens",
+                        "fields": [
+                            {
+                                "path": "@.0",
+                                "label": "To",
+                                "format": "addressName",
+                                "params": {
+                                    "sources": ["local"]
+                                }
+                            },
+                            {
+                                "path": "@.1",
+                                "label": "Amount",
+                                "format": "number"
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        let mock_provider: Arc<dyn DataProviderFfi> = Arc::new(MockDataProviderFfi);
+
+        let result = erc7730_format_calldata(
+            vec![descriptor_json.to_string()],
+            1,
+            "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
+            transfer_calldata_hex().to_string(),
+            None,
+            None,
+            vec![],
+            Some(mock_provider),
+        )
+        .await
+        .expect("calldata formatting with data provider should succeed");
+
+        assert_eq!(result.intent, "Transfer tokens");
+        assert_eq!(result.entries.len(), 2);
+
+        // The "To" address (0x...0001) should resolve to "My Contact" via mock provider
+        match &result.entries[0] {
+            DisplayEntry::Item(item) => {
+                assert_eq!(item.label, "To");
+                assert_eq!(item.value, "My Contact");
+            }
+            _ => panic!("expected item entry"),
+        }
     }
 }

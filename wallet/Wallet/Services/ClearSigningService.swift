@@ -3,6 +3,12 @@ import Erc7730
 
 struct ClearSigningService {
 
+    private let dataProvider: DataProviderFfi
+
+    init(dataProvider: DataProviderFfi = MockDataProvider()) {
+        self.dataProvider = dataProvider
+    }
+
     /// Format a contract call using the ERC-7730 library.
     /// Resolves descriptors from the GitHub registry internally.
     func formatCalldata(
@@ -19,7 +25,9 @@ struct ClearSigningService {
                 calldataHex: calldata,
                 valueHex: value,
                 fromAddress: from,
-                tokens: []
+                implementationAddress: nil,
+                tokens: [],
+                dataProvider: dataProvider
             )
             return .success(model)
         } catch {
@@ -33,7 +41,8 @@ struct ClearSigningService {
         do {
             let model = try await erc7730FormatTyped(
                 typedDataJson: typedDataJson,
-                tokens: []
+                tokens: [],
+                dataProvider: dataProvider
             )
             return .success(model)
         } catch {
