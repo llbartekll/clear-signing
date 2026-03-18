@@ -92,7 +92,8 @@ pub async fn format_typed_data(
     Ok(DisplayModel {
         intent: format
             .intent
-            .clone()
+            .as_ref()
+            .map(crate::types::display::intent_as_string)
             .unwrap_or_else(|| data.primary_type.clone()),
         interpolated_intent: format
             .interpolated_intent
@@ -164,11 +165,23 @@ fn render_typed_fields<'a>(
                 DisplayField::Simple {
                     path,
                     label,
+                    value: literal_value,
                     format,
                     params,
+                    separator: _,
                     visible,
                 } => {
-                    let value = resolve_typed_path(message, path);
+                    // If literal value is provided (no path), use it directly
+                    if let Some(lit) = literal_value {
+                        entries.push(DisplayEntry::Item(DisplayItem {
+                            label: label.clone(),
+                            value: lit.clone(),
+                        }));
+                        continue;
+                    }
+
+                    let path_str = path.as_deref().unwrap_or("");
+                    let value = resolve_typed_path(message, path_str);
 
                     // Check visibility
                     if !check_typed_visibility(visible, &value) {
@@ -533,28 +546,40 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
 }
 
 /// Resolve a path in EIP-712 message JSON (e.g., "recipient" or "details.amount").
+///
+/// Supports `[index]` and `[start:end]` slice notation.
 fn resolve_typed_path(message: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
     let path = path.strip_prefix("@.").unwrap_or(path);
-    let mut current = message;
+    let mut current = message.clone();
 
     for segment in path.split('.') {
-        // Handle array index: "items[0]"
+        // Handle array index: "items[0]" or "items[0:3]"
         if let Some(bracket) = segment.find('[') {
             let key = &segment[..bracket];
             let idx_str = &segment[bracket + 1..segment.len() - 1];
 
-            current = current.get(key)?;
-            if let Ok(idx) = idx_str.parse::<usize>() {
-                current = current.get(idx)?;
+            if !key.is_empty() {
+                current = current.get(key)?.clone();
+            }
+
+            // Check for slice syntax
+            if let Some(colon) = idx_str.find(':') {
+                let start: usize = idx_str[..colon].parse().ok()?;
+                let end: usize = idx_str[colon + 1..].parse().ok()?;
+                let arr = current.as_array()?;
+                let slice: Vec<serde_json::Value> = arr.get(start..end)?.to_vec();
+                current = serde_json::Value::Array(slice);
+            } else if let Ok(idx) = idx_str.parse::<usize>() {
+                current = current.get(idx)?.clone();
             } else {
                 return None;
             }
         } else {
-            current = current.get(segment)?;
+            current = current.get(segment)?.clone();
         }
     }
 
-    Some(current.clone())
+    Some(current)
 }
 
 fn check_typed_visibility(rule: &VisibleRule, value: &Option<serde_json::Value>) -> bool {
@@ -614,16 +639,57 @@ async fn format_typed_value(
 
     match fmt {
         FieldFormat::Address => Ok(json_value_to_string(val)),
-        FieldFormat::AddressName => {
+        FieldFormat::AddressName | FieldFormat::InteroperableAddressName => {
             let addr = json_value_to_string(val);
-            // Try local name first, then ENS, then fall back to raw address
-            if let Some(name) = data_provider.resolve_local_name(&addr, chain_id).await {
-                Ok(name)
-            } else if let Some(name) = data_provider.resolve_ens_name(&addr, chain_id).await {
-                Ok(name)
-            } else {
-                Ok(addr)
+
+            // Check senderAddress
+            if let Some(params) = params {
+                if let Some(ref sender) = params.sender_address {
+                    let sender_addrs = match sender {
+                        crate::types::display::SenderAddress::Single(s) => vec![s.as_str()],
+                        crate::types::display::SenderAddress::Multiple(v) => {
+                            v.iter().map(|s| s.as_str()).collect()
+                        }
+                    };
+                    for sender_ref in &sender_addrs {
+                        let resolved =
+                            if sender_ref.starts_with("@.") || sender_ref.starts_with('#') {
+                                resolve_typed_path(message, sender_ref).and_then(|v| match v {
+                                    serde_json::Value::String(s) => Some(s),
+                                    _ => None,
+                                })
+                            } else {
+                                Some(sender_ref.to_string())
+                            };
+                        if let Some(resolved_addr) = resolved {
+                            if resolved_addr.to_lowercase() == addr.to_lowercase() {
+                                return Ok("Sender".to_string());
+                            }
+                        }
+                    }
+                }
             }
+
+            // Determine allowed sources
+            let sources = params.and_then(|p| p.sources.as_ref());
+            let local_allowed = sources
+                .map(|s| s.iter().any(|src| src == "local"))
+                .unwrap_or(true);
+            let ens_allowed = sources
+                .map(|s| s.iter().any(|src| src == "ens"))
+                .unwrap_or(true);
+
+            if local_allowed {
+                if let Some(name) = data_provider.resolve_local_name(&addr, chain_id).await {
+                    return Ok(name);
+                }
+            }
+            if ens_allowed {
+                if let Some(name) = data_provider.resolve_ens_name(&addr, chain_id).await {
+                    return Ok(name);
+                }
+            }
+            Ok(addr)
         }
         FieldFormat::TokenAmount => {
             let amount_str = json_value_to_string(val);
@@ -713,8 +779,61 @@ async fn format_typed_value(
             };
             Ok(crate::engine::chain_name_public(cid))
         }
-        _ => {
-            warnings.push(format!("format {fmt:?} not yet implemented for EIP-712"));
+        FieldFormat::Raw => Ok(json_value_to_string(val)),
+        FieldFormat::Amount => {
+            // For EIP-712, amounts are plain numeric strings
+            Ok(json_value_to_string(val))
+        }
+        FieldFormat::Duration => {
+            let secs: u64 = match val {
+                serde_json::Value::Number(n) => n.as_u64().unwrap_or(0),
+                serde_json::Value::String(s) => s.parse().unwrap_or(0),
+                _ => 0,
+            };
+            Ok(format_typed_duration(secs))
+        }
+        FieldFormat::Unit => {
+            let raw = json_value_to_string(val);
+            let base = params.and_then(|p| p.base.as_deref()).unwrap_or("");
+            let decimals = params.and_then(|p| p.decimals).unwrap_or(0);
+            let amount: num_bigint::BigUint = raw
+                .parse()
+                .unwrap_or_else(|_| num_bigint::BigUint::from(0u64));
+            let formatted = if decimals > 0 {
+                crate::engine::format_with_decimals(&amount, decimals)
+            } else {
+                amount.to_string()
+            };
+            if base.is_empty() {
+                Ok(formatted)
+            } else {
+                Ok(format!("{} {}", formatted, base))
+            }
+        }
+        FieldFormat::NftName => {
+            let token_id = json_value_to_string(val);
+            let collection_addr = params.and_then(|p| {
+                if let Some(ref cpath) = p.collection_path {
+                    let resolved = resolve_typed_path(message, cpath);
+                    if let Some(serde_json::Value::String(addr)) = resolved {
+                        return Some(addr);
+                    }
+                }
+                p.collection.clone()
+            });
+            if let Some(ref addr) = collection_addr {
+                if let Some(name) = data_provider
+                    .resolve_nft_collection_name(addr, chain_id)
+                    .await
+                {
+                    return Ok(format!("{} #{}", name, token_id));
+                }
+            }
+            Ok(format!("#{}", token_id))
+        }
+        FieldFormat::Calldata => {
+            // Should not reach here — calldata is intercepted in render_typed_fields
+            warnings.push("calldata format should be handled separately".to_string());
             Ok(json_value_to_string(val))
         }
     }
@@ -740,6 +859,46 @@ fn resolve_typed_chain_id(
     default_chain
 }
 
+fn format_typed_duration(secs: u64) -> String {
+    if secs == 0 {
+        return "0 seconds".to_string();
+    }
+    let days = secs / 86400;
+    let hours = (secs % 86400) / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    let mut parts = Vec::new();
+    if days > 0 {
+        parts.push(format!(
+            "{} {}",
+            days,
+            if days == 1 { "day" } else { "days" }
+        ));
+    }
+    if hours > 0 {
+        parts.push(format!(
+            "{} {}",
+            hours,
+            if hours == 1 { "hour" } else { "hours" }
+        ));
+    }
+    if minutes > 0 {
+        parts.push(format!(
+            "{} {}",
+            minutes,
+            if minutes == 1 { "minute" } else { "minutes" }
+        ));
+    }
+    if seconds > 0 {
+        parts.push(format!(
+            "{} {}",
+            seconds,
+            if seconds == 1 { "second" } else { "seconds" }
+        ));
+    }
+    parts.join(" ")
+}
+
 fn json_value_to_string(val: &serde_json::Value) -> String {
     match val {
         serde_json::Value::String(s) => s.clone(),
@@ -755,7 +914,12 @@ fn interpolate_typed_intent(
     message: &serde_json::Value,
     fields: &[DisplayField],
 ) -> String {
-    let mut result = template.to_string();
+    // Pre-process: replace {{ and }} with sentinels
+    const OPEN_SENTINEL: &str = "\x00OPEN_BRACE\x00";
+    const CLOSE_SENTINEL: &str = "\x00CLOSE_BRACE\x00";
+    let mut result = template
+        .replace("{{", OPEN_SENTINEL)
+        .replace("}}", CLOSE_SENTINEL);
 
     // First pass: replace ${path} patterns (v1)
     while let Some(start) = result.find("${") {
@@ -790,7 +954,10 @@ fn interpolate_typed_intent(
         }
     }
 
+    // Post-process: restore escaped braces
     result
+        .replace(OPEN_SENTINEL, "{")
+        .replace(CLOSE_SENTINEL, "}")
 }
 
 fn resolve_and_format_typed_interpolation(
@@ -805,7 +972,7 @@ fn resolve_and_format_typed_interpolation(
                     path: fp, format, ..
                 } = f
                 {
-                    if fp == path {
+                    if fp.as_deref() == Some(path) {
                         format.as_ref()
                     } else {
                         None

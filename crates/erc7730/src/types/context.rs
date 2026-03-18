@@ -25,6 +25,23 @@ pub struct ContractContext {
 pub struct ContractInfo {
     #[serde(default)]
     pub deployments: Vec<Deployment>,
+
+    /// Factory deployment info for factory-deployed contracts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub factory: Option<FactoryInfo>,
+}
+
+/// Factory deployment information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactoryInfo {
+    /// Event signature emitted on deployment (e.g., "ContractCreated(address)").
+    #[serde(rename = "deployEvent")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deploy_event: Option<String>,
+
+    /// Factory contract deployments.
+    #[serde(default)]
+    pub deployments: Vec<Deployment>,
 }
 
 /// Context for EIP-712 typed data clear signing.
@@ -45,6 +62,11 @@ pub struct Eip712Info {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<Eip712Domain>,
+
+    /// Domain separator hash for validation (wallet-side).
+    #[serde(rename = "domainSeparator")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain_separator: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,9 +74,19 @@ pub struct Eip712Domain {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+
+    #[serde(rename = "chainId")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_id: Option<u64>,
+
     #[serde(rename = "verifyingContract")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verifying_contract: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub salt: Option<String>,
 }
 
 /// A single chain + address deployment entry.

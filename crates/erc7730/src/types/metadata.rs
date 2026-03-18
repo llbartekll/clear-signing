@@ -65,6 +65,11 @@ pub struct TokenInfo {
 /// A named map definition for value lookup/substitution (v2).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapDefinition {
+    /// Path to the key in calldata (cross-field key resolution).
+    #[serde(rename = "keyPath")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+
     /// The lookup entries: key → display value.
     #[serde(default)]
     pub entries: HashMap<String, String>,

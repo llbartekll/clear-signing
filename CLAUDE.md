@@ -100,6 +100,25 @@ The library supports v2 registry descriptor features:
 - **`FieldFormat::Calldata`**: Nested calldata decoding (Safe `execTransaction`, ERC-4337 UserOps) — recursive rendering with `DisplayEntry::Nested`, `calleePath`/`amountPath`/`spenderPath` params, depth limit of 3
 - **Batch operations (`wallet_sendCalls`)**: Handled wallet-side per spec — wallet calls `format_calldata()` per inner call, joins `interpolatedIntent` strings with " and ". No batch splitting in the engine.
 - **`@.` container value priority**: Paths with `@.` prefix prefer container values over same-named function params (search from end)
+- **Duplicate selector rejection**: Wallets MUST reject descriptors with multiple keys sharing the same selector (spec normative MUST)
+- **Signed integer handling**: `int` types use two's complement → `BigInt` for correct negative display
+- **`value` field on DisplayField**: Literal constant values as alternative to `path`
+- **`separator` field**: Custom separator for array-typed values
+- **`interoperableAddressName` format**: ERC-7930 stub with fallback to `addressName`
+- **`date` encoding**: `"blockheight"` encoding shows block number instead of timestamp
+- **`selectorPath`/`chainIdPath`**: Cross-field selector and chain ID resolution for nested calldata
+- **`domainSeparator`**: EIP-712 context field (parsing only, validation is wallet-side)
+- **Factory context**: `factory` object with `deployEvent` and `deployments`
+- **EIP-712 format parity**: All 14 format types (including Duration, Unit, Amount, NftName, Raw) now work in EIP-712
+- **EIP-712 AddressName**: Full senderAddress, sources, local/ENS resolution (parity with calldata)
+- **Array slice syntax**: `[start:end]` in both calldata paths and EIP-712 paths
+- **Unit SI prefix**: `prefix: true` enables k/M/G/T notation
+- **Maps `keyPath`**: Cross-field key resolution for map lookups
+- **`excluded` paths**: Deprecated v1 field now functional in rendering
+- **Intent as object**: `intent` can be string or `{"label": "..."}` object
+- **Interpolation escape sequences**: `{{` and `}}` produce literal braces
+- **Encryption params**: `scheme` and `plaintextType` fields (parsing only)
+- **EIP-712 domain completeness**: `version`, `chainId`, `salt` fields on descriptor domain
 
 Optional features:
 - `github-registry`: async HTTP descriptor fetching via `GitHubRegistrySource` (adds `reqwest` dependency; requires tokio runtime)
@@ -120,4 +139,4 @@ Optional features:
 
 - **Phase 3**: `EmbeddedSource` + descriptor validation
 - **Phase 4**: Packaging/distribution for existing UniFFI bindings (Swift XCFramework/SPM + Kotlin AAR/Maven)
-- **Phase 5**: Missing formatter (`nftName`), file inclusion (`$id`/includes), CI pipeline
+- **Phase 5**: File inclusion (`$id`/includes), CI pipeline

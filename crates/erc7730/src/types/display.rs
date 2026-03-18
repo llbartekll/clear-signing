@@ -16,6 +16,19 @@ pub struct DescriptorDisplay {
     pub formats: HashMap<String, DisplayFormat>,
 }
 
+/// Extract an intent string from a Value (string or object with a "label" key).
+pub fn intent_as_string(val: &serde_json::Value) -> String {
+    match val {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Object(obj) => obj
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        _ => val.to_string(),
+    }
+}
+
 /// A single display format for a function or message type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DisplayFormat {
@@ -24,9 +37,9 @@ pub struct DisplayFormat {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 
-    /// Human-readable intent label.
+    /// Human-readable intent label (string or object per spec).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub intent: Option<String>,
+    pub intent: Option<serde_json::Value>,
 
     /// Intent with `${path}` or `{name}` template variables for interpolation.
     #[serde(rename = "interpolatedIntent")]
@@ -61,15 +74,25 @@ pub enum DisplayField {
 
     /// A simple field with path, label, format, etc.
     Simple {
-        path: String,
+        /// Path to resolve in decoded arguments. Optional when `value` is provided.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
 
         label: String,
+
+        /// Literal constant value (alternative to `path`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
 
         #[serde(skip_serializing_if = "Option::is_none")]
         format: Option<FieldFormat>,
 
         #[serde(skip_serializing_if = "Option::is_none")]
         params: Option<FormatParams>,
+
+        /// Separator string for array-typed values.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        separator: Option<String>,
 
         #[serde(default = "default_visible")]
         visible: VisibleRule,
@@ -177,6 +200,8 @@ pub enum FieldFormat {
     NftName,
     Duration,
     Unit,
+    /// ERC-7930 interoperable address format.
+    InteroperableAddressName,
 }
 
 /// Format parameters — varies by format type.
@@ -242,6 +267,15 @@ pub struct FormatParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub encryption: Option<EncryptionParams>,
 
+    /// Date encoding: `"timestamp"` (default) or `"blockheight"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoding: Option<String>,
+
+    /// Path to resolve which selector to use for nested calldata decoding.
+    #[serde(rename = "selectorPath")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector_path: Option<String>,
+
     /// Path to the callee address for nested calldata (e.g., "to").
     #[serde(rename = "calleePath")]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -291,6 +325,15 @@ pub enum SenderAddress {
 /// Encryption parameters for encrypted fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptionParams {
+    /// Encryption scheme identifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scheme: Option<String>,
+
+    /// Type of the plaintext content.
+    #[serde(rename = "plaintextType")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plaintext_type: Option<String>,
+
     #[serde(rename = "fallbackLabel")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_label: Option<String>,

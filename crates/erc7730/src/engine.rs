@@ -4,7 +4,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint, Sign};
 
 use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::error::Error;
@@ -132,7 +132,8 @@ pub async fn format_calldata(
     Ok(DisplayModel {
         intent: format
             .intent
-            .clone()
+            .as_ref()
+            .map(crate::types::display::intent_as_string)
             .unwrap_or_else(|| decoded.function_name.clone()),
         interpolated_intent: interpolated,
         entries,
@@ -141,33 +142,46 @@ pub async fn format_calldata(
 }
 
 /// Find the display format matching the decoded function.
+///
+/// Per spec: wallets MUST reject if multiple keys share the same type-only signature
+/// (duplicate selectors).
 fn find_format<'a>(
     descriptor: &'a Descriptor,
     function_name: &str,
     selector: &[u8; 4],
 ) -> Result<&'a DisplayFormat, Error> {
     let selector_hex = hex::encode(selector);
+    let mut matches: Vec<(&str, &'a DisplayFormat)> = Vec::new();
 
-    // Try exact match on format keys
     for (key, format) in &descriptor.display.formats {
-        // Match by full signature or by function name
         if key == function_name {
-            return Ok(format);
+            matches.push((key, format));
+            continue;
         }
-        // Match by computing selector from the key (handles named params)
         if key.contains('(') {
             if let Ok(parsed) = crate::decoder::parse_signature(key) {
                 if hex::encode(parsed.selector) == selector_hex {
-                    return Ok(format);
+                    matches.push((key, format));
                 }
             }
         }
     }
 
-    Err(Error::Render(format!(
-        "no display format found for function '{}' (selector 0x{})",
-        function_name, selector_hex
-    )))
+    match matches.len() {
+        0 => Err(Error::Render(format!(
+            "no display format found for function '{}' (selector 0x{})",
+            function_name, selector_hex
+        ))),
+        1 => Ok(matches[0].1),
+        _ => {
+            let keys: Vec<&str> = matches.iter().map(|(k, _)| *k).collect();
+            Err(Error::Descriptor(format!(
+                "duplicate selectors (0x{}) found for keys: {}",
+                selector_hex,
+                keys.join(", ")
+            )))
+        }
+    }
 }
 
 /// Render a list of display fields into display entries.
@@ -201,16 +215,37 @@ fn render_fields<'a>(
                 DisplayField::Simple {
                     path,
                     label,
+                    value: literal_value,
                     format,
                     params,
+                    separator,
                     visible,
                 } => {
+                    // If literal value is provided (no path), use it directly
+                    if let Some(lit) = literal_value {
+                        // Literal value fields skip visibility checks against decoded data
+                        entries.push(DisplayEntry::Item(DisplayItem {
+                            label: label.clone(),
+                            value: lit.clone(),
+                        }));
+                        continue;
+                    }
+
+                    let path_str = path.as_deref().unwrap_or("");
+
                     // Resolve the value from decoded arguments
-                    let value = resolve_path(ctx.decoded, path);
+                    let value = resolve_path(ctx.decoded, path_str);
 
                     // Check visibility
                     if !check_visibility(visible, &value) {
                         continue;
+                    }
+
+                    // Check excluded paths
+                    if let Some(fmt) = find_current_format(ctx) {
+                        if fmt.excluded.iter().any(|e| e == path_str) {
+                            continue;
+                        }
                     }
 
                     // Intercept calldata format — produces a Nested entry instead of a flat value
@@ -226,8 +261,9 @@ fn render_fields<'a>(
                         &value,
                         format.as_ref(),
                         params.as_ref(),
-                        path,
+                        path_str,
                         label,
+                        separator.as_deref(),
                         warnings,
                     )
                     .await?;
@@ -366,6 +402,8 @@ fn resolve_path(decoded: &DecodedArguments, path: &str) -> Option<ArgumentValue>
 }
 
 /// Navigate into a value using path segments.
+///
+/// Supports `[index]` and `[start:end]` slice notation.
 fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentValue> {
     if segments.is_empty() {
         return Some(value.clone());
@@ -374,6 +412,33 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
     match value {
         ArgumentValue::Tuple(members) | ArgumentValue::Array(members) => {
             let seg = segments[0];
+
+            // Handle bracket notation within segment: "items[0]" or "items[0:3]"
+            if let Some(bracket) = seg.find('[') {
+                if seg.ends_with(']') {
+                    let idx_str = &seg[bracket + 1..seg.len() - 1];
+                    // Check for slice syntax
+                    if let Some(colon) = idx_str.find(':') {
+                        let start: usize = idx_str[..colon].parse().ok()?;
+                        let end: usize = idx_str[colon + 1..].parse().ok()?;
+                        let slice: Vec<ArgumentValue> = members.get(start..end)?.to_vec();
+                        return navigate_value(&ArgumentValue::Array(slice), &segments[1..]);
+                    }
+                    let index: usize = idx_str.parse().ok()?;
+                    return members
+                        .get(index)
+                        .and_then(|v| navigate_value(v, &segments[1..]));
+                }
+            }
+
+            // Slice syntax at top level: "0:3"
+            if let Some(colon) = seg.find(':') {
+                let start: usize = seg[..colon].parse().ok()?;
+                let end: usize = seg[colon + 1..].parse().ok()?;
+                let slice: Vec<ArgumentValue> = members.get(start..end)?.to_vec();
+                return navigate_value(&ArgumentValue::Array(slice), &segments[1..]);
+            }
+
             if let Ok(index) = seg.parse::<usize>() {
                 members
                     .get(index)
@@ -404,6 +469,7 @@ fn check_visibility(rule: &VisibleRule, value: &Option<ArgumentValue>) -> bool {
 }
 
 /// Format a decoded value according to its format type.
+#[allow(clippy::too_many_arguments)]
 async fn format_value(
     ctx: &RenderContext<'_>,
     value: &Option<ArgumentValue>,
@@ -411,6 +477,7 @@ async fn format_value(
     params: Option<&FormatParams>,
     path: &str,
     label: &str,
+    separator: Option<&str>,
     warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
     let Some(val) = value else {
@@ -440,7 +507,7 @@ async fn format_value(
     }
 
     let Some(fmt) = format else {
-        return Ok(format_raw(val));
+        return Ok(format_raw_with_separator(val, separator));
     };
 
     match fmt {
@@ -448,12 +515,12 @@ async fn format_value(
             format_token_amount(ctx, val, params, label, path, warnings).await
         }
         FieldFormat::Amount => format_amount(ctx, val, path),
-        FieldFormat::Date => format_date(val),
+        FieldFormat::Date => format_date(val, params.and_then(|p| p.encoding.as_deref())),
         FieldFormat::Enum => format_enum(ctx, val, params),
         FieldFormat::Address => Ok(format_address(val)),
         FieldFormat::AddressName => format_address_name(ctx, val, params).await,
         FieldFormat::Number => Ok(format_number(val)),
-        FieldFormat::Raw => Ok(format_raw(val)),
+        FieldFormat::Raw => Ok(format_raw_with_separator(val, separator)),
         FieldFormat::TokenTicker => format_token_ticker(ctx, val, params, warnings).await,
         FieldFormat::ChainId => format_chain_id(val),
         FieldFormat::Duration => Ok(format_duration(val)),
@@ -467,6 +534,11 @@ async fn format_value(
             Ok(format_raw(val))
         }
         FieldFormat::NftName => format_nft_name(ctx, val, params, label, path, warnings).await,
+        FieldFormat::InteroperableAddressName => {
+            // ERC-7930 is nascent — delegate to addressName with a warning
+            warnings.push("interoperableAddressName: falling back to addressName".to_string());
+            format_address_name(ctx, val, params).await
+        }
     }
 }
 
@@ -560,10 +632,23 @@ async fn render_calldata_field(
             _ => None,
         });
 
+    // Resolve chain ID for inner descriptor lookup (#9 chainIdPath)
+    let inner_chain_id = params
+        .and_then(|p| p.chain_id_path.as_ref())
+        .and_then(|path| resolve_path(ctx.decoded, path))
+        .and_then(|v| match v {
+            ArgumentValue::Uint(bytes) => {
+                let n = BigUint::from_bytes_be(&bytes);
+                u64::try_from(n).ok()
+            }
+            _ => None,
+        })
+        .unwrap_or(ctx.chain_id);
+
     // Find matching inner descriptor by chain_id + callee address
     let inner_descriptor = ctx.descriptors.iter().find(|rd| {
         rd.descriptor.context.deployments().iter().any(|dep| {
-            dep.chain_id == ctx.chain_id && dep.address.to_lowercase() == callee.to_lowercase()
+            dep.chain_id == inner_chain_id && dep.address.to_lowercase() == callee.to_lowercase()
         })
     });
 
@@ -574,9 +659,34 @@ async fn render_calldata_field(
         }
     };
 
+    // Resolve selector — use selectorPath if present (#8), else first 4 bytes
+    let actual_selector: [u8; 4] = if let Some(selector_bytes) = params
+        .and_then(|p| p.selector_path.as_ref())
+        .and_then(|path| resolve_path(ctx.decoded, path))
+        .and_then(|v| match v {
+            ArgumentValue::FixedBytes(b) if b.len() >= 4 => {
+                let mut sel = [0u8; 4];
+                sel.copy_from_slice(&b[..4]);
+                Some(sel)
+            }
+            ArgumentValue::Uint(b) if b.len() >= 4 => {
+                // Selector from uint — take last 4 bytes
+                let mut sel = [0u8; 4];
+                sel.copy_from_slice(&b[b.len() - 4..]);
+                Some(sel)
+            }
+            _ => None,
+        }) {
+        selector_bytes
+    } else {
+        let mut sel = [0u8; 4];
+        sel.copy_from_slice(&inner_calldata[..4]);
+        sel
+    };
+
     // Find matching signature
     let (sig, _format_key) =
-        match crate::find_matching_signature(inner_descriptor, &inner_calldata[..4]) {
+        match crate::find_matching_signature(inner_descriptor, &actual_selector) {
             Ok(result) => result,
             Err(_) => {
                 return Ok(build_raw_nested(label, inner_calldata));
@@ -594,7 +704,7 @@ async fn render_calldata_field(
     // Inject container values into inner context
     crate::inject_container_values(
         &mut decoded,
-        ctx.chain_id,
+        inner_chain_id,
         &callee,
         amount_bytes.as_deref(),
         spender_addr.as_deref(),
@@ -612,7 +722,7 @@ async fn render_calldata_field(
     let inner_ctx = RenderContext {
         descriptor: inner_descriptor,
         decoded: &decoded,
-        chain_id: ctx.chain_id,
+        chain_id: inner_chain_id,
         data_provider: ctx.data_provider,
         descriptors: ctx.descriptors,
         depth: ctx.depth + 1,
@@ -624,7 +734,8 @@ async fn render_calldata_field(
 
     let intent = inner_format
         .intent
-        .clone()
+        .as_ref()
+        .map(crate::types::display::intent_as_string)
         .unwrap_or_else(|| decoded.function_name.clone());
 
     Ok(DisplayEntry::Nested {
@@ -662,6 +773,41 @@ fn build_raw_nested(label: &str, calldata: &[u8]) -> DisplayEntry {
         intent: format!("Unknown function {}", selector),
         entries,
         warnings: vec!["No matching descriptor for inner call".to_string()],
+    }
+}
+
+/// Find the current display format from context (for excluded paths, etc.).
+fn find_current_format<'a>(ctx: &RenderContext<'a>) -> Option<&'a DisplayFormat> {
+    let selector_hex = hex::encode(ctx.decoded.selector);
+    for (key, format) in &ctx.descriptor.display.formats {
+        if key == &ctx.decoded.function_name {
+            return Some(format);
+        }
+        if key.contains('(') {
+            if let Ok(parsed) = crate::decoder::parse_signature(key) {
+                if hex::encode(parsed.selector) == selector_hex {
+                    return Some(format);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Format a raw value with an optional separator for arrays.
+fn format_raw_with_separator(val: &ArgumentValue, separator: Option<&str>) -> String {
+    match val {
+        ArgumentValue::Array(items) => {
+            let sep = separator.unwrap_or(", ");
+            let rendered: Vec<String> = items.iter().map(format_raw).collect();
+            if separator.is_some() {
+                // With explicit separator, no brackets
+                rendered.join(sep)
+            } else {
+                format!("[{}]", rendered.join(sep))
+            }
+        }
+        _ => format_raw(val),
     }
 }
 
@@ -802,10 +948,25 @@ fn eip55_checksum(addr: &[u8; 20]) -> String {
 
 fn format_number(val: &ArgumentValue) -> String {
     match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
-            BigUint::from_bytes_be(bytes).to_string()
-        }
+        ArgumentValue::Uint(bytes) => BigUint::from_bytes_be(bytes).to_string(),
+        ArgumentValue::Int(bytes) => int_to_bigint(bytes).to_string(),
         _ => format_raw(val),
+    }
+}
+
+/// Convert signed integer bytes (two's complement, big-endian) to BigInt.
+fn int_to_bigint(bytes: &[u8]) -> BigInt {
+    if bytes.is_empty() {
+        return BigInt::from(0);
+    }
+    // Check sign bit (MSB of first byte)
+    if bytes[0] & 0x80 != 0 {
+        // Negative: compute -(~value + 1) = -(complement + 1)
+        let inverted: Vec<u8> = bytes.iter().map(|b| !b).collect();
+        let magnitude = BigUint::from_bytes_be(&inverted) + 1u64;
+        BigInt::from_biguint(Sign::Minus, magnitude)
+    } else {
+        BigInt::from_biguint(Sign::Plus, BigUint::from_bytes_be(bytes))
     }
 }
 
@@ -1002,7 +1163,12 @@ fn format_amount(
     }
 }
 
-fn format_date(val: &ArgumentValue) -> Result<String, Error> {
+fn format_date(val: &ArgumentValue, encoding: Option<&str>) -> Result<String, Error> {
+    // If encoding is "blockheight", display as block number (not convertible to date)
+    if encoding == Some("blockheight") {
+        return Ok(format!("Block {}", format_number(val)));
+    }
+
     match val {
         ArgumentValue::Uint(bytes) => {
             let n = BigUint::from_bytes_be(bytes);
@@ -1056,10 +1222,16 @@ fn format_enum(
 }
 
 /// Resolve a map reference to a display value.
+///
+/// If the map has `keyPath`, resolve the key from that path instead of the field's own value.
 fn resolve_map(ctx: &RenderContext<'_>, map_ref: &str, val: &ArgumentValue) -> Option<String> {
-    let raw = format_raw(val);
     let map_def = ctx.descriptor.metadata.maps.get(map_ref)?;
-    map_def.entries.get(&raw).cloned()
+    let key = if let Some(ref key_path) = map_def.key_path {
+        resolve_path(ctx.decoded, key_path).map(|v| format_raw(&v))?
+    } else {
+        format_raw(val)
+    };
+    map_def.entries.get(&key).cloned()
 }
 
 /// Format a BigUint with decimal places (public for eip712 module).
@@ -1150,12 +1322,18 @@ async fn format_nft_name(
 /// Interpolate `${path}` and `{name}` templates in an intent string.
 ///
 /// Supports both v1 `${path}` and v2 `{paramName}` interpolation patterns.
+/// Double braces `{{` and `}}` produce literal `{` and `}`.
 async fn interpolate_intent(
     template: &str,
     ctx: &RenderContext<'_>,
     fields: &[DisplayField],
 ) -> String {
-    let mut result = template.to_string();
+    // Pre-process: replace {{ and }} with sentinels
+    const OPEN_SENTINEL: &str = "\x00OPEN_BRACE\x00";
+    const CLOSE_SENTINEL: &str = "\x00CLOSE_BRACE\x00";
+    let mut result = template
+        .replace("{{", OPEN_SENTINEL)
+        .replace("}}", CLOSE_SENTINEL);
 
     // First pass: replace ${path} patterns (v1)
     while let Some(start) = result.find("${") {
@@ -1191,7 +1369,10 @@ async fn interpolate_intent(
         }
     }
 
+    // Post-process: restore escaped braces
     result
+        .replace(OPEN_SENTINEL, "{")
+        .replace(CLOSE_SENTINEL, "}")
 }
 
 /// Format a duration value (seconds → human-readable).
@@ -1254,6 +1435,7 @@ fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> String {
 
     let base = params.and_then(|p| p.base.as_deref()).unwrap_or("");
     let decimals = params.and_then(|p| p.decimals).unwrap_or(0);
+    let use_prefix = params.and_then(|p| p.prefix).unwrap_or(false);
 
     let formatted = if decimals > 0 {
         format_with_decimals(&raw_val, decimals)
@@ -1261,11 +1443,48 @@ fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> String {
         raw_val.to_string()
     };
 
-    if base.is_empty() {
+    if use_prefix {
+        // Apply SI prefix notation (k, M, G, T, P, E)
+        let si_formatted = apply_si_prefix(&formatted);
+        if base.is_empty() {
+            si_formatted
+        } else {
+            format!("{} {}", si_formatted, base)
+        }
+    } else if base.is_empty() {
         formatted
     } else {
         format!("{} {}", formatted, base)
     }
+}
+
+/// Apply SI prefix notation to a numeric string.
+fn apply_si_prefix(value_str: &str) -> String {
+    let n: f64 = match value_str.parse() {
+        Ok(v) => v,
+        Err(_) => return value_str.to_string(),
+    };
+    let abs = n.abs();
+    let (divisor, prefix) = if abs >= 1e18 {
+        (1e18, "E")
+    } else if abs >= 1e15 {
+        (1e15, "P")
+    } else if abs >= 1e12 {
+        (1e12, "T")
+    } else if abs >= 1e9 {
+        (1e9, "G")
+    } else if abs >= 1e6 {
+        (1e6, "M")
+    } else if abs >= 1e3 {
+        (1e3, "k")
+    } else {
+        return value_str.to_string();
+    };
+    let scaled = n / divisor;
+    // Trim trailing zeros
+    let formatted = format!("{:.2}", scaled);
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
+    format!("{}{}", trimmed, prefix)
 }
 
 async fn resolve_and_format_for_interpolation(
@@ -1287,7 +1506,7 @@ async fn resolve_and_format_for_interpolation(
                 ..
             } = f
             {
-                if fp == path {
+                if fp.as_deref() == Some(path) {
                     Some((format.as_ref(), params.as_ref()))
                 } else {
                     None
@@ -1299,7 +1518,7 @@ async fn resolve_and_format_for_interpolation(
         .unwrap_or((None, None));
 
     match field_format {
-        Some(FieldFormat::Date) => format_date(&v).unwrap_or_else(|_| format_raw(&v)),
+        Some(FieldFormat::Date) => format_date(&v, None).unwrap_or_else(|_| format_raw(&v)),
         Some(FieldFormat::Number) => format_number(&v),
         Some(FieldFormat::Address) => format_address(&v),
         Some(FieldFormat::TokenAmount) => {
