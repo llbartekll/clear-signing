@@ -105,12 +105,4 @@ impl DescriptorContext {
             DescriptorContext::Eip712(e) => &e.eip712.deployments,
         }
     }
-
-    pub fn is_contract(&self) -> bool {
-        matches!(self, DescriptorContext::Contract(_))
-    }
-
-    pub fn is_eip712(&self) -> bool {
-        matches!(self, DescriptorContext::Eip712(_))
-    }
 }

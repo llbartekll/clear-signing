@@ -384,7 +384,7 @@ async fn render_typed_calldata_field(
     let callee = match callee_addr {
         Some(addr) => addr,
         None => {
-            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
 
@@ -434,7 +434,7 @@ async fn render_typed_calldata_field(
     let inner_descriptor = match inner_descriptor {
         Some(rd) => &rd.descriptor,
         None => {
-            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
 
@@ -442,14 +442,14 @@ async fn render_typed_calldata_field(
     let (sig, _) = match crate::find_matching_signature(inner_descriptor, &inner_calldata[..4]) {
         Ok(result) => result,
         Err(_) => {
-            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
 
     let mut decoded = match crate::decoder::decode_calldata(&sig, &inner_calldata) {
         Ok(d) => d,
         Err(_) => {
-            return Ok(build_raw_nested_eip712(label, &inner_calldata));
+            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
 
@@ -479,35 +479,6 @@ async fn render_typed_calldata_field(
         entries: result.entries,
         warnings: result.warnings,
     })
-}
-
-fn build_raw_nested_eip712(label: &str, calldata: &[u8]) -> DisplayEntry {
-    let selector = if calldata.len() >= 4 {
-        format!("0x{}", hex::encode(&calldata[..4]))
-    } else {
-        format!("0x{}", hex::encode(calldata))
-    };
-
-    let data = if calldata.len() > 4 {
-        &calldata[4..]
-    } else {
-        &[]
-    };
-
-    let mut entries = Vec::new();
-    for (i, chunk) in data.chunks(32).enumerate() {
-        entries.push(DisplayEntry::Item(DisplayItem {
-            label: format!("Param {}", i),
-            value: format!("0x{}", hex::encode(chunk)),
-        }));
-    }
-
-    DisplayEntry::Nested {
-        label: label.to_string(),
-        intent: format!("Unknown function {}", selector),
-        entries,
-        warnings: vec!["No matching descriptor for inner call".to_string()],
-    }
 }
 
 /// Build a raw fallback DisplayModel for EIP-712 typed data when no format matches.
@@ -777,7 +748,7 @@ async fn format_typed_value(
                 serde_json::Value::String(s) => s.parse().unwrap_or(0),
                 _ => 0,
             };
-            Ok(crate::engine::chain_name_public(cid))
+            Ok(crate::engine::chain_name(cid))
         }
         FieldFormat::Raw => Ok(json_value_to_string(val)),
         FieldFormat::Amount => {

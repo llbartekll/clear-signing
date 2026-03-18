@@ -62,12 +62,8 @@ pub struct DisplayItem {
     pub value: String,
 }
 
-/// Known chain IDs → human-readable names (public for eip712 module).
-pub(crate) fn chain_name_public(chain_id: u64) -> String {
-    chain_name(chain_id)
-}
-
-fn chain_name(chain_id: u64) -> String {
+/// Known chain IDs → human-readable names.
+pub(crate) fn chain_name(chain_id: u64) -> String {
     match chain_id {
         1 => "Ethereum".to_string(),
         10 => "Optimism".to_string(),
@@ -747,7 +743,7 @@ async fn render_calldata_field(
 }
 
 /// Build a raw-preview Nested entry for inner calldata when no descriptor matches.
-fn build_raw_nested(label: &str, calldata: &[u8]) -> DisplayEntry {
+pub(crate) fn build_raw_nested(label: &str, calldata: &[u8]) -> DisplayEntry {
     let selector = if calldata.len() >= 4 {
         format!("0x{}", hex::encode(&calldata[..4]))
     } else {

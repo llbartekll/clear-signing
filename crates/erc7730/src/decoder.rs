@@ -361,7 +361,7 @@ fn canonical_param(p: &ParamType) -> String {
 }
 
 /// Compute the 4-byte selector from a canonical function signature.
-pub fn selector_from_signature(canonical: &str) -> [u8; 4] {
+fn selector_from_signature(canonical: &str) -> [u8; 4] {
     let mut hasher = Keccak::v256();
     hasher.update(canonical.as_bytes());
     let mut hash = [0u8; 32];
