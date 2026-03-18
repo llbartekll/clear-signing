@@ -13,6 +13,11 @@ pub struct Descriptor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
 
+    /// URL of an included descriptor to merge with this one.
+    /// Consumed during resolution — should not be present at formatting time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub includes: Option<String>,
+
     pub context: DescriptorContext,
 
     pub metadata: Metadata,

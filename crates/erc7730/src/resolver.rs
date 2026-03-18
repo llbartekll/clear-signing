@@ -204,7 +204,10 @@ impl GitHubRegistrySource {
         format!("eip155:{}:{}", chain_id, address.to_lowercase())
     }
 
-    async fn fetch_descriptor(&self, rel_path: &str) -> Result<Descriptor, ResolveError> {
+    /// Maximum depth for nested `includes` resolution.
+    const MAX_INCLUDES_DEPTH: u8 = 3;
+
+    async fn fetch_raw(&self, rel_path: &str) -> Result<String, ResolveError> {
         let url = format!("{}/{}", self.base_url, rel_path);
         let response = reqwest::get(&url).await.map_err(|e| {
             if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
@@ -222,11 +225,53 @@ impl GitHubRegistrySource {
                 address: format!("descriptor at {url}"),
             });
         }
-        let body = response
+        response
             .text()
             .await
-            .map_err(|e| ResolveError::Io(format!("read response: {e}")))?;
-        serde_json::from_str(&body).map_err(|e| ResolveError::Parse(e.to_string()))
+            .map_err(|e| ResolveError::Io(format!("read response: {e}")))
+    }
+
+    async fn fetch_descriptor(&self, rel_path: &str) -> Result<Descriptor, ResolveError> {
+        self.fetch_and_merge(rel_path, Self::MAX_INCLUDES_DEPTH)
+            .await
+    }
+
+    /// Fetch a descriptor and recursively resolve `includes`.
+    fn fetch_and_merge<'a>(
+        &'a self,
+        rel_path: &'a str,
+        depth: u8,
+    ) -> Pin<Box<dyn Future<Output = Result<Descriptor, ResolveError>> + Send + 'a>> {
+        Box::pin(async move {
+            let body = self.fetch_raw(rel_path).await?;
+            let value: serde_json::Value =
+                serde_json::from_str(&body).map_err(|e| ResolveError::Parse(e.to_string()))?;
+
+            let includes = value
+                .as_object()
+                .and_then(|o| o.get("includes"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            if let Some(includes_path) = includes {
+                if depth == 0 {
+                    return Err(ResolveError::Io(
+                        "max includes depth exceeded (possible circular reference)".to_string(),
+                    ));
+                }
+
+                // Resolve relative URL against the including file's directory
+                let resolved_path = resolve_relative_path(rel_path, &includes_path);
+                let included = self.fetch_and_merge(&resolved_path, depth - 1).await?;
+                let included_value = serde_json::to_value(&included)
+                    .map_err(|e| ResolveError::Parse(e.to_string()))?;
+
+                let merged = crate::merge::merge_descriptor_values(&value, &included_value);
+                serde_json::from_value(merged).map_err(|e| ResolveError::Parse(e.to_string()))
+            } else {
+                serde_json::from_value(value).map_err(|e| ResolveError::Parse(e.to_string()))
+            }
+        })
     }
 }
 
@@ -275,6 +320,38 @@ impl DescriptorSource for GitHubRegistrySource {
     }
 }
 
+/// Resolve a relative path against a base file path.
+///
+/// E.g., `resolve_relative_path("aave/calldata-lpv3.json", "./erc20.json")` → `"aave/erc20.json"`.
+#[cfg(feature = "github-registry")]
+fn resolve_relative_path(base: &str, relative: &str) -> String {
+    let relative = relative.strip_prefix("./").unwrap_or(relative);
+
+    // Find the directory of the base path
+    let dir = if let Some(pos) = base.rfind('/') {
+        &base[..pos]
+    } else {
+        ""
+    };
+
+    if dir.is_empty() {
+        relative.to_string()
+    } else {
+        // Handle `../` segments
+        let mut parts: Vec<&str> = dir.split('/').collect();
+        let mut rel_remaining = relative;
+        while let Some(rest) = rel_remaining.strip_prefix("../") {
+            parts.pop();
+            rel_remaining = rest;
+        }
+        if parts.is_empty() {
+            rel_remaining.to_string()
+        } else {
+            format!("{}/{}", parts.join("/"), rel_remaining)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +361,32 @@ mod tests {
         let source = StaticSource::new();
         let result = source.resolve_calldata(1, "0xabc").await;
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "github-registry")]
+    #[test]
+    fn test_resolve_relative_path_same_dir() {
+        assert_eq!(
+            resolve_relative_path("aave/calldata-lpv3.json", "./erc20.json"),
+            "aave/erc20.json"
+        );
+    }
+
+    #[cfg(feature = "github-registry")]
+    #[test]
+    fn test_resolve_relative_path_parent_dir() {
+        assert_eq!(
+            resolve_relative_path("aave/v3/calldata.json", "../../ercs/erc20.json"),
+            "ercs/erc20.json"
+        );
+    }
+
+    #[cfg(feature = "github-registry")]
+    #[test]
+    fn test_resolve_relative_path_no_dir() {
+        assert_eq!(
+            resolve_relative_path("file.json", "./other.json"),
+            "other.json"
+        );
     }
 }

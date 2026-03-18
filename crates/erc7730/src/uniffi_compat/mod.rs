@@ -213,6 +213,17 @@ pub async fn erc7730_format_typed(
         .map_err(Into::into)
 }
 
+/// Merge two descriptor JSON strings (including + included).
+///
+/// Returns merged JSON ready for use with `erc7730_format_calldata` / `erc7730_format_typed_data`.
+#[uniffi::export]
+pub fn erc7730_merge_descriptors(
+    including_json: String,
+    included_json: String,
+) -> Result<String, FfiError> {
+    crate::merge::merge_descriptors(&including_json, &included_json).map_err(Into::into)
+}
+
 enum HexContext {
     Calldata,
     Value,

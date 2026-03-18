@@ -10,6 +10,7 @@ pub mod decoder;
 pub mod eip712;
 pub mod engine;
 pub mod error;
+pub mod merge;
 pub mod provider;
 pub mod resolver;
 pub mod token;
@@ -21,6 +22,7 @@ use error::Error;
 
 // Re-exports for convenience
 pub use engine::{DisplayEntry, DisplayItem, DisplayModel};
+pub use merge::merge_descriptors;
 pub use provider::{DataProvider, EmptyDataProvider};
 pub use resolver::{DescriptorSource, ResolvedDescriptor};
 pub use token::{CompositeDataProvider, TokenMeta, WellKnownTokenSource};

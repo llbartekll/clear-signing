@@ -55,7 +55,7 @@ Repository policy:
 
 ## Spec Safety
 
-Files implementing ERC-7730 spec behavior (`engine.rs`, `eip712.rs`, `decoder.rs`, `types/display.rs`, `types/context.rs`, `types/metadata.rs`) are guarded by 23 spec compliance tests + 33 integration tests.
+Files implementing ERC-7730 spec behavior (`engine.rs`, `eip712.rs`, `decoder.rs`, `merge.rs`, `types/display.rs`, `types/context.rs`, `types/metadata.rs`) are guarded by 33 spec compliance tests + 33 integration tests.
 
 Rules when editing these files:
 1. Run `cargo test` after every edit to a spec-critical file — full suite takes <1s.
@@ -71,12 +71,14 @@ Shared types in `lib.rs`:
 Entry points in `lib.rs`:
 - `format_calldata(descriptors, tx, data_provider)` — format calldata with pre-resolved descriptors; outer descriptor matched by chain_id + tx.to; remaining descriptors for nested calldata (Safe/4337); single-element slice = simple case
 - `format_typed_data(descriptors, data, data_provider)` — format EIP-712 typed data with pre-resolved descriptors; outer descriptor matched by chain_id + verifying_contract
+- `merge_descriptors(including_json, included_json)` — merge two descriptor JSON strings for `includes` mechanism; including file wins on conflicts, field arrays merge by `path`
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
 - `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, implementation_address, tokens)` — high-level with GitHub registry resolution (requires `github-registry` feature)
 - `erc7730_format_typed(typed_data_json, tokens)` — high-level EIP-712 with GitHub registry resolution (requires `github-registry` feature)
 - `erc7730_format_calldata(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level calldata formatting
 - `erc7730_format_typed_data(descriptors_json, typed_data_json, tokens)` — low-level EIP-712 formatting
+- `erc7730_merge_descriptors(including_json, included_json)` — merge two descriptor JSONs for `includes` mechanism
 
 Local Swift package product:
 - `Erc7730` (binary target + Swift wrapper target)
@@ -90,6 +92,7 @@ Local Swift package product:
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
 | `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource` | Descriptor resolution (static, HTTP) |
 | `token.rs` | `TokenSource` (trait), `TokenMeta`, `WellKnownTokenSource`, `CompositeTokenSource` | Token metadata (CAIP-19 keys, embedded well-known tokens) |
+| `merge.rs` | `merge_descriptor_values`, `merge_descriptors` | JSON-level descriptor merge for `includes` mechanism |
 | `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
 | `uniffi_compat/` | `TokenMetaInput`, `FfiError`, exported FFI functions | Stateless UniFFI wrapper layer |
 | `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, metadata types |
@@ -129,6 +132,7 @@ The library supports v2 registry descriptor features:
 - **Interpolation escape sequences**: `{{` and `}}` produce literal braces
 - **Encryption params**: `scheme` and `plaintextType` fields (parsing only)
 - **EIP-712 domain completeness**: `version`, `chainId`, `salt` fields on descriptor domain
+- **`includes` mechanism**: Descriptor inheritance via `"includes": "./base.json"` — JSON-level merge, field arrays merge by `path`, nested includes with depth limit 3, `GitHubRegistrySource` resolves automatically
 
 Optional features:
 - `github-registry`: async HTTP descriptor fetching via `GitHubRegistrySource` (adds `reqwest` dependency; requires tokio runtime)
@@ -149,4 +153,4 @@ Optional features:
 
 - **Phase 3**: `EmbeddedSource` + descriptor validation
 - **Phase 4**: Packaging/distribution for existing UniFFI bindings (Swift XCFramework/SPM + Kotlin AAR/Maven)
-- **Phase 5**: File inclusion (`$id`/includes), CI pipeline
+- **Phase 5**: CI pipeline

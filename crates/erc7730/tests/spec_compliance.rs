@@ -3,9 +3,12 @@
 use erc7730::decoder;
 use erc7730::eip712::TypedData;
 use erc7730::engine::DisplayEntry;
+use erc7730::merge::merge_descriptor_values;
 use erc7730::provider::EmptyDataProvider;
 use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, format_typed_data, ResolvedDescriptor, TransactionContext};
+use erc7730::{
+    format_calldata, format_typed_data, merge_descriptors, ResolvedDescriptor, TransactionContext,
+};
 
 fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
     vec![ResolvedDescriptor {
@@ -957,6 +960,332 @@ async fn test_excluded_paths() {
     if let DisplayEntry::Item(ref item) = result.entries[0] {
         assert_eq!(item.label, "Visible");
         assert_eq!(item.value, "42");
+    } else {
+        panic!("expected Item");
+    }
+}
+
+// ─── #17: Includes mechanism ───
+
+#[test]
+fn test_merge_fields_by_path() {
+    let included = serde_json::json!({
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xabc"}]
+            }
+        },
+        "metadata": {"owner": "generic", "enums": {}, "constants": {}, "maps": {}},
+        "display": {
+            "definitions": {},
+            "formats": {
+                "approve(address spender,uint256 value)": {
+                    "intent": "Approve",
+                    "fields": [
+                        {"path": "spender", "label": "Spender", "format": "addressName"},
+                        {"path": "value", "label": "Amount", "format": "tokenAmount",
+                         "params": {"tokenPath": "@.to", "threshold": "0x800"}}
+                    ]
+                }
+            }
+        }
+    });
+
+    let including = serde_json::json!({
+        "includes": "./erc20.json",
+        "display": {
+            "formats": {
+                "approve(address spender,uint256 value)": {
+                    "fields": [
+                        {"path": "value", "params": {"threshold": "0xFFF"}}
+                    ]
+                }
+            }
+        }
+    });
+
+    let merged = merge_descriptor_values(&including, &included);
+    let fields = merged["display"]["formats"]["approve(address spender,uint256 value)"]["fields"]
+        .as_array()
+        .unwrap();
+    assert_eq!(fields.len(), 2);
+    // Spender field preserved from included
+    assert_eq!(fields[0]["path"], "spender");
+    assert_eq!(fields[0]["label"], "Spender");
+    // Amount field: threshold overridden, tokenPath preserved
+    assert_eq!(fields[1]["path"], "value");
+    assert_eq!(fields[1]["label"], "Amount");
+    assert_eq!(fields[1]["params"]["threshold"], "0xFFF");
+    assert_eq!(fields[1]["params"]["tokenPath"], "@.to");
+}
+
+#[test]
+fn test_merge_including_wins_metadata() {
+    let included = serde_json::json!({
+        "metadata": {"owner": "Generic", "contractName": "ERC20"}
+    });
+    let including = serde_json::json!({
+        "metadata": {"owner": "Tether", "contractName": "USDT"}
+    });
+    let merged = merge_descriptor_values(&including, &included);
+    assert_eq!(merged["metadata"]["owner"], "Tether");
+    assert_eq!(merged["metadata"]["contractName"], "USDT");
+}
+
+#[test]
+fn test_merge_format_keys() {
+    let included = serde_json::json!({
+        "display": {
+            "definitions": {},
+            "formats": {
+                "transfer(address,uint256)": {
+                    "intent": "Transfer",
+                    "fields": [{"path": "@.0", "label": "To"}]
+                },
+                "approve(address,uint256)": {
+                    "intent": "Approve",
+                    "fields": [{"path": "@.0", "label": "Spender"}]
+                }
+            }
+        }
+    });
+    let including = serde_json::json!({
+        "display": {
+            "formats": {
+                "transfer(address,uint256)": {
+                    "intent": "Send tokens"
+                }
+            }
+        }
+    });
+    let merged = merge_descriptor_values(&including, &included);
+    // transfer intent overridden
+    assert_eq!(
+        merged["display"]["formats"]["transfer(address,uint256)"]["intent"],
+        "Send tokens"
+    );
+    // transfer fields preserved from base
+    assert!(
+        merged["display"]["formats"]["transfer(address,uint256)"]["fields"]
+            .as_array()
+            .unwrap()
+            .len()
+            == 1
+    );
+    // approve format preserved from base
+    assert_eq!(
+        merged["display"]["formats"]["approve(address,uint256)"]["intent"],
+        "Approve"
+    );
+}
+
+#[test]
+fn test_merge_appends_new_fields() {
+    let included = serde_json::json!({
+        "display": {
+            "definitions": {},
+            "formats": {
+                "foo(uint256)": {
+                    "intent": "Foo",
+                    "fields": [{"path": "@.0", "label": "Existing"}]
+                }
+            }
+        }
+    });
+    let including = serde_json::json!({
+        "display": {
+            "formats": {
+                "foo(uint256)": {
+                    "fields": [{"path": "@.1", "label": "New"}]
+                }
+            }
+        }
+    });
+    let merged = merge_descriptor_values(&including, &included);
+    let fields = merged["display"]["formats"]["foo(uint256)"]["fields"]
+        .as_array()
+        .unwrap();
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0]["path"], "@.0");
+    assert_eq!(fields[1]["path"], "@.1");
+}
+
+#[test]
+fn test_merge_context_from_including() {
+    let included = serde_json::json!({
+        "context": {
+            "contract": {"abi": ["function transfer(address,uint256)"]}
+        }
+    });
+    let including = serde_json::json!({
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xdAC17"}]
+            }
+        }
+    });
+    let merged = merge_descriptor_values(&including, &included);
+    // Both abi and deployments present via deep merge
+    assert!(merged["context"]["contract"]["abi"].is_array());
+    assert!(merged["context"]["contract"]["deployments"].is_array());
+}
+
+#[test]
+fn test_merge_preserves_included_fields() {
+    let included = serde_json::json!({
+        "display": {
+            "definitions": {},
+            "formats": {
+                "foo(address,uint256)": {
+                    "intent": "Foo",
+                    "fields": [
+                        {"path": "@.0", "label": "Recipient", "format": "address"},
+                        {"path": "@.1", "label": "Amount", "format": "number"}
+                    ]
+                }
+            }
+        }
+    });
+    // Including file doesn't touch these fields at all
+    let including = serde_json::json!({
+        "metadata": {"owner": "Override"}
+    });
+    let merged = merge_descriptor_values(&including, &included);
+    let fields = merged["display"]["formats"]["foo(address,uint256)"]["fields"]
+        .as_array()
+        .unwrap();
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0]["label"], "Recipient");
+    assert_eq!(fields[1]["label"], "Amount");
+}
+
+#[test]
+fn test_merge_nested_params() {
+    let included = serde_json::json!({
+        "display": {
+            "definitions": {},
+            "formats": {
+                "foo(uint256)": {
+                    "intent": "Foo",
+                    "fields": [{
+                        "path": "@.0", "label": "Amount", "format": "tokenAmount",
+                        "params": {"tokenPath": "@.to", "threshold": "0x100", "nativeCurrencyAddress": "0xEEE"}
+                    }]
+                }
+            }
+        }
+    });
+    let including = serde_json::json!({
+        "display": {
+            "formats": {
+                "foo(uint256)": {
+                    "fields": [{
+                        "path": "@.0",
+                        "params": {"threshold": "0xFFF"}
+                    }]
+                }
+            }
+        }
+    });
+    let merged = merge_descriptor_values(&including, &included);
+    let field = &merged["display"]["formats"]["foo(uint256)"]["fields"][0];
+    assert_eq!(field["params"]["threshold"], "0xFFF");
+    assert_eq!(field["params"]["tokenPath"], "@.to");
+    assert_eq!(field["params"]["nativeCurrencyAddress"], "0xEEE");
+}
+
+#[test]
+fn test_includes_deserialization() {
+    let json = r#"{
+        "includes": "./base.json",
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xabc"}]
+            }
+        },
+        "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+        "display": {
+            "definitions": {},
+            "formats": {}
+        }
+    }"#;
+    let descriptor = Descriptor::from_json(json).unwrap();
+    assert_eq!(descriptor.includes.as_deref(), Some("./base.json"));
+}
+
+#[test]
+fn test_merge_strips_includes() {
+    let including = serde_json::json!({
+        "includes": "./base.json",
+        "metadata": {"owner": "Override"}
+    });
+    let included = serde_json::json!({
+        "metadata": {"owner": "Base"}
+    });
+    let merged = merge_descriptor_values(&including, &included);
+    assert!(merged.get("includes").is_none());
+}
+
+#[tokio::test]
+async fn test_merge_produces_valid_descriptor() {
+    // Full end-to-end: merge two partial descriptors, then use the result for formatting
+    let included_json = r#"{
+        "display": {
+            "definitions": {},
+            "formats": {
+                "transfer(address to,uint256 amount)": {
+                    "intent": "Transfer",
+                    "fields": [
+                        {"path": "to", "label": "Recipient", "format": "address"},
+                        {"path": "amount", "label": "Amount", "format": "number"}
+                    ]
+                }
+            }
+        }
+    }"#;
+
+    let including_json = r#"{
+        "includes": "./erc20.json",
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xdac17f958d2ee523a2206206994597c13d831ec7"}]
+            }
+        },
+        "metadata": {"owner": "Tether", "contractName": "USDT", "enums": {}, "constants": {}, "maps": {}}
+    }"#;
+
+    let merged_json = merge_descriptors(including_json, included_json).unwrap();
+    let descriptor = Descriptor::from_json(&merged_json).unwrap();
+
+    let calldata = build_calldata(
+        "transfer(address,uint256)",
+        &[
+            addr_word("0x0000000000000000000000000000000000000001"),
+            uint_word(1000),
+        ],
+    );
+
+    let descriptors = wrap_rd(descriptor, 1, "0xdac17f958d2ee523a2206206994597c13d831ec7");
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xdac17f958d2ee523a2206206994597c13d831ec7",
+        calldata: &calldata,
+        value: None,
+        from: None,
+    };
+    let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(result.intent, "Transfer");
+    assert_eq!(result.entries.len(), 2);
+    if let DisplayEntry::Item(ref item) = result.entries[0] {
+        assert_eq!(item.label, "Recipient");
+    } else {
+        panic!("expected Item");
+    }
+    if let DisplayEntry::Item(ref item) = result.entries[1] {
+        assert_eq!(item.label, "Amount");
+        assert_eq!(item.value, "1000");
     } else {
         panic!("expected Item");
     }
