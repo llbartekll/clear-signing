@@ -53,6 +53,16 @@ Repository policy:
 - All public API re-exported from `lib.rs`
 - Signature-based decoding: function signatures parsed from descriptor format keys, no ABI JSON needed
 
+## Spec Safety
+
+Files implementing ERC-7730 spec behavior (`engine.rs`, `eip712.rs`, `decoder.rs`, `types/display.rs`, `types/context.rs`, `types/metadata.rs`) are guarded by 23 spec compliance tests + 33 integration tests.
+
+Rules when editing these files:
+1. Run `cargo test` after every edit to a spec-critical file — full suite takes <1s.
+2. Do not change behavior adjacent to your task. If a refactor touches formatting logic, path resolution, or field rendering beyond the task scope — confirm with the user first.
+3. If making a test pass requires changing behavior other tests depend on, explain the tradeoff BEFORE implementing. Do not modify spec compliance tests without explicit approval.
+4. For ambiguous spec behavior, reference https://eips.ethereum.org/EIPS/eip-7730 — flag ambiguity rather than guessing.
+
 ## Public API
 
 Shared types in `lib.rs`:
