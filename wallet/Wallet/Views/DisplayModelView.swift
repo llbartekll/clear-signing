@@ -17,6 +17,10 @@ struct DisplayModelView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let owner = model.owner {
+                itemRow(DisplayItem(label: "Contract", value: owner))
+            }
+
             ForEach(Array(model.entries.enumerated()), id: \.offset) { _, entry in
                 entryView(entry)
             }
