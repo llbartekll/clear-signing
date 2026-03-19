@@ -996,21 +996,23 @@ public func FfiConverterTypeTokenMetaFfi_lower(_ value: TokenMetaFfi) -> RustBuf
 }
 
 
-public struct TokenMetaInput: Equatable, Hashable {
+public struct TransactionInput: Equatable, Hashable {
     public var chainId: UInt64
-    public var address: String
-    public var symbol: String
-    public var decimals: UInt8
-    public var name: String
+    public var to: String
+    public var calldataHex: String
+    public var valueHex: String?
+    public var fromAddress: String?
+    public var implementationAddress: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chainId: UInt64, address: String, symbol: String, decimals: UInt8, name: String) {
+    public init(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, implementationAddress: String?) {
         self.chainId = chainId
-        self.address = address
-        self.symbol = symbol
-        self.decimals = decimals
-        self.name = name
+        self.to = to
+        self.calldataHex = calldataHex
+        self.valueHex = valueHex
+        self.fromAddress = fromAddress
+        self.implementationAddress = implementationAddress
     }
 
     
@@ -1019,30 +1021,32 @@ public struct TokenMetaInput: Equatable, Hashable {
 }
 
 #if compiler(>=6)
-extension TokenMetaInput: Sendable {}
+extension TransactionInput: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeTokenMetaInput: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TokenMetaInput {
+public struct FfiConverterTypeTransactionInput: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TransactionInput {
         return
-            try TokenMetaInput(
+            try TransactionInput(
                 chainId: FfiConverterUInt64.read(from: &buf), 
-                address: FfiConverterString.read(from: &buf), 
-                symbol: FfiConverterString.read(from: &buf), 
-                decimals: FfiConverterUInt8.read(from: &buf), 
-                name: FfiConverterString.read(from: &buf)
+                to: FfiConverterString.read(from: &buf), 
+                calldataHex: FfiConverterString.read(from: &buf), 
+                valueHex: FfiConverterOptionString.read(from: &buf), 
+                fromAddress: FfiConverterOptionString.read(from: &buf), 
+                implementationAddress: FfiConverterOptionString.read(from: &buf)
         )
     }
 
-    public static func write(_ value: TokenMetaInput, into buf: inout [UInt8]) {
+    public static func write(_ value: TransactionInput, into buf: inout [UInt8]) {
         FfiConverterUInt64.write(value.chainId, into: &buf)
-        FfiConverterString.write(value.address, into: &buf)
-        FfiConverterString.write(value.symbol, into: &buf)
-        FfiConverterUInt8.write(value.decimals, into: &buf)
-        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.to, into: &buf)
+        FfiConverterString.write(value.calldataHex, into: &buf)
+        FfiConverterOptionString.write(value.valueHex, into: &buf)
+        FfiConverterOptionString.write(value.fromAddress, into: &buf)
+        FfiConverterOptionString.write(value.implementationAddress, into: &buf)
     }
 }
 
@@ -1050,15 +1054,15 @@ public struct FfiConverterTypeTokenMetaInput: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTokenMetaInput_lift(_ buf: RustBuffer) throws -> TokenMetaInput {
-    return try FfiConverterTypeTokenMetaInput.lift(buf)
+public func FfiConverterTypeTransactionInput_lift(_ buf: RustBuffer) throws -> TransactionInput {
+    return try FfiConverterTypeTransactionInput.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTokenMetaInput_lower(_ value: TokenMetaInput) -> RustBuffer {
-    return FfiConverterTypeTokenMetaInput.lower(value)
+public func FfiConverterTypeTransactionInput_lower(_ value: TransactionInput) -> RustBuffer {
+    return FfiConverterTypeTransactionInput.lower(value)
 }
 
 // Note that we don't yet support `indirect` for enums.
@@ -1498,31 +1502,6 @@ fileprivate struct FfiConverterSequenceTypeDisplayItem: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeTokenMetaInput: FfiConverterRustBuffer {
-    typealias SwiftType = [TokenMetaInput]
-
-    public static func write(_ value: [TokenMetaInput], into buf: inout [UInt8]) {
-        let len = Int32(value.count)
-        writeInt(&buf, len)
-        for item in value {
-            FfiConverterTypeTokenMetaInput.write(item, into: &buf)
-        }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [TokenMetaInput] {
-        let len: Int32 = try readInt(&buf)
-        var seq = [TokenMetaInput]()
-        seq.reserveCapacity(Int(len))
-        for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeTokenMetaInput.read(from: &buf))
-        }
-        return seq
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterSequenceTypeDisplayEntry: FfiConverterRustBuffer {
     typealias SwiftType = [DisplayEntry]
 
@@ -1593,29 +1572,17 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
     }
 }
 /**
- * High-level: resolve descriptor from GitHub registry, then format calldata.
+ * Format contract calldata for clear signing display.
  *
- * Requires the `github-registry` feature.
+ * Takes pre-resolved descriptor JSON strings and a `TransactionInput`.
+ * The wallet is responsible for descriptor resolution (via `erc7730_resolve_descriptor`
+ * or its own source).
  */
-public func erc7730Format(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, implementationAddress: String?, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+public func erc7730FormatCalldata(descriptorsJson: [String], transaction: TransactionInput, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(to),FfiConverterString.lower(calldataHex),FfiConverterOptionString.lower(valueHex),FfiConverterOptionString.lower(fromAddress),FfiConverterOptionString.lower(implementationAddress),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
-                )
-            },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeDisplayModel_lift,
-            errorHandler: FfiConverterTypeFfiError_lift
-        )
-}
-public func erc7730FormatCalldata(descriptorsJson: [String], chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format_calldata(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterUInt64.lower(chainId),FfiConverterString.lower(to),FfiConverterString.lower(calldataHex),FfiConverterOptionString.lower(valueHex),FfiConverterOptionString.lower(fromAddress),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
+                uniffi_erc7730_fn_func_erc7730_format_calldata(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterTypeTransactionInput_lower(transaction),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
                 )
             },
             pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
@@ -1626,29 +1593,15 @@ public func erc7730FormatCalldata(descriptorsJson: [String], chainId: UInt64, to
         )
 }
 /**
- * High-level: resolve descriptor from GitHub registry, then format EIP-712 typed data.
+ * Format EIP-712 typed data for clear signing display.
  *
- * Requires the `github-registry` feature.
+ * Takes pre-resolved descriptor JSON strings and the EIP-712 typed data JSON.
  */
-public func erc7730FormatTyped(typedDataJson: String, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+public func erc7730FormatTypedData(descriptorsJson: [String], typedDataJson: String, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format_typed(FfiConverterString.lower(typedDataJson),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
-                )
-            },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeDisplayModel_lift,
-            errorHandler: FfiConverterTypeFfiError_lift
-        )
-}
-public func erc7730FormatTypedData(descriptorsJson: [String], typedDataJson: String, tokens: [TokenMetaInput], dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format_typed_data(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterString.lower(typedDataJson),FfiConverterSequenceTypeTokenMetaInput.lower(tokens),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
+                uniffi_erc7730_fn_func_erc7730_format_typed_data(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterString.lower(typedDataJson),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
                 )
             },
             pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
@@ -1671,6 +1624,26 @@ public func erc7730MergeDescriptors(includingJson: String, includedJson: String)
     )
 })
 }
+/**
+ * Resolve a descriptor from the GitHub registry for a given chain + address.
+ *
+ * Returns the descriptor JSON string, or `None` if no descriptor is found.
+ * Requires the `github-registry` feature.
+ */
+public func erc7730ResolveDescriptor(chainId: UInt64, address: String)async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_erc7730_fn_func_erc7730_resolve_descriptor(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(address)
+                )
+            },
+            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
+            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
+            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
 
 private enum InitializationResult {
     case ok
@@ -1687,19 +1660,16 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format() != 41473) {
+    if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 3664) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 49102) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_erc7730_checksum_func_erc7730_format_typed() != 39628) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_erc7730_checksum_func_erc7730_format_typed_data() != 26187) {
+    if (uniffi_erc7730_checksum_func_erc7730_format_typed_data() != 64635) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_merge_descriptors() != 26679) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor() != 57254) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_token() != 7230) {

@@ -84,6 +84,7 @@ async fn test_duplicate_selector_rejected() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider).await;
     // Should error due to duplicate selectors
@@ -269,6 +270,7 @@ async fn test_display_field_literal_value() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -340,6 +342,7 @@ async fn test_signed_integer_negative() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -390,6 +393,7 @@ async fn test_signed_integer_negative_100() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -455,6 +459,7 @@ async fn test_date_blockheight_encoding() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -615,6 +620,7 @@ async fn test_unit_si_prefix() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -674,6 +680,7 @@ async fn test_maps_key_path() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -785,6 +792,7 @@ async fn test_interpolation_escape_sequences() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -952,6 +960,7 @@ async fn test_excluded_paths() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -1272,6 +1281,7 @@ async fn test_merge_produces_valid_descriptor() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await

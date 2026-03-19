@@ -136,6 +136,7 @@ async fn aave_supply_usdc_mainnet() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -170,6 +171,7 @@ async fn aave_supply_usdc_base() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -204,6 +206,7 @@ async fn aave_repay_all_dai() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -238,6 +241,7 @@ async fn aave_withdraw_max() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -273,6 +277,7 @@ async fn aave_borrow_variable() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -305,6 +310,7 @@ async fn aave_set_collateral() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -341,6 +347,7 @@ async fn aave_deposit_usdc_mainnet() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -379,6 +386,7 @@ async fn gateway_deposit_eth() {
         calldata: &calldata,
         value: Some(&value),
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -415,6 +423,7 @@ async fn gateway_borrow_eth_with_from() {
         calldata: &calldata,
         value: None,
         from: Some(from_addr),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -455,6 +464,7 @@ async fn real_wallet_supply_eth_mainnet() {
         calldata: &calldata,
         value: Some(&value_bytes),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -500,6 +510,7 @@ async fn aave_interpolated_intent() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -536,6 +547,7 @@ async fn graceful_fallback_unknown_selector() {
         calldata: &calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -567,6 +579,7 @@ async fn aave_withdraw_bytes32_optimism_graceful_fallback() {
         calldata: &calldata,
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -610,6 +623,7 @@ async fn real_wallet_withdraw_usdc_mainnet() {
         calldata: &calldata,
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -658,6 +672,7 @@ async fn real_wallet_withdraw_0_1_usdc_mainnet() {
         calldata: &calldata,
         value: Some(&[0x00]),
         from: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -703,6 +718,7 @@ async fn real_tx_borrow_usdt_enum_interpolation() {
         calldata: &calldata,
         value: None,
         from: Some("0x694278718ecb91113a4c6141cc579dc105187a8a"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -749,6 +765,7 @@ async fn real_tx_repay_usdc_enum_interpolation() {
         calldata: &calldata,
         value: None,
         from: Some("0xad8c1b5b4d5dfe7fbe508ba57b1e05b33391f94a"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -794,6 +811,7 @@ async fn real_tx_repay_all_usdt_enum_interpolation() {
         calldata: &calldata,
         value: None,
         from: Some("0x0b5a6a15b975fd35f0b301748c8dabd35b50d8c5"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -852,6 +870,7 @@ async fn real_tx_withdraw_max_weth() {
         calldata: &calldata,
         value: None,
         from: Some("0x2f45665810956929bbfaa984d70a511ad08b0b54"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -893,6 +912,7 @@ async fn real_tx_supply_with_permit_usdc() {
         calldata: &calldata,
         value: None,
         from: Some("0x44f2a3aa7fdda16a7bf66c68fba96508078d2bdc"),
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 

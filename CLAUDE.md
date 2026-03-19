@@ -66,7 +66,7 @@ Rules when editing these files:
 ## Public API
 
 Shared types in `lib.rs`:
-- `TransactionContext { chain_id, to, calldata, value, from }` — transaction parameters bundled into a single struct
+- `TransactionContext { chain_id, to, calldata, value, from, implementation_address }` — transaction parameters bundled into a single struct; `implementation_address` for proxy contracts (descriptor matching uses this instead of `to`)
 
 Entry points in `lib.rs`:
 - `format_calldata(descriptors, tx, data_provider)` — format calldata with pre-resolved descriptors; outer descriptor matched by chain_id + tx.to; remaining descriptors for nested calldata (Safe/4337); single-element slice = simple case
@@ -74,11 +74,14 @@ Entry points in `lib.rs`:
 - `merge_descriptors(including_json, included_json)` — merge two descriptor JSON strings for `includes` mechanism; including file wins on conflicts, field arrays merge by `path`
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
-- `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, implementation_address, tokens)` — high-level with GitHub registry resolution (requires `github-registry` feature)
-- `erc7730_format_typed(typed_data_json, tokens)` — high-level EIP-712 with GitHub registry resolution (requires `github-registry` feature)
-- `erc7730_format_calldata(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)` — low-level calldata formatting
-- `erc7730_format_typed_data(descriptors_json, typed_data_json, tokens)` — low-level EIP-712 formatting
+- `erc7730_resolve_descriptor(chain_id, address)` — resolve descriptor JSON from GitHub registry; returns `Option<String>` (requires `github-registry` feature)
+- `erc7730_format_calldata(descriptors_json, transaction, data_provider)` — format calldata with pre-resolved descriptors; `transaction` is a `TransactionInput` record
+- `erc7730_format_typed_data(descriptors_json, typed_data_json, data_provider)` — format EIP-712 typed data with pre-resolved descriptors
 - `erc7730_merge_descriptors(including_json, included_json)` — merge two descriptor JSONs for `includes` mechanism
+
+UniFFI FFI records:
+- `TransactionInput { chain_id, to, calldata_hex, value_hex, from_address, implementation_address }` — FFI-safe transaction input
+- `TokenMetaFfi { symbol, decimals, name }` — FFI-safe token metadata (used by `DataProviderFfi` return type)
 
 Local Swift package product:
 - `Erc7730` (binary target + Swift wrapper target)
@@ -94,7 +97,7 @@ Local Swift package product:
 | `token.rs` | `TokenSource` (trait), `TokenMeta`, `WellKnownTokenSource`, `CompositeTokenSource` | Token metadata (CAIP-19 keys, embedded well-known tokens) |
 | `merge.rs` | `merge_descriptor_values`, `merge_descriptors` | JSON-level descriptor merge for `includes` mechanism |
 | `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
-| `uniffi_compat/` | `TokenMetaInput`, `FfiError`, exported FFI functions | Stateless UniFFI wrapper layer |
+| `uniffi_compat/` | `TransactionInput`, `TokenMetaFfi`, `FfiError`, `DataProviderFfi` (trait), exported FFI functions | Stateless UniFFI wrapper layer |
 | `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, metadata types |
 | `error.rs` | `Error`, `DecodeError`, `ResolveError` | Unified error hierarchy |
 | `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging for local SPM |

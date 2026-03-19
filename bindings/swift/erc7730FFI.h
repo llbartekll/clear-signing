@@ -318,29 +318,24 @@ RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_local_name(uint64_t 
 RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_nft_collection_name(uint64_t ptr, RustBuffer collection_address, uint64_t chain_id, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT
-#define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT
-uint64_t uniffi_erc7730_fn_func_erc7730_format(uint64_t chain_id, RustBuffer to, RustBuffer calldata_hex, RustBuffer value_hex, RustBuffer from_address, RustBuffer implementation_address, RustBuffer tokens, RustBuffer data_provider
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_CALLDATA
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_CALLDATA
-uint64_t uniffi_erc7730_fn_func_erc7730_format_calldata(RustBuffer descriptors_json, uint64_t chain_id, RustBuffer to, RustBuffer calldata_hex, RustBuffer value_hex, RustBuffer from_address, RustBuffer tokens, RustBuffer data_provider
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_TYPED
-#define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_TYPED
-uint64_t uniffi_erc7730_fn_func_erc7730_format_typed(RustBuffer typed_data_json, RustBuffer tokens, RustBuffer data_provider
+uint64_t uniffi_erc7730_fn_func_erc7730_format_calldata(RustBuffer descriptors_json, RustBuffer transaction, RustBuffer data_provider
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_TYPED_DATA
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_TYPED_DATA
-uint64_t uniffi_erc7730_fn_func_erc7730_format_typed_data(RustBuffer descriptors_json, RustBuffer typed_data_json, RustBuffer tokens, RustBuffer data_provider
+uint64_t uniffi_erc7730_fn_func_erc7730_format_typed_data(RustBuffer descriptors_json, RustBuffer typed_data_json, RustBuffer data_provider
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_MERGE_DESCRIPTORS
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_MERGE_DESCRIPTORS
 RustBuffer uniffi_erc7730_fn_func_erc7730_merge_descriptors(RustBuffer including_json, RustBuffer included_json, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTOR
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTOR
+uint64_t uniffi_erc7730_fn_func_erc7730_resolve_descriptor(uint64_t chain_id, RustBuffer address
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_ERC7730_RUSTBUFFER_ALLOC
@@ -603,21 +598,9 @@ void ffi_erc7730_rust_future_free_void(uint64_t handle
 void ffi_erc7730_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT
-#define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT
-uint16_t uniffi_erc7730_checksum_func_erc7730_format(void
-    
-);
-#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_CALLDATA
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_CALLDATA
 uint16_t uniffi_erc7730_checksum_func_erc7730_format_calldata(void
-    
-);
-#endif
-#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_TYPED
-#define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_FORMAT_TYPED
-uint16_t uniffi_erc7730_checksum_func_erc7730_format_typed(void
     
 );
 #endif
@@ -630,6 +613,12 @@ uint16_t uniffi_erc7730_checksum_func_erc7730_format_typed_data(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_MERGE_DESCRIPTORS
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_MERGE_DESCRIPTORS
 uint16_t uniffi_erc7730_checksum_func_erc7730_merge_descriptors(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_RESOLVE_DESCRIPTOR
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_RESOLVE_DESCRIPTOR
+uint16_t uniffi_erc7730_checksum_func_erc7730_resolve_descriptor(void
     
 );
 #endif

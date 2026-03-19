@@ -35,6 +35,10 @@ pub struct TransactionContext<'a> {
     pub calldata: &'a [u8],
     pub value: Option<&'a [u8]>,
     pub from: Option<&'a str>,
+    /// For proxy contracts: the implementation address to match descriptors against.
+    /// When set, descriptor matching uses this instead of `to`.
+    /// Container value `@.to` still uses `to` (the proxy address the user interacts with).
+    pub implementation_address: Option<&'a str>,
 }
 
 /// Format contract calldata for clear signing display.
@@ -55,10 +59,13 @@ pub async fn format_calldata(
         }));
     }
 
-    // Find the outer descriptor matching chain_id + to address
+    // Find the outer descriptor matching chain_id + address.
+    // For proxy contracts, match against implementation_address instead of to.
+    let match_address = tx.implementation_address.unwrap_or(tx.to);
     let outer_idx = descriptors.iter().position(|rd| {
         rd.descriptor.context.deployments().iter().any(|dep| {
-            dep.chain_id == tx.chain_id && dep.address.to_lowercase() == tx.to.to_lowercase()
+            dep.chain_id == tx.chain_id
+                && dep.address.to_lowercase() == match_address.to_lowercase()
         })
     });
 
@@ -348,6 +355,7 @@ mod tests {
             calldata: &calldata,
             value: None,
             from: None,
+            implementation_address: None,
         };
         let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
 
@@ -449,6 +457,7 @@ mod tests {
             calldata: &calldata,
             value: None,
             from: None,
+            implementation_address: None,
         };
         let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -521,6 +530,7 @@ mod tests {
             calldata: &calldata,
             value: None,
             from: None,
+            implementation_address: None,
         };
         let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
@@ -598,6 +608,7 @@ mod tests {
             calldata: &calldata,
             value: None,
             from: None,
+            implementation_address: None,
         };
         let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
@@ -675,6 +686,7 @@ mod tests {
             calldata: &calldata,
             value: None,
             from: None,
+            implementation_address: None,
         };
         let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
@@ -738,6 +750,7 @@ mod tests {
             calldata: &calldata,
             value: None,
             from: None,
+            implementation_address: None,
         };
         let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
             .await
@@ -828,6 +841,49 @@ mod tests {
         if let DisplayEntry::Item(ref item) = result.entries[1] {
             assert_eq!(item.label, "Amount");
             assert_eq!(item.value, "1000000");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proxy_implementation_address() {
+        let descriptor = Descriptor::from_json(test_descriptor_json()).unwrap();
+        let sig = decoder::parse_signature("transfer(address,uint256)").unwrap();
+
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&sig.selector);
+        let mut addr_word = [0u8; 32];
+        addr_word[31] = 1;
+        calldata.extend_from_slice(&addr_word);
+        let mut amount_word = [0u8; 32];
+        amount_word[30] = 0x03;
+        amount_word[31] = 0xe8;
+        calldata.extend_from_slice(&amount_word);
+
+        // Descriptor is deployed at 0xdac17f...ec7 (the implementation).
+        // tx.to is a proxy address that does NOT match any descriptor.
+        // implementation_address points to the real implementation.
+        let impl_addr = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+        let proxy_addr = "0x1111111111111111111111111111111111111111";
+        let descriptors = wrap_rd(descriptor, 1, impl_addr);
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: proxy_addr,
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: Some(impl_addr),
+        };
+        let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+            .await
+            .unwrap();
+
+        // Should match the descriptor via implementation_address
+        assert_eq!(result.intent, "Transfer tokens");
+        assert_eq!(result.entries.len(), 2);
+
+        // @.to container value should be the proxy address (user-facing), not the implementation
+        if let DisplayEntry::Item(ref item) = result.entries[0] {
+            assert_eq!(item.label, "To");
         }
     }
 }

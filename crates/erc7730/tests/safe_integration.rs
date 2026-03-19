@@ -141,6 +141,7 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
         calldata: &outer_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -241,6 +242,7 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         calldata: &outer_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
@@ -316,6 +318,7 @@ async fn safe_exec_transaction_container_value_propagation() {
         calldata: &outer_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
@@ -380,6 +383,7 @@ async fn safe_exec_transaction_depth_limit() {
         calldata: &outer_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await

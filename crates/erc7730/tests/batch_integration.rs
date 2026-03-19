@@ -142,6 +142,7 @@ async fn wallet_batch_two_erc20_transfers() {
         calldata: &calldata_a,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result_a = format_calldata(&descriptors, &tx_a, &tokens).await.unwrap();
 
@@ -152,6 +153,7 @@ async fn wallet_batch_two_erc20_transfers() {
         calldata: &calldata_b,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let result_b = format_calldata(&descriptors, &tx_b, &tokens).await.unwrap();
 
@@ -210,6 +212,7 @@ async fn wallet_batch_mixed_known_unknown() {
         calldata: &known_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let known_result = format_calldata(&known_descriptors, &known_tx, &tokens)
         .await
@@ -225,6 +228,7 @@ async fn wallet_batch_mixed_known_unknown() {
         calldata: &unknown_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let unknown_result = format_calldata(&unknown_descriptors, &unknown_tx, &EmptyDataProvider)
         .await
@@ -328,6 +332,7 @@ async fn wallet_batch_intent_concatenation() {
         calldata: &approve_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let approve_result = format_calldata(&approve_descriptors, &approve_tx, &tokens)
         .await
@@ -342,6 +347,7 @@ async fn wallet_batch_intent_concatenation() {
         calldata: &transfer_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let transfer_result = format_calldata(&transfer_descriptors, &transfer_tx, &tokens)
         .await
@@ -358,6 +364,7 @@ async fn wallet_batch_intent_concatenation() {
         calldata: &deposit_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let deposit_result = format_calldata(&deposit_descriptors, &deposit_tx, &EmptyDataProvider)
         .await
@@ -424,6 +431,7 @@ async fn wallet_batch_with_safe_wrapper() {
         calldata: &inner_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let inner_display = format_calldata(&inner_descriptors, &inner_tx, &tokens)
         .await
@@ -459,6 +467,7 @@ async fn wallet_batch_with_safe_wrapper() {
         calldata: &outer_calldata,
         value: None,
         from: None,
+        implementation_address: None,
     };
     let safe_result = format_calldata(&descriptors, &outer_tx, &tokens)
         .await

@@ -117,6 +117,7 @@ async fn run_test_case(
         calldata: &calldata,
         value: val.as_deref(),
         from: Some(tc.from.as_str()),
+        implementation_address: None,
     };
     let descriptors = vec![ResolvedDescriptor {
         descriptor: descriptor.clone(),
