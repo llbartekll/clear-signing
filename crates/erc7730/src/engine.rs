@@ -1536,6 +1536,11 @@ async fn resolve_and_format_for_interpolation(
             }
         }
         Some(FieldFormat::Enum) => format_enum_for_interpolation(ctx, &v, field_params),
+        Some(FieldFormat::AddressName) | Some(FieldFormat::InteroperableAddressName) => {
+            format_address_name(ctx, &v, field_params)
+                .await
+                .unwrap_or_else(|_| format_raw(&v))
+        }
         _ => format_raw(&v),
     }
 }
@@ -1715,5 +1720,76 @@ mod tests {
             result,
             "Send 1000 to 0x0000000000000000000000000000000000000000"
         );
+    }
+
+    #[tokio::test]
+    async fn test_interpolate_intent_address_name() {
+        use crate::decoder::{DecodedArgument, ParamType};
+        use crate::types::display::{DisplayField, FieldFormat};
+
+        // Provider that resolves a specific address to a local name
+        struct MockLocalNameProvider;
+        impl DataProvider for MockLocalNameProvider {
+            fn resolve_local_name(
+                &self,
+                address: &str,
+                _chain_id: u64,
+            ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+                let addr = address.to_string();
+                Box::pin(async move {
+                    if addr.to_lowercase()
+                        == "0xbf01daf454dce008d3e2bfd47d5e186f71477253"
+                    {
+                        Some("My Savings".to_string())
+                    } else {
+                        None
+                    }
+                })
+            }
+        }
+
+        let mut addr_bytes = [0u8; 20];
+        addr_bytes.copy_from_slice(
+            &hex::decode("bf01daf454dce008d3e2bfd47d5e186f71477253").unwrap(),
+        );
+
+        let decoded = DecodedArguments {
+            function_name: "withdraw".to_string(),
+            selector: [0; 4],
+            args: vec![DecodedArgument {
+                index: 0,
+                name: Some("to".to_string()),
+                param_type: ParamType::Address,
+                value: ArgumentValue::Address(addr_bytes),
+            }],
+        };
+
+        let fields = vec![DisplayField::Simple {
+            path: Some("to".to_string()),
+            label: "Recipient".to_string(),
+            value: None,
+            format: Some(FieldFormat::AddressName),
+            params: None,
+            separator: None,
+            visible: VisibleRule::Always,
+        }];
+
+        let descriptor: Descriptor = serde_json::from_str(
+            r#"{"context":{"contract":{"deployments":[]}},"metadata":{"owner":"test","enums":{},"constants":{},"maps":{}},"display":{"definitions":{},"formats":{}}}"#,
+        )
+        .unwrap();
+        let data_provider = MockLocalNameProvider;
+        let ctx = RenderContext {
+            descriptor: &descriptor,
+            decoded: &decoded,
+            chain_id: 1,
+            data_provider: &data_provider,
+            descriptors: &[],
+            depth: 0,
+        };
+
+        let result =
+            interpolate_intent("Withdraw to {to}", &ctx, &fields).await;
+        assert_eq!(result, "Withdraw to My Savings");
     }
 }

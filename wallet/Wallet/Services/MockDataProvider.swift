@@ -19,7 +19,6 @@ final class MockDataProvider: DataProviderFfi {
     }
 
     func resolveToken(chainId: UInt64, address: String) -> TokenMetaFfi? {
-        simulateLatency()
         guard let acct = account(chainId: chainId, address: address) else { return nil }
 
         switch acct.absoluteString.lowercased() {
@@ -49,8 +48,8 @@ final class MockDataProvider: DataProviderFfi {
         guard let acct = account(chainId: chainId, address: address) else { return nil }
 
         switch acct.address.lowercased() {
-        case "0x0000000000000000000000000000000000000001":
-            return "My Savings"
+        case "0xbf01daf454dce008d3e2bfd47d5e186f71477253":
+            return "My Wallet"
         default:
             return nil
         }
