@@ -9,7 +9,6 @@ final class EvmSigningService {
         case missingProjectId
         case invalidParams(String)
         case addressMismatch(expected: String, got: String)
-        case invalidSignatureResponse
 
         var errorDescription: String? {
             switch self {
@@ -19,8 +18,6 @@ final class EvmSigningService {
                 return "Invalid params: \(reason)"
             case .addressMismatch(let expected, let got):
                 return "Requested address \(got) does not match imported key \(expected)"
-            case .invalidSignatureResponse:
-                return "Invalid signature response"
             }
         }
     }
@@ -78,8 +75,7 @@ final class EvmSigningService {
             throw SigningError.addressMismatch(expected: expectedAddress, got: requestedAddress)
         }
 
-        let response = try client().signTypedData(jsonData: payload.json, signer: privateKeyHex)
-        return try normalizeSignature(response)
+        return try Eip712Signer.sign(typedDataJson: payload.json, privateKeyHex: privateKeyHex)
     }
 
     func signAndSend(request: Request, privateKeyHex: String, expectedAddress: String) async throws -> String {
@@ -123,43 +119,6 @@ final class EvmSigningService {
         throw SigningError.invalidParams("transaction params")
     }
 
-    private func normalizeSignature(_ response: String) throws -> String {
-        let trimmed = response.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("0x") {
-            return trimmed
-        }
-
-        struct SignatureResponse: Decodable {
-            let v: Int
-            let r: String
-            let s: String
-        }
-
-        if let data = trimmed.data(using: .utf8),
-           let decoded = try? JSONDecoder().decode(SignatureResponse.self, from: data) {
-            let rHex = decoded.r.hasPrefix("0x") ? String(decoded.r.dropFirst(2)) : decoded.r
-            let sHex = decoded.s.hasPrefix("0x") ? String(decoded.s.dropFirst(2)) : decoded.s
-            let vHex = String(format: "%02x", decoded.v)
-            return "0x\(rHex)\(sHex)\(vHex)"
-        }
-
-        if let data = trimmed.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if let signature = object["signature"] as? String {
-                return signature
-            }
-            if let r = object["r"] as? String,
-               let s = object["s"] as? String,
-               let v = object["v"] as? Int {
-                let rHex = r.hasPrefix("0x") ? String(r.dropFirst(2)) : r
-                let sHex = s.hasPrefix("0x") ? String(s.dropFirst(2)) : s
-                let vHex = String(format: "%02x", v)
-                return "0x\(rHex)\(sHex)\(vHex)"
-            }
-        }
-
-        throw SigningError.invalidSignatureResponse
-    }
 }
 
 struct TransactionParams: Codable {
