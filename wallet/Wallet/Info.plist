@@ -27,6 +27,8 @@
     <string>Camera is used to scan WalletConnect QR codes</string>
     <key>WalletConnectProjectID</key>
     <string>$(WALLETCONNECT_PROJECT_ID)</string>
+    <key>AlchemyAPIKey</key>
+    <string>$(ALCHEMY_API_KEY)</string>
     <key>UILaunchScreen</key>
     <dict/>
 </dict>

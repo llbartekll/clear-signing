@@ -1,5 +1,9 @@
 // WalletConnect configuration for the Wallet demo app.
-// Copy this file to Config.xcconfig and replace with your project ID:
+// Copy this file to Config.xcconfig and replace with your values:
 //   cp Config.xcconfig.template Config.xcconfig
 // Get a project ID at https://cloud.reown.com
 WALLETCONNECT_PROJECT_ID = YOUR_PROJECT_ID_HERE
+// Optional: enables live token, ENS, and NFT metadata resolution.
+// Without this key the wallet still works with seeded token metadata,
+// local wallet naming, and anything already persisted in cache.
+ALCHEMY_API_KEY = YOUR_ALCHEMY_API_KEY_HERE

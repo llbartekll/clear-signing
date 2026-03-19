@@ -25,8 +25,14 @@
 		D1000001000000000060 /* Starscream in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000061 /* Starscream */; };
 		D1000001000000000062 /* EvmSigningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000063 /* EvmSigningService.swift */; };
 		D1000001000000000064 /* YttriumUtilsWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000065 /* YttriumUtilsWrapper */; };
-		D1000001000000000066 /* MockDataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000067 /* MockDataProvider.swift */; };
 		D1000001000000000069 /* Eip712Signer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000068 /* Eip712Signer.swift */; };
+		E2000001000000000001 /* WalletMetadataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000011 /* WalletMetadataProvider.swift */; };
+		E2000001000000000002 /* tokens.json in Resources */ = {isa = PBXBuildFile; fileRef = E2000001000000000012 /* tokens.json */; };
+		E2000001000000000003 /* WalletMetadataProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000013 /* WalletMetadataProviderTests.swift */; };
+		E2000001000000000005 /* Erc7730 in Frameworks */ = {isa = PBXBuildFile; productRef = C1000001233456780098 /* Erc7730 */; };
+		E2000001000000000007 /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = D100000100000000000D /* secp256k1 */; };
+		E200000100000000000B /* KeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000012 /* KeyManager.swift */; };
+		E200000100000000000C /* WalletMetadataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000011 /* WalletMetadataProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,8 +52,11 @@
 		D1000001000000000040 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = SOURCE_ROOT; };
 		D1000001000000000041 /* Wallet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Wallet.entitlements; sourceTree = "<group>"; };
 		D1000001000000000063 /* EvmSigningService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvmSigningService.swift; sourceTree = "<group>"; };
-		D1000001000000000067 /* MockDataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockDataProvider.swift; sourceTree = "<group>"; };
 		D1000001000000000068 /* Eip712Signer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Eip712Signer.swift; sourceTree = "<group>"; };
+		E2000001000000000011 /* WalletMetadataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletMetadataProvider.swift; sourceTree = "<group>"; };
+		E2000001000000000012 /* tokens.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = tokens.json; path = ../crates/erc7730/src/assets/tokens.json; sourceTree = SOURCE_ROOT; };
+		E2000001000000000013 /* WalletMetadataProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletMetadataProviderTests.swift; sourceTree = "<group>"; };
+		E2000001000000000014 /* WalletTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WalletTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +70,15 @@
 				D100000100000000000E /* CodeScanner in Frameworks */,
 				D1000001000000000060 /* Starscream in Frameworks */,
 				D1000001000000000064 /* YttriumUtilsWrapper in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E2000001000000000022 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E2000001000000000005 /* Erc7730 in Frameworks */,
+				E2000001000000000007 /* secp256k1 in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -79,6 +97,7 @@
 			isa = PBXGroup;
 			children = (
 				C1000001233456780004 /* Wallet */,
+				E2000001000000000004 /* WalletTests */,
 				C100000123345678000F /* Products */,
 				44C044E22F61954D0028B291 /* Recovered References */,
 			);
@@ -102,6 +121,7 @@
 			isa = PBXGroup;
 			children = (
 				C1000001233456780010 /* Wallet.app */,
+				E2000001000000000014 /* WalletTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -114,7 +134,8 @@
 				D1000001000000000014 /* ClearSigningService.swift */,
 				D1000001000000000063 /* EvmSigningService.swift */,
 				D1000001000000000068 /* Eip712Signer.swift */,
-				D1000001000000000067 /* MockDataProvider.swift */,
+				E2000001000000000011 /* WalletMetadataProvider.swift */,
+				E2000001000000000012 /* tokens.json */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -129,6 +150,14 @@
 				D1000001000000000019 /* SessionRequestSheet.swift */,
 			);
 			path = Views;
+			sourceTree = "<group>";
+		};
+		E2000001000000000004 /* WalletTests */ = {
+			isa = PBXGroup;
+			children = (
+				E2000001000000000013 /* WalletMetadataProviderTests.swift */,
+			);
+			path = WalletTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -159,6 +188,27 @@
 			productReference = C1000001233456780010 /* Wallet.app */;
 			productType = "com.apple.product-type.application";
 		};
+		E2000001000000000025 /* WalletTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E2000001000000000032 /* Build configuration list for PBXNativeTarget "WalletTests" */;
+			buildPhases = (
+				E2000001000000000024 /* Sources */,
+				E2000001000000000022 /* Frameworks */,
+				E2000001000000000023 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WalletTests;
+			packageProductDependencies = (
+				C1000001233456780098 /* Erc7730 */,
+				D100000100000000000D /* secp256k1 */,
+			);
+			productName = WalletTests;
+			productReference = E2000001000000000014 /* WalletTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -171,6 +221,10 @@
 				TargetAttributes = {
 					C100000123345678000E = {
 						CreatedOnToolsVersion = 16.0;
+					};
+					E2000001000000000025 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = C100000123345678000E;
 					};
 				};
 			};
@@ -195,12 +249,21 @@
 			projectRoot = "";
 			targets = (
 				C100000123345678000E /* Wallet */,
+				E2000001000000000025 /* WalletTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		C1000001233456780014 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E2000001000000000002 /* tokens.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E2000001000000000023 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -222,12 +285,22 @@
 				D1000001000000000004 /* ClearSigningService.swift in Sources */,
 				D1000001000000000062 /* EvmSigningService.swift in Sources */,
 				D1000001000000000069 /* Eip712Signer.swift in Sources */,
-				D1000001000000000066 /* MockDataProvider.swift in Sources */,
+				E2000001000000000001 /* WalletMetadataProvider.swift in Sources */,
 				D1000001000000000005 /* DisplayModelView.swift in Sources */,
 				D1000001000000000006 /* KeyImportSection.swift in Sources */,
 				D1000001000000000007 /* QRScannerSheet.swift in Sources */,
 				D1000001000000000008 /* SessionProposalSheet.swift in Sources */,
 				D1000001000000000009 /* SessionRequestSheet.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E2000001000000000024 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E200000100000000000B /* KeyManager.swift in Sources */,
+				E200000100000000000C /* WalletMetadataProvider.swift in Sources */,
+				E2000001000000000003 /* WalletMetadataProviderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -280,6 +353,8 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
+				DEFINES_MODULE = YES;
+				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Wallet/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -302,6 +377,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "";
+				DEFINES_MODULE = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Wallet/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -312,6 +388,52 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.lucidumbrella.wallet;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E2000001000000000030 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lucidumbrella.walletTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E2000001000000000031 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lucidumbrella.walletTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_INCLUDE_PATHS = "$(BUILT_PRODUCTS_DIR)";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -334,6 +456,15 @@
 			buildConfigurations = (
 				C1000001233456780017 /* Debug */,
 				C1000001233456780018 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E2000001000000000032 /* Build configuration list for PBXNativeTarget "WalletTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E2000001000000000030 /* Debug */,
+				E2000001000000000031 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -5,7 +5,7 @@ struct ClearSigningService {
 
     private let dataProvider: DataProviderFfi
 
-    init(dataProvider: DataProviderFfi = MockDataProvider()) {
+    init(dataProvider: DataProviderFfi) {
         self.dataProvider = dataProvider
     }
 

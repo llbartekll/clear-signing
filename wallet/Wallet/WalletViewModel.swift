@@ -36,11 +36,12 @@ final class WalletViewModel {
     var showScanner = false
 
     private var keyManager: KeyManager?
-    private let clearSigning = ClearSigningService()
+    private let clearSigning: ClearSigningService
     private let wc = WalletConnectService.shared
     var wcConfigured = false
 
-    init() {
+    init(metadataProvider: DataProviderFfi) {
+        clearSigning = ClearSigningService(dataProvider: metadataProvider)
         if let restored = KeyManager.restore() {
             keyManager = restored
             ethereumAddress = restored.ethereumAddress
