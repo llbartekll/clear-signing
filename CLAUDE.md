@@ -154,6 +154,6 @@ Optional features:
 
 ## Pending
 
-- **Phase 3**: `EmbeddedSource` + descriptor validation
+- **Phase 3**: Descriptor validation
 - **Phase 4**: Packaging/distribution for existing UniFFI bindings (Swift XCFramework/SPM + Kotlin AAR/Maven)
 - **Phase 5**: CI pipeline
