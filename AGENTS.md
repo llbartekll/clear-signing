@@ -1,11 +1,7 @@
 # ERC-7730 v2 Clear Signing Library
 
-Guidance for GPT/Codex-style agents working in this repository.
-
-## Project Summary
-
-Rust library for ERC-7730 v2 clear signing. It decodes and formats contract calldata and EIP-712 messages for human-readable display.
-The crate also provides UniFFI bindings (Kotlin + Swift) through a stateless FFI surface.
+Rust library for ERC-7730 v2 clear signing — decodes and formats contract calldata and EIP-712 messages for human-readable display.
+UniFFI bindings (Kotlin + Swift) are implemented in the same crate via a stateless FFI wrapper.
 
 ## Workspace Layout
 
@@ -18,7 +14,7 @@ The crate also provides UniFFI bindings (Kotlin + Swift) through a stateless FFI
 
 ```sh
 cargo build          # Build
-cargo test           # Run default tests (34 unit + 12 integration)
+cargo test           # Run default tests (32 unit + 33 integration)
 cargo clippy         # Lint
 cargo fmt --check    # Format check
 ```
@@ -26,9 +22,9 @@ cargo fmt --check    # Format check
 UniFFI checks and binding generation:
 
 ```sh
-cargo check -p erc7730 --features uniffi
-cargo test -p erc7730 --features uniffi     # 41 unit tests + 12 integration
-cargo clippy -p erc7730 --all-targets --features uniffi -- -D warnings
+cargo check -p erc7730 --features uniffi,github-registry
+cargo test -p erc7730 --features uniffi,github-registry     # 39 unit tests + 33 integration
+cargo clippy -p erc7730 --all-targets --features uniffi,github-registry -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
 swift package resolve
@@ -52,26 +48,40 @@ Repository policy:
 ## Code Conventions
 
 - Rust 2021 edition
-- Use `thiserror` for error types and `serde` for serialization
-- Do not use `.unwrap()` in library code; propagate errors with `Result` and `?`
-- Re-export all public API from `lib.rs`
-- Decoding is signature-based: parse function signatures from descriptor format keys, without ABI JSON
+- `thiserror` for error types, `serde` for serialization
+- No `.unwrap()` in library code — use `Result` and `?`
+- All public API re-exported from `lib.rs`
+- Signature-based decoding: function signatures parsed from descriptor format keys, no ABI JSON needed
+
+## Spec Safety
+
+Files implementing ERC-7730 spec behavior (`engine.rs`, `eip712.rs`, `decoder.rs`, `merge.rs`, `types/display.rs`, `types/context.rs`, `types/metadata.rs`) are guarded by 33 spec compliance tests + 33 integration tests.
+
+Rules when editing these files:
+1. Run `cargo test` after every edit to a spec-critical file — full suite takes <1s.
+2. Do not change behavior adjacent to your task. If a refactor touches formatting logic, path resolution, or field rendering beyond the task scope — confirm with the user first.
+3. If making a test pass requires changing behavior other tests depend on, explain the tradeoff BEFORE implementing. Do not modify spec compliance tests without explicit approval.
+4. For ambiguous spec behavior, reference https://eips.ethereum.org/EIPS/eip-7730 — flag ambiguity rather than guessing.
 
 ## Public API
 
-Shared types: `TransactionContext { chain_id, to, calldata, value, from }`, `FormatOptions { implementation_address }`.
+Shared types in `lib.rs`:
+- `TransactionContext { chain_id, to, calldata, value, from, implementation_address }` — transaction parameters bundled into a single struct; `implementation_address` for proxy contracts (descriptor matching uses this instead of `to`)
 
 Entry points in `lib.rs`:
-- `format(tx, source, tokens, opts)` — high-level: resolves descriptor then formats
-- `format_calldata(descriptor, tx, tokens)` — low-level: format with pre-resolved descriptor
-- `format_calldata_multi(descriptors, tx, tokens)` — low-level with multiple descriptors for nested calldata
-- `format_typed_data(descriptor, data, tokens)` — EIP-712 typed data formatting
+- `format_calldata(descriptors, tx, data_provider)` — format calldata with pre-resolved descriptors; outer descriptor matched by chain_id + tx.to; remaining descriptors for nested calldata (Safe/4337); single-element slice = simple case
+- `format_typed_data(descriptors, data, data_provider)` — format EIP-712 typed data with pre-resolved descriptors; outer descriptor matched by chain_id + verifying_contract
+- `merge_descriptors(including_json, included_json)` — merge two descriptor JSON strings for `includes` mechanism; including file wins on conflicts, field arrays merge by `path`
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
-- `erc7730_format(chain_id, to, calldata_hex, value_hex, from_address, implementation_address, tokens)`
-- `erc7730_format_calldata(descriptor_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)`
-- `erc7730_format_calldata_multi(descriptors_json, chain_id, to, calldata_hex, value_hex, from_address, tokens)`
-- `erc7730_format_typed_data(descriptor_json, typed_data_json, tokens)`
+- `erc7730_resolve_descriptor(chain_id, address)` — resolve descriptor JSON from GitHub registry; returns `Option<String>` (requires `github-registry` feature)
+- `erc7730_format_calldata(descriptors_json, transaction, data_provider)` — format calldata with pre-resolved descriptors; `transaction` is a `TransactionInput` record
+- `erc7730_format_typed_data(descriptors_json, typed_data_json, data_provider)` — format EIP-712 typed data with pre-resolved descriptors
+- `erc7730_merge_descriptors(including_json, included_json)` — merge two descriptor JSONs for `includes` mechanism
+
+UniFFI FFI records:
+- `TransactionInput { chain_id, to, calldata_hex, value_hex, from_address, implementation_address }` — FFI-safe transaction input
+- `TokenMetaFfi { symbol, decimals, name }` — FFI-safe token metadata (used by `DataProviderFfi` return type)
 
 Local Swift package product:
 - `Erc7730` (binary target + Swift wrapper target)
@@ -80,14 +90,15 @@ Local Swift package product:
 
 | Module | Key Types | Purpose |
 |--------|-----------|---------|
-| `engine.rs` | `DisplayModel`, `DisplayEntry`, `DisplayItem` | Main formatting pipeline |
+| `engine.rs` | `DisplayModel`, `DisplayEntry` (Item/Group/Nested), `DisplayItem` | Main formatting pipeline + nested calldata |
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
-| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `FilesystemSource`, `GitHubRegistrySource` | Descriptor resolution (static, filesystem, HTTP) |
+| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource` | Descriptor resolution (static, HTTP) |
 | `token.rs` | `TokenSource` (trait), `TokenMeta`, `WellKnownTokenSource`, `CompositeTokenSource` | Token metadata (CAIP-19 keys, embedded well-known tokens) |
-| `address_book.rs` | `AddressBook` | Address-to-label resolution from descriptor metadata |
-| `uniffi_compat/` | `TokenMetaInput`, `FfiError`, exported FFI functions | Stateless UniFFI wrapper layer |
-| `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, and metadata types |
+| `merge.rs` | `merge_descriptor_values`, `merge_descriptors` | JSON-level descriptor merge for `includes` mechanism |
+| `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
+| `uniffi_compat/` | `TransactionInput`, `TokenMetaFfi`, `FfiError`, `DataProviderFfi` (trait), exported FFI functions | Stateless UniFFI wrapper layer |
+| `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, metadata types |
 | `error.rs` | `Error`, `DecodeError`, `ResolveError` | Unified error hierarchy |
 | `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging for local SPM |
 | `wallet/` | SwiftUI smoke-test app | Minimal consumer of local `Erc7730` package |
@@ -102,21 +113,47 @@ The library supports v2 registry descriptor features:
 - **Container values**: `@.value`, `@.from`, `@.to`, `@.chainId` injected as synthetic arguments
 - **Graceful degradation**: Unknown selectors return raw preview instead of errors
 - **`duration`/`unit` formatters**: Seconds → human-readable, numeric + unit symbol
+- **`FieldFormat::Calldata`**: Nested calldata decoding (Safe `execTransaction`, ERC-4337 UserOps) — recursive rendering with `DisplayEntry::Nested`, `calleePath`/`amountPath`/`spenderPath` params, depth limit of 3
+- **Batch operations (`wallet_sendCalls`)**: Handled wallet-side per spec — wallet calls `format_calldata()` per inner call, joins `interpolatedIntent` strings with " and ". No batch splitting in the engine.
+- **`@.` container value priority**: Paths with `@.` prefix prefer container values over same-named function params (search from end)
+- **Duplicate selector rejection**: Wallets MUST reject descriptors with multiple keys sharing the same selector (spec normative MUST)
+- **Signed integer handling**: `int` types use two's complement → `BigInt` for correct negative display
+- **`value` field on DisplayField**: Literal constant values as alternative to `path`
+- **`separator` field**: Custom separator for array-typed values
+- **`interoperableAddressName` format**: ERC-7930 stub with fallback to `addressName`
+- **`date` encoding**: `"blockheight"` encoding shows block number instead of timestamp
+- **`selectorPath`/`chainIdPath`**: Cross-field selector and chain ID resolution for nested calldata
+- **`domainSeparator`**: EIP-712 context field (parsing only, validation is wallet-side)
+- **Factory context**: `factory` object with `deployEvent` and `deployments`
+- **EIP-712 format parity**: All 14 format types (including Duration, Unit, Amount, NftName, Raw) now work in EIP-712
+- **EIP-712 AddressName**: Full senderAddress, sources, local/ENS resolution (parity with calldata)
+- **Array slice syntax**: `[start:end]` in both calldata paths and EIP-712 paths
+- **Unit SI prefix**: `prefix: true` enables k/M/G/T notation
+- **Maps `keyPath`**: Cross-field key resolution for map lookups
+- **`excluded` paths**: Deprecated v1 field now functional in rendering
+- **Intent as object**: `intent` can be string or `{"label": "..."}` object
+- **Interpolation escape sequences**: `{{` and `}}` produce literal braces
+- **Encryption params**: `scheme` and `plaintextType` fields (parsing only)
+- **EIP-712 domain completeness**: `version`, `chainId`, `salt` fields on descriptor domain
+- **`includes` mechanism**: Descriptor inheritance via `"includes": "./base.json"` — JSON-level merge, field arrays merge by `path`, nested includes with depth limit 3, `GitHubRegistrySource` resolves automatically
 
 Optional features:
-- `github-registry`: HTTP-based descriptor fetching via `GitHubRegistrySource` (adds `ureq` dependency)
+- `github-registry`: async HTTP descriptor fetching via `GitHubRegistrySource` (adds `reqwest` dependency; requires tokio runtime)
+  - `GitHubRegistrySource::from_registry(base_url)` fetches `index.json` mapping `{chain_id}:{address}` → relative file path
+  - Default registry: `https://github.com/llbartekll/7730-v2-registry` (v2 descriptors, index.json at root)
+  - Registry source is cached via `tokio::sync::OnceCell` in FFI layer — index fetched once per process
+  - UniFFI async exports use `#[uniffi::export(async_runtime = "tokio")]`; `uniffi` dep requires `features = ["tokio"]`
 
-## Working Expectations For Agents
+## Skills
 
-- Prefer minimal, targeted changes over broad refactors
-- Preserve existing public API unless the task explicitly requires API changes
-- Add or update tests when changing formatting, decoding, or resolution behavior
-- Run relevant Rust checks after changes when possible
-- Keep docs and module exports aligned with implementation changes
+- **`check-descriptor`** (`.claude/skills/check-descriptor/`): Validates ERC-7730 descriptor function signatures against on-chain contract ABIs via Etherscan. Trigger with `/check-descriptor <path-or-url>` or phrases like "check this descriptor", "validate descriptor against on-chain". Handles proxy contracts automatically.
+
+## Environment
+
+- **`ETHERSCAN_API_KEY`**: Available in `.env` at repo root. Load with `[ -f .env ] && export $(grep -v '^#' .env | xargs 2>/dev/null)` before calling Etherscan. Use the V2 API: `https://api.etherscan.io/v2/api?chainid={id}&...`
 
 ## Pending
 
-- **Phase 2**: `format_multi()` + `FieldFormat::Calldata` (nested calldata, Safe wallet support)
 - **Phase 3**: `EmbeddedSource` + descriptor validation
 - **Phase 4**: Packaging/distribution for existing UniFFI bindings (Swift XCFramework/SPM + Kotlin AAR/Maven)
-- **Phase 5**: Missing formatter (`nftName`), file inclusion (`$id`/includes), CI pipeline
+- **Phase 5**: CI pipeline
