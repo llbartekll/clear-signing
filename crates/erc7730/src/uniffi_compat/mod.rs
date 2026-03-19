@@ -73,8 +73,18 @@ impl From<TokenMeta> for TokenMetaFfi {
 #[uniffi::export(with_foreign)]
 pub trait DataProviderFfi: Send + Sync {
     fn resolve_token(&self, chain_id: u64, address: String) -> Option<TokenMetaFfi>;
-    fn resolve_ens_name(&self, address: String, chain_id: u64) -> Option<String>;
-    fn resolve_local_name(&self, address: String, chain_id: u64) -> Option<String>;
+    fn resolve_ens_name(
+        &self,
+        address: String,
+        chain_id: u64,
+        types: Option<Vec<String>>,
+    ) -> Option<String>;
+    fn resolve_local_name(
+        &self,
+        address: String,
+        chain_id: u64,
+        types: Option<Vec<String>>,
+    ) -> Option<String>;
     fn resolve_nft_collection_name(
         &self,
         collection_address: String,
@@ -107,13 +117,16 @@ impl DataProvider for DataProviderFfiProxy {
         &self,
         address: &str,
         chain_id: u64,
+        types: Option<&[String]>,
     ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
         let address = address.to_string();
+        let types_owned = types.map(|t| t.to_vec());
         let inner = Arc::clone(&self.0);
         Box::pin(async move {
-            let result =
-                tokio::task::spawn_blocking(move || inner.resolve_ens_name(address, chain_id))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                inner.resolve_ens_name(address, chain_id, types_owned)
+            })
+            .await;
             result.ok().flatten()
         })
     }
@@ -122,13 +135,16 @@ impl DataProvider for DataProviderFfiProxy {
         &self,
         address: &str,
         chain_id: u64,
+        types: Option<&[String]>,
     ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
         let address = address.to_string();
+        let types_owned = types.map(|t| t.to_vec());
         let inner = Arc::clone(&self.0);
         Box::pin(async move {
-            let result =
-                tokio::task::spawn_blocking(move || inner.resolve_local_name(address, chain_id))
-                    .await;
+            let result = tokio::task::spawn_blocking(move || {
+                inner.resolve_local_name(address, chain_id, types_owned)
+            })
+            .await;
             result.ok().flatten()
         })
     }
@@ -600,10 +616,20 @@ mod tests {
         fn resolve_token(&self, _chain_id: u64, _address: String) -> Option<TokenMetaFfi> {
             None
         }
-        fn resolve_ens_name(&self, _address: String, _chain_id: u64) -> Option<String> {
+        fn resolve_ens_name(
+            &self,
+            _address: String,
+            _chain_id: u64,
+            _types: Option<Vec<String>>,
+        ) -> Option<String> {
             None
         }
-        fn resolve_local_name(&self, address: String, _chain_id: u64) -> Option<String> {
+        fn resolve_local_name(
+            &self,
+            address: String,
+            _chain_id: u64,
+            _types: Option<Vec<String>>,
+        ) -> Option<String> {
             if address.to_lowercase() == "0x0000000000000000000000000000000000000001".to_lowercase()
             {
                 Some("My Contact".to_string())

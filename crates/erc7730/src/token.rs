@@ -108,11 +108,16 @@ impl DataProvider for CompositeDataProvider {
         &self,
         address: &str,
         chain_id: u64,
+        types: Option<&[String]>,
     ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
         let address = address.to_string();
+        let types_owned: Option<Vec<String>> = types.map(|t| t.to_vec());
         Box::pin(async move {
             for provider in &self.providers {
-                if let Some(name) = provider.resolve_ens_name(&address, chain_id).await {
+                if let Some(name) = provider
+                    .resolve_ens_name(&address, chain_id, types_owned.as_deref())
+                    .await
+                {
                     return Some(name);
                 }
             }
@@ -124,11 +129,16 @@ impl DataProvider for CompositeDataProvider {
         &self,
         address: &str,
         chain_id: u64,
+        types: Option<&[String]>,
     ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
         let address = address.to_string();
+        let types_owned: Option<Vec<String>> = types.map(|t| t.to_vec());
         Box::pin(async move {
             for provider in &self.providers {
-                if let Some(name) = provider.resolve_local_name(&address, chain_id).await {
+                if let Some(name) = provider
+                    .resolve_local_name(&address, chain_id, types_owned.as_deref())
+                    .await
+                {
                     return Some(name);
                 }
             }

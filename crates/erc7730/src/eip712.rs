@@ -101,6 +101,7 @@ pub async fn format_typed_data(
             .map(|template| interpolate_typed_intent(template, &data.message, &format.fields)),
         entries,
         warnings,
+        owner: descriptor.metadata.owner.clone(),
     })
 }
 
@@ -513,6 +514,7 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
         interpolated_intent: None,
         entries,
         warnings: vec!["No matching descriptor format found".to_string()],
+        owner: None,
     }
 }
 
@@ -651,12 +653,18 @@ async fn format_typed_value(
                 .unwrap_or(true);
 
             if local_allowed {
-                if let Some(name) = data_provider.resolve_local_name(&addr, chain_id).await {
+                if let Some(name) = data_provider
+                    .resolve_local_name(&addr, chain_id, params.and_then(|p| p.types.as_deref()))
+                    .await
+                {
                     return Ok(name);
                 }
             }
             if ens_allowed {
-                if let Some(name) = data_provider.resolve_ens_name(&addr, chain_id).await {
+                if let Some(name) = data_provider
+                    .resolve_ens_name(&addr, chain_id, params.and_then(|p| p.types.as_deref()))
+                    .await
+                {
                     return Ok(name);
                 }
             }

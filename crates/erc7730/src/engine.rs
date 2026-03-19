@@ -27,6 +27,8 @@ pub struct DisplayModel {
     pub interpolated_intent: Option<String>,
     pub entries: Vec<DisplayEntry>,
     pub warnings: Vec<String>,
+    /// Owner of the descriptor that produced this model (from `metadata.owner`).
+    pub owner: Option<String>,
 }
 
 /// A display entry — either a flat item, a group of items, or a nested calldata call.
@@ -134,6 +136,7 @@ pub async fn format_calldata(
         interpolated_intent: interpolated,
         entries,
         warnings,
+        owner: descriptor.metadata.owner.clone(),
     })
 }
 
@@ -406,7 +409,23 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
     }
 
     match value {
-        ArgumentValue::Tuple(members) | ArgumentValue::Array(members) => {
+        ArgumentValue::Tuple(members) => {
+            let seg = segments[0];
+
+            // Numeric index
+            if let Ok(index) = seg.parse::<usize>() {
+                return members
+                    .get(index)
+                    .and_then(|(_, v)| navigate_value(v, &segments[1..]));
+            }
+
+            // Name fallback: match by member name
+            members
+                .iter()
+                .find(|(name, _)| name.as_deref() == Some(seg))
+                .and_then(|(_, v)| navigate_value(v, &segments[1..]))
+        }
+        ArgumentValue::Array(members) => {
             let seg = segments[0];
 
             // Handle bracket notation within segment: "items[0]" or "items[0:3]"
@@ -824,7 +843,7 @@ fn format_raw(val: &ArgumentValue) -> String {
             format!("[{}]", rendered.join(", "))
         }
         ArgumentValue::Tuple(items) => {
-            let rendered: Vec<String> = items.iter().map(format_raw).collect();
+            let rendered: Vec<String> = items.iter().map(|(_, v)| format_raw(v)).collect();
             format!("({})", rendered.join(", "))
         }
     }
@@ -893,7 +912,11 @@ async fn format_address_name(
     if local_allowed {
         if let Some(name) = ctx
             .data_provider
-            .resolve_local_name(&hex_addr, ctx.chain_id)
+            .resolve_local_name(
+                &hex_addr,
+                ctx.chain_id,
+                params.and_then(|p| p.types.as_deref()),
+            )
             .await
         {
             return Ok(name);
@@ -904,7 +927,11 @@ async fn format_address_name(
     if ens_allowed {
         if let Some(name) = ctx
             .data_provider
-            .resolve_ens_name(&hex_addr, ctx.chain_id)
+            .resolve_ens_name(
+                &hex_addr,
+                ctx.chain_id,
+                params.and_then(|p| p.types.as_deref()),
+            )
             .await
         {
             return Ok(name);
@@ -1734,12 +1761,11 @@ mod tests {
                 &self,
                 address: &str,
                 _chain_id: u64,
+                _types: Option<&[String]>,
             ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
                 let addr = address.to_string();
                 Box::pin(async move {
-                    if addr.to_lowercase()
-                        == "0xbf01daf454dce008d3e2bfd47d5e186f71477253"
-                    {
+                    if addr.to_lowercase() == "0xbf01daf454dce008d3e2bfd47d5e186f71477253" {
                         Some("My Savings".to_string())
                     } else {
                         None
@@ -1749,9 +1775,8 @@ mod tests {
         }
 
         let mut addr_bytes = [0u8; 20];
-        addr_bytes.copy_from_slice(
-            &hex::decode("bf01daf454dce008d3e2bfd47d5e186f71477253").unwrap(),
-        );
+        addr_bytes
+            .copy_from_slice(&hex::decode("bf01daf454dce008d3e2bfd47d5e186f71477253").unwrap());
 
         let decoded = DecodedArguments {
             function_name: "withdraw".to_string(),
@@ -1788,8 +1813,7 @@ mod tests {
             depth: 0,
         };
 
-        let result =
-            interpolate_intent("Withdraw to {to}", &ctx, &fields).await;
+        let result = interpolate_intent("Withdraw to {to}", &ctx, &fields).await;
         assert_eq!(result, "Withdraw to My Savings");
     }
 }

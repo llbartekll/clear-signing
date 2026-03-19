@@ -27,7 +27,7 @@ pub enum ParamType {
     String,
     Array(Box<ParamType>),
     FixedArray(Box<ParamType>, usize),
-    Tuple(Vec<ParamType>),
+    Tuple(Vec<(Option<String>, ParamType)>),
 }
 
 impl ParamType {
@@ -37,7 +37,7 @@ impl ParamType {
             ParamType::Bytes | ParamType::String => true,
             ParamType::Array(_) => true,
             ParamType::FixedArray(inner, _) => inner.is_dynamic(),
-            ParamType::Tuple(members) => members.iter().any(|m| m.is_dynamic()),
+            ParamType::Tuple(members) => members.iter().any(|(_, m)| m.is_dynamic()),
             _ => false,
         }
     }
@@ -71,7 +71,7 @@ pub enum ArgumentValue {
     FixedBytes(Vec<u8>),
     String(std::string::String),
     Array(Vec<ArgumentValue>),
-    Tuple(Vec<ArgumentValue>),
+    Tuple(Vec<(Option<String>, ArgumentValue)>),
 }
 
 impl ArgumentValue {
@@ -99,7 +99,7 @@ impl ArgumentValue {
                 serde_json::Value::Array(items.iter().map(|i| i.to_json_value()).collect())
             }
             ArgumentValue::Tuple(items) => {
-                serde_json::Value::Array(items.iter().map(|i| i.to_json_value()).collect())
+                serde_json::Value::Array(items.iter().map(|(_, i)| i.to_json_value()).collect())
             }
         }
     }
@@ -163,42 +163,6 @@ pub fn parse_signature(sig: &str) -> Result<FunctionSignature, DecodeError> {
     })
 }
 
-/// Parse a comma-separated list of param types, respecting nested parentheses for tuples.
-fn parse_param_list(s: &str) -> Result<Vec<ParamType>, DecodeError> {
-    let mut result = Vec::new();
-    let mut depth = 0usize;
-    let mut start = 0;
-
-    for (i, c) in s.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth
-                    .checked_sub(1)
-                    .ok_or_else(|| DecodeError::InvalidSignature("unbalanced ')'".to_string()))?;
-            }
-            ',' if depth == 0 => {
-                result.push(parse_param_type(s[start..i].trim())?);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-
-    if depth != 0 {
-        return Err(DecodeError::InvalidSignature(
-            "unbalanced parentheses".to_string(),
-        ));
-    }
-
-    let last = s[start..].trim();
-    if !last.is_empty() {
-        result.push(parse_param_type(last)?);
-    }
-
-    Ok(result)
-}
-
 /// Parse a comma-separated list of potentially named params (top-level only).
 fn parse_param_list_named(s: &str) -> Result<Vec<(ParamType, Option<String>)>, DecodeError> {
     let mut result = Vec::new();
@@ -230,6 +194,46 @@ fn parse_param_list_named(s: &str) -> Result<Vec<(ParamType, Option<String>)>, D
     let last = s[start..].trim();
     if !last.is_empty() {
         result.push(parse_param_with_name(last)?);
+    }
+
+    Ok(result)
+}
+
+/// Parse a comma-separated list of potentially named params inside a tuple body.
+///
+/// Returns `Vec<(Option<String>, ParamType)>` — name first, type second.
+fn parse_param_list_with_names(s: &str) -> Result<Vec<(Option<String>, ParamType)>, DecodeError> {
+    let mut result = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or_else(|| DecodeError::InvalidSignature("unbalanced ')'".to_string()))?;
+            }
+            ',' if depth == 0 => {
+                let (pt, name) = parse_param_with_name(s[start..i].trim())?;
+                result.push((name, pt));
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+
+    if depth != 0 {
+        return Err(DecodeError::InvalidSignature(
+            "unbalanced parentheses".to_string(),
+        ));
+    }
+
+    let last = s[start..].trim();
+    if !last.is_empty() {
+        let (pt, name) = parse_param_with_name(last)?;
+        result.push((name, pt));
     }
 
     Ok(result)
@@ -282,13 +286,13 @@ fn parse_param_type(s: &str) -> Result<ParamType, DecodeError> {
         }
     }
 
-    // Handle tuples: `(type1,type2,...)`
+    // Handle tuples: `(type1,type2,...)` — members may have names like `(uint256 value, uint256 deadline)`
     if s.starts_with('(') && s.ends_with(')') {
         let inner = &s[1..s.len() - 1];
         let members = if inner.is_empty() {
             vec![]
         } else {
-            parse_param_list(inner)?
+            parse_param_list_with_names(inner)?
         };
         return Ok(ParamType::Tuple(members));
     }
@@ -352,7 +356,7 @@ fn canonical_param(p: &ParamType) -> String {
         ParamType::Tuple(members) => {
             let inner = members
                 .iter()
-                .map(canonical_param)
+                .map(|(_, p)| canonical_param(p))
                 .collect::<Vec<_>>()
                 .join(",");
             format!("({inner})")
@@ -481,9 +485,9 @@ fn decode_value_at(
         ParamType::Tuple(members) => {
             let mut values = Vec::with_capacity(members.len());
             let mut member_offset = offset;
-            for member in members {
-                let value = decode_value(member, data, member_offset)?;
-                values.push(value);
+            for (name, member_type) in members {
+                let value = decode_value(member_type, data, member_offset)?;
+                values.push((name.clone(), value));
                 member_offset += 32;
             }
             Ok(ArgumentValue::Tuple(values))
@@ -561,9 +565,36 @@ mod tests {
         assert_eq!(sig.params.len(), 2);
         assert_eq!(
             sig.params[0],
-            ParamType::Tuple(vec![ParamType::Address, ParamType::Uint(256)])
+            ParamType::Tuple(vec![
+                (None, ParamType::Address),
+                (None, ParamType::Uint(256))
+            ])
         );
         assert_eq!(sig.params[1], ParamType::Bool);
+    }
+
+    #[test]
+    fn test_parse_named_tuple_members() {
+        let sig = parse_signature("foo((uint256 value, uint256 deadline) permit)").unwrap();
+        assert_eq!(sig.params.len(), 1);
+        assert_eq!(sig.param_names[0], Some("permit".to_string()));
+        if let ParamType::Tuple(members) = &sig.params[0] {
+            assert_eq!(members.len(), 2);
+            assert_eq!(members[0].0, Some("value".to_string()));
+            assert_eq!(members[0].1, ParamType::Uint(256));
+            assert_eq!(members[1].0, Some("deadline".to_string()));
+            assert_eq!(members[1].1, ParamType::Uint(256));
+        } else {
+            panic!("expected Tuple");
+        }
+    }
+
+    #[test]
+    fn test_canonical_strips_tuple_names() {
+        let named = parse_signature("foo((uint256 value, uint256 deadline) permit)").unwrap();
+        let unnamed = parse_signature("foo((uint256,uint256))").unwrap();
+        assert_eq!(named.selector, unnamed.selector);
+        assert_eq!(named.canonical, unnamed.canonical);
     }
 
     #[test]

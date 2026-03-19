@@ -25,22 +25,28 @@ pub trait DataProvider: Send + Sync {
     }
 
     /// Resolve an ENS name for an address.
+    ///
+    /// `types` hints the expected address role (e.g. `["eoa"]`, `["contract"]`).
     fn resolve_ens_name(
         &self,
         address: &str,
         chain_id: u64,
+        types: Option<&[String]>,
     ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
-        let _ = (address, chain_id);
+        let _ = (address, chain_id, types);
         Box::pin(async { None })
     }
 
     /// Resolve a local/contact name for an address.
+    ///
+    /// `types` hints the expected address role (e.g. `["eoa"]`, `["contract"]`).
     fn resolve_local_name(
         &self,
         address: &str,
         chain_id: u64,
+        types: Option<&[String]>,
     ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
-        let _ = (address, chain_id);
+        let _ = (address, chain_id, types);
         Box::pin(async { None })
     }
 

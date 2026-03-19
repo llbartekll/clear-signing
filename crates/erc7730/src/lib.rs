@@ -209,6 +209,7 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
         interpolated_intent: None,
         entries,
         warnings: vec!["No matching descriptor format found".to_string()],
+        owner: None,
     }
 }
 
