@@ -447,6 +447,7 @@ final class AlchemyClient {
 }
 
 final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
+
     static let supportedChainIds: Set<UInt64> = [1, 10, 137, 8453, 42161]
     static let localWalletName = "My Wallet"
 
@@ -548,7 +549,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         }
     }
 
-    func resolveEnsName(address: String, chainId: UInt64) -> String? {
+    func resolveEnsName(address: String, chainId: UInt64, types: [String]?) -> String? {
         guard let resolvedAddress = normalizedAddress(address) else {
             return nil
         }
@@ -585,7 +586,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         }
     }
 
-    func resolveLocalName(address: String, chainId: UInt64) -> String? {
+    func resolveLocalName(address: String, chainId: UInt64, types: [String]?) -> String? {
         let _ = chainId
 
         guard let resolvedAddress = normalizedAddress(address),

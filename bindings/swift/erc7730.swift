@@ -510,9 +510,9 @@ public protocol DataProviderFfi: AnyObject, Sendable {
     
     func resolveToken(chainId: UInt64, address: String)  -> TokenMetaFfi?
     
-    func resolveEnsName(address: String, chainId: UInt64)  -> String?
+    func resolveEnsName(address: String, chainId: UInt64, types: [String]?)  -> String?
     
-    func resolveLocalName(address: String, chainId: UInt64)  -> String?
+    func resolveLocalName(address: String, chainId: UInt64, types: [String]?)  -> String?
     
     func resolveNftCollectionName(collectionAddress: String, chainId: UInt64)  -> String?
     
@@ -588,22 +588,24 @@ open func resolveToken(chainId: UInt64, address: String) -> TokenMetaFfi?  {
 })
 }
     
-open func resolveEnsName(address: String, chainId: UInt64) -> String?  {
+open func resolveEnsName(address: String, chainId: UInt64, types: [String]?) -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_erc7730_fn_method_dataproviderffi_resolve_ens_name(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(address),
-        FfiConverterUInt64.lower(chainId),$0
+        FfiConverterUInt64.lower(chainId),
+        FfiConverterOptionSequenceString.lower(types),$0
     )
 })
 }
     
-open func resolveLocalName(address: String, chainId: UInt64) -> String?  {
+open func resolveLocalName(address: String, chainId: UInt64, types: [String]?) -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
     uniffi_erc7730_fn_method_dataproviderffi_resolve_local_name(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(address),
-        FfiConverterUInt64.lower(chainId),$0
+        FfiConverterUInt64.lower(chainId),
+        FfiConverterOptionSequenceString.lower(types),$0
     )
 })
 }
@@ -677,6 +679,7 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
             uniffiHandle: UInt64,
             address: RustBuffer,
             chainId: UInt64,
+            types: RustBuffer,
             uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
             uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
         ) in
@@ -687,7 +690,8 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
                 }
                 return uniffiObj.resolveEnsName(
                      address: try FfiConverterString.lift(address),
-                     chainId: try FfiConverterUInt64.lift(chainId)
+                     chainId: try FfiConverterUInt64.lift(chainId),
+                     types: try FfiConverterOptionSequenceString.lift(types)
                 )
             }
 
@@ -703,6 +707,7 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
             uniffiHandle: UInt64,
             address: RustBuffer,
             chainId: UInt64,
+            types: RustBuffer,
             uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
             uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
         ) in
@@ -713,7 +718,8 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
                 }
                 return uniffiObj.resolveLocalName(
                      address: try FfiConverterString.lift(address),
-                     chainId: try FfiConverterUInt64.lift(chainId)
+                     chainId: try FfiConverterUInt64.lift(chainId),
+                     types: try FfiConverterOptionSequenceString.lift(types)
                 )
             }
 
@@ -881,14 +887,22 @@ public struct DisplayModel: Equatable, Hashable {
     public var interpolatedIntent: String?
     public var entries: [DisplayEntry]
     public var warnings: [String]
+    /**
+     * Owner of the descriptor that produced this model (from `metadata.owner`).
+     */
+    public var owner: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(intent: String, interpolatedIntent: String?, entries: [DisplayEntry], warnings: [String]) {
+    public init(intent: String, interpolatedIntent: String?, entries: [DisplayEntry], warnings: [String], 
+        /**
+         * Owner of the descriptor that produced this model (from `metadata.owner`).
+         */owner: String?) {
         self.intent = intent
         self.interpolatedIntent = interpolatedIntent
         self.entries = entries
         self.warnings = warnings
+        self.owner = owner
     }
 
     
@@ -910,7 +924,8 @@ public struct FfiConverterTypeDisplayModel: FfiConverterRustBuffer {
                 intent: FfiConverterString.read(from: &buf), 
                 interpolatedIntent: FfiConverterOptionString.read(from: &buf), 
                 entries: FfiConverterSequenceTypeDisplayEntry.read(from: &buf), 
-                warnings: FfiConverterSequenceString.read(from: &buf)
+                warnings: FfiConverterSequenceString.read(from: &buf), 
+                owner: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -919,6 +934,7 @@ public struct FfiConverterTypeDisplayModel: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.interpolatedIntent, into: &buf)
         FfiConverterSequenceTypeDisplayEntry.write(value.entries, into: &buf)
         FfiConverterSequenceString.write(value.warnings, into: &buf)
+        FfiConverterOptionString.write(value.owner, into: &buf)
     }
 }
 
@@ -1452,6 +1468,30 @@ fileprivate struct FfiConverterOptionTypeTokenMetaFfi: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
+    typealias SwiftType = [String]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -1675,10 +1715,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_token() != 7230) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_ens_name() != 13050) {
+    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_ens_name() != 65412) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_local_name() != 39357) {
+    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_local_name() != 45774) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_nft_collection_name() != 61037) {
