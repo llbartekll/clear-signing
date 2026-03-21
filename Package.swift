@@ -20,8 +20,8 @@ let package = Package(
             )
             : .binaryTarget(
                 name: "Erc7730Rust",
-                url: "https://github.com/llbartekll/lucid-umbrella/releases/download/0.1.0/liberc7730.xcframework.zip",
-                checksum: "PLACEHOLDER"
+                url: "https://github.com/llbartekll/lucid-umbrella/releases/download/0.0.1/liberc7730.xcframework.zip",
+                checksum: "1799b2e8afbc5f0237239793767fb9e700527aff10976773caafd3707554d77f"
             ),
         .target(
             name: "Erc7730",
