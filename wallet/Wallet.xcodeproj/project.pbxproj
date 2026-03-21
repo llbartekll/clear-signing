@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F1000001000000000001 /* TokenMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000011 /* TokenMetadata.swift */; };
+		F1000001000000000002 /* TokenMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000011 /* TokenMetadata.swift */; };
+		F1000001000000000003 /* MetadataCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000012 /* MetadataCache.swift */; };
+		F1000001000000000004 /* MetadataCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000012 /* MetadataCache.swift */; };
+		F1000001000000000005 /* AlchemyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000013 /* AlchemyClient.swift */; };
+		F1000001000000000006 /* AlchemyClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000013 /* AlchemyClient.swift */; };
+		F1000001000000000007 /* ENSResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000014 /* ENSResolver.swift */; };
+		F1000001000000000008 /* ENSResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000001000000000014 /* ENSResolver.swift */; };
 		C1000001233456780001 /* WalletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000001233456780011 /* WalletApp.swift */; };
 		C1000001233456780002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000001233456780012 /* ContentView.swift */; };
 		C1000001233456780099 /* Erc7730 in Frameworks */ = {isa = PBXBuildFile; productRef = C1000001233456780098 /* Erc7730 */; };
@@ -36,6 +44,10 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		F1000001000000000011 /* TokenMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenMetadata.swift; sourceTree = "<group>"; };
+		F1000001000000000012 /* MetadataCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetadataCache.swift; sourceTree = "<group>"; };
+		F1000001000000000013 /* AlchemyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlchemyClient.swift; sourceTree = "<group>"; };
+		F1000001000000000014 /* ENSResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ENSResolver.swift; sourceTree = "<group>"; };
 		C1000001233456780010 /* Wallet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Wallet.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C1000001233456780011 /* WalletApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletApp.swift; sourceTree = "<group>"; };
 		C1000001233456780012 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -135,6 +147,10 @@
 				D1000001000000000063 /* EvmSigningService.swift */,
 				D1000001000000000068 /* Eip712Signer.swift */,
 				E2000001000000000011 /* WalletMetadataProvider.swift */,
+				F1000001000000000011 /* TokenMetadata.swift */,
+				F1000001000000000012 /* MetadataCache.swift */,
+				F1000001000000000013 /* AlchemyClient.swift */,
+				F1000001000000000014 /* ENSResolver.swift */,
 				E2000001000000000012 /* tokens.json */,
 			);
 			path = Services;
@@ -286,6 +302,10 @@
 				D1000001000000000062 /* EvmSigningService.swift in Sources */,
 				D1000001000000000069 /* Eip712Signer.swift in Sources */,
 				E2000001000000000001 /* WalletMetadataProvider.swift in Sources */,
+				F1000001000000000001 /* TokenMetadata.swift in Sources */,
+				F1000001000000000003 /* MetadataCache.swift in Sources */,
+				F1000001000000000005 /* AlchemyClient.swift in Sources */,
+				F1000001000000000007 /* ENSResolver.swift in Sources */,
 				D1000001000000000005 /* DisplayModelView.swift in Sources */,
 				D1000001000000000006 /* KeyImportSection.swift in Sources */,
 				D1000001000000000007 /* QRScannerSheet.swift in Sources */,
@@ -300,6 +320,10 @@
 			files = (
 				E200000100000000000B /* KeyManager.swift in Sources */,
 				E200000100000000000C /* WalletMetadataProvider.swift in Sources */,
+				F1000001000000000002 /* TokenMetadata.swift in Sources */,
+				F1000001000000000004 /* MetadataCache.swift in Sources */,
+				F1000001000000000006 /* AlchemyClient.swift in Sources */,
+				F1000001000000000008 /* ENSResolver.swift in Sources */,
 				E2000001000000000003 /* WalletMetadataProviderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
