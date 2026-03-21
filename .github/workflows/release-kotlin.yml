@@ -1,0 +1,80 @@
+name: Release Kotlin (Android)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK + NDK
+        uses: android-actions/setup-android@v3
+      - run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android libraries
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: |
+          cargo ndk -t aarch64-linux-android    build --release --features uniffi,github-registry -p erc7730
+          cargo ndk -t armv7-linux-androideabi   build --release --features uniffi,github-registry -p erc7730
+          cargo ndk -t x86_64-linux-android      build --release --features uniffi,github-registry -p erc7730
+
+      - name: Generate Kotlin bindings
+        run: |
+          cargo run -p erc7730 --features uniffi --bin uniffi-bindgen -- generate \
+              --library target/aarch64-linux-android/release/liberc7730.so \
+              --language kotlin --out-dir kotlin-bindings
+
+      - name: Strip .so files
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: |
+          STRIP="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+          $STRIP target/aarch64-linux-android/release/liberc7730.so
+          $STRIP target/armv7-linux-androideabi/release/liberc7730.so
+          $STRIP target/x86_64-linux-android/release/liberc7730.so
+
+      - name: Arrange artifacts
+        run: |
+          mkdir -p libs/arm64-v8a libs/armeabi-v7a libs/x86_64
+          cp target/aarch64-linux-android/release/liberc7730.so    libs/arm64-v8a/
+          cp target/armv7-linux-androideabi/release/liberc7730.so   libs/armeabi-v7a/
+          cp target/x86_64-linux-android/release/liberc7730.so      libs/x86_64/
+          zip -r kotlin-artifacts.zip libs/ kotlin-bindings/
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          files: kotlin-artifacts.zip

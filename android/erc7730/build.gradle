@@ -1,0 +1,65 @@
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+    id 'maven-publish'
+}
+
+android {
+    namespace 'com.erc7730.uniffi'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 21
+        consumerProguardFiles 'proguard-rules.pro'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    kotlinOptions {
+        jvmTarget = '11'
+    }
+
+    sourceSets {
+        main {
+            kotlin.srcDirs = ["${rootProject.buildDir}/generated/erc7730/kotlin"]
+            jniLibs.srcDirs = ["${rootProject.buildDir}/generated/erc7730/jniLibs"]
+        }
+    }
+
+    packaging {
+        jniLibs {
+            doNotStrip '**/liberc7730.so'
+        }
+    }
+}
+
+dependencies {
+    api 'net.java.dev.jna:jna:5.17.0@aar'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                groupId = 'com.github.llbartekll'
+                artifactId = 'lucid-umbrella'
+                version = project.findProperty('version') ?: '0.0.0'
+
+                pom.withXml {
+                    def deps = asNode().appendNode('dependencies')
+                    def jna = deps.appendNode('dependency')
+                    jna.appendNode('groupId', 'net.java.dev.jna')
+                    jna.appendNode('artifactId', 'jna')
+                    jna.appendNode('version', '5.17.0')
+                    jna.appendNode('classifier', 'android')
+                    jna.appendNode('type', 'aar')
+                }
+            }
+        }
+    }
+}

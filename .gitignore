@@ -7,3 +7,6 @@
 wallet/Config.xcconfig
 **/xcuserdata/
 .env
+android/build/
+android/.gradle/
+android/local.properties

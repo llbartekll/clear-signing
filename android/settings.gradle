@@ -1,0 +1,2 @@
+rootProject.name = 'erc7730'
+include ':erc7730'

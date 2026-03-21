@@ -1,0 +1,77 @@
+name: Release Swift (iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Build XCFramework
+        run: ./scripts/build-xcframework.sh
+
+      - name: Zip XCFramework
+        run: |
+          mkdir -p Output
+          cd target/ios
+          zip -r ../../Output/liberc7730.xcframework.zip liberc7730.xcframework
+
+      - name: Compute checksum
+        id: checksum
+        run: |
+          CHECKSUM=$(swift package compute-checksum Output/liberc7730.xcframework.zip)
+          echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
+
+      - name: Update Package.swift
+        env:
+          VERSION: ${{ inputs.version }}
+          CHECKSUM: ${{ steps.checksum.outputs.checksum }}
+        run: |
+          sed -i '' "s|/download/[^/]*/liberc7730|/download/$VERSION/liberc7730|" Package.swift
+          sed -i '' "s|checksum: \"[^\"]*\"|checksum: \"$CHECKSUM\"|" Package.swift
+          echo "Updated Package.swift:"
+          grep -A1 'url:' Package.swift
+          grep 'checksum:' Package.swift
+
+      - name: Commit and tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Package.swift
+          git commit -m "Release $VERSION — update Package.swift checksum"
+          git push origin main
+          git tag "$VERSION"
+          git push origin "$VERSION"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: ${{ inputs.version }}
+          generate_release_notes: true
+          files: Output/liberc7730.xcframework.zip
