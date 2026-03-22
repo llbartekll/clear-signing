@@ -25,6 +25,56 @@ enum Eip712Signer {
         }
     }
 
+    // MARK: - RawDigest32
+
+    /// A raw 32-byte digest wrapper that bypasses the SHA256 hashing
+    /// applied by `signature(for: Data)`. Ethereum signing requires ECDSA
+    /// over the raw keccak256 hash — not SHA256(keccak256).
+    private struct RawDigest32: Digest {
+        let bytes: (UInt64, UInt64, UInt64, UInt64)
+
+        init(_ data: Data) {
+            precondition(data.count == 32, "RawDigest32 requires exactly 32 bytes")
+            let b = Array(data)
+            let first  = b[0..<8].withUnsafeBytes   { $0.load(as: UInt64.self) }
+            let second = b[8..<16].withUnsafeBytes  { $0.load(as: UInt64.self) }
+            let third  = b[16..<24].withUnsafeBytes { $0.load(as: UInt64.self) }
+            let fourth = b[24..<32].withUnsafeBytes { $0.load(as: UInt64.self) }
+            self.bytes = (first, second, third, fourth)
+        }
+
+        static var byteCount: Int {
+            get { 32 }
+            set { fatalError("Cannot set byteCount") }
+        }
+
+        func withUnsafeBytes<R>(_ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R {
+            try Swift.withUnsafeBytes(of: bytes) {
+                let ptr = UnsafeRawBufferPointer(start: $0.baseAddress, count: Self.byteCount)
+                return try body(ptr)
+            }
+        }
+
+        func hash(into hasher: inout Hasher) {
+            withUnsafeBytes { hasher.combine(bytes: $0) }
+        }
+
+        static func == (lhs: RawDigest32, rhs: RawDigest32) -> Bool {
+            lhs.bytes.0 == rhs.bytes.0 && lhs.bytes.1 == rhs.bytes.1 &&
+            lhs.bytes.2 == rhs.bytes.2 && lhs.bytes.3 == rhs.bytes.3
+        }
+
+        var description: String {
+            var array = [UInt8]()
+            withUnsafeBytes { array.append(contentsOf: $0) }
+            return "RawDigest32: \(array.map { String(format: "%02x", $0) }.joined())"
+        }
+
+        func makeIterator() -> Array<UInt8>.Iterator {
+            withUnsafeBytes { Array($0).makeIterator() }
+        }
+    }
+
     /// Signs an EIP-712 typed data message and returns a 0x-prefixed hex signature (r||s||v)
     static func sign(typedDataJson: String, privateKeyHex: String) throws -> String {
         guard let jsonData = typedDataJson.data(using: .utf8) else {
@@ -85,6 +135,7 @@ enum Eip712Signer {
     private static func typeForDomainField(_ field: String) -> String {
         switch field {
         case "chainId": return "uint256"
+        case "verifyingContract": return "address"
         case "salt": return "bytes32"
         default: return "string"
         }
@@ -249,9 +300,9 @@ enum Eip712Signer {
             return result
 
         case let t where t.hasPrefix("uint"):
-            return try encodeUint(value, t, isSigned: false)
+            return encodeUintValue(value, isSigned: false)
         case let t where t.hasPrefix("int"):
-            return try encodeUint(value, t, isSigned: true)
+            return encodeUintValue(value, isSigned: true)
 
         default:
             return Data(repeating: 0, count: 32)
@@ -300,57 +351,120 @@ enum Eip712Signer {
         return result
     }
 
-    private static func encodeUint(_ value: Any?, _ type: String, isSigned: Bool) throws -> Data {
-        let bits: Int
-        if type.count > (isSigned ? 3 : 4) {
-            let numStr = isSigned ? String(type.dropFirst(3)) : String(type.dropFirst(4))
-            bits = Int(numStr) ?? 256
-        } else {
-            bits = 256
+    // MARK: - Numeric Encoding (uint256 / int256)
+
+    /// Encodes any JSON value as a 32-byte big-endian integer.
+    /// Handles decimal strings, hex strings, NSNumber, and Int values
+    /// up to the full uint256 / int256 range.
+    private static func encodeUintValue(_ value: Any?, isSigned: Bool) -> Data {
+        if let str = value as? String {
+            return encodeNumericString(str, isSigned: isSigned)
         }
-
-        var intValue: Int64 = 0
-
         if let num = value as? NSNumber {
-            intValue = num.int64Value
-        } else if let num = value as? Int {
-            intValue = Int64(num)
-        } else if let str = value as? String {
-            let cleaned = str.hasPrefix("0x") ? String(str.dropFirst(2)) : str
-            if cleaned.hasPrefix("-") {
-                intValue = Int64(cleaned) ?? 0
-            } else if let parsed = Int64(cleaned) {
-                intValue = parsed
-            } else if let bigInt = parseBigInt(cleaned) {
-                intValue = bigInt
+            return encodeInt64(num.int64Value, isSigned: isSigned)
+        }
+        if let num = value as? Int {
+            return encodeInt64(Int64(num), isSigned: isSigned)
+        }
+        return Data(repeating: 0, count: 32)
+    }
+
+    private static func encodeNumericString(_ str: String, isSigned: Bool) -> Data {
+        let cleaned = str.trimmingCharacters(in: .whitespaces)
+
+        if cleaned.hasPrefix("0x") || cleaned.hasPrefix("0X") {
+            let hex = String(cleaned.dropFirst(2))
+            guard let data = Data(hexString: hex) else {
+                return Data(repeating: 0, count: 32)
             }
+            return padLeft(data, to: 32)
         }
 
-        var result = Data(repeating: 0, count: 32)
+        if isSigned && cleaned.hasPrefix("-") {
+            let positiveBytes = decimalStringToBytes(String(cleaned.dropFirst()))
+            return twosComplement256(positiveBytes)
+        }
 
-        if isSigned && intValue < 0 {
-            // Two's complement for negative values
-            let unsigned = UInt64(bitPattern: intValue)
-            for i in 0..<8 {
-                result[24 + i] = UInt8((unsigned >> (56 - i * 8)) & 0xFF)
-            }
+        let bytes = decimalStringToBytes(cleaned)
+        return padLeft(Data(bytes), to: 32)
+    }
+
+    /// Encodes an Int64 as 32-byte big-endian with proper sign extension.
+    private static func encodeInt64(_ val: Int64, isSigned: Bool) -> Data {
+        var result: Data
+        if isSigned && val < 0 {
+            // Sign-extend: fill all 32 bytes with 0xFF, then overwrite last 8
+            result = Data(repeating: 0xFF, count: 32)
         } else {
-            // Positive value: big-endian encoding
-            let unsigned = UInt64(bitPattern: intValue)
-            for i in 0..<8 {
-                result[24 + i] = UInt8((unsigned >> (56 - i * 8)) & 0xFF)
+            result = Data(repeating: 0, count: 32)
+        }
+        let unsigned = UInt64(bitPattern: val)
+        for i in 0..<8 {
+            result[24 + i] = UInt8((unsigned >> (56 - i * 8)) & 0xFF)
+        }
+        return result
+    }
+
+    /// Converts a decimal string of arbitrary length to big-endian bytes.
+    /// Supports the full uint256 range (up to 78 decimal digits).
+    private static func decimalStringToBytes(_ str: String) -> [UInt8] {
+        guard !str.isEmpty else { return [0] }
+        var result: [UInt8] = [0]
+
+        for char in str {
+            guard let ascii = char.asciiValue, ascii >= 48, ascii <= 57 else { continue }
+            let digit = Int(ascii) - 48
+
+            // Multiply result by 10
+            var carry = 0
+            for i in stride(from: result.count - 1, through: 0, by: -1) {
+                let product = Int(result[i]) * 10 + carry
+                result[i] = UInt8(product & 0xFF)
+                carry = product >> 8
+            }
+            while carry > 0 {
+                result.insert(UInt8(carry & 0xFF), at: 0)
+                carry >>= 8
+            }
+
+            // Add digit
+            var addCarry = digit
+            for i in stride(from: result.count - 1, through: 0, by: -1) {
+                let sum = Int(result[i]) + addCarry
+                result[i] = UInt8(sum & 0xFF)
+                addCarry = sum >> 8
+            }
+            while addCarry > 0 {
+                result.insert(UInt8(addCarry & 0xFF), at: 0)
+                addCarry >>= 8
             }
         }
 
         return result
     }
 
-    private static func parseBigInt(_ hex: String) -> Int64? {
-        // Simple big integer parsing for values that fit in Int64
-        if hex.count <= 16 {  // 16 hex digits = 64 bits
-            return Int64(hex, radix: 16)
+    /// Computes 256-bit two's complement of a positive big-endian byte array.
+    private static func twosComplement256(_ positive: [UInt8]) -> Data {
+        // Pad positive value into 32 bytes
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let offset = max(0, 32 - positive.count)
+        let srcStart = max(0, positive.count - 32)
+        for i in 0..<min(positive.count, 32) {
+            bytes[offset + i] = positive[srcStart + i]
         }
-        return nil
+
+        // Invert all bits
+        for i in 0..<32 { bytes[i] = ~bytes[i] }
+
+        // Add 1
+        var carry: UInt16 = 1
+        for i in stride(from: 31, through: 0, by: -1) {
+            let sum = UInt16(bytes[i]) + carry
+            bytes[i] = UInt8(sum & 0xFF)
+            carry = sum >> 8
+        }
+
+        return Data(bytes)
     }
 
     // MARK: - Padding Helpers
@@ -381,59 +495,30 @@ enum Eip712Signer {
             throw Error.invalidPrivateKey
         }
 
-        let privateKey = try secp256k1.Signing.PrivateKey(dataRepresentation: keyData, format: .uncompressed)
-        let publicKey = privateKey.publicKey
+        // Use Recovery.PrivateKey with RawDigest32 to:
+        // 1. Bypass SHA256 hashing (sign the raw keccak256 hash directly)
+        // 2. Get the recovery ID from the signature (no brute-force needed)
+        let recoveryKey = try secp256k1.Recovery.PrivateKey(
+            dataRepresentation: keyData, format: .uncompressed
+        )
+        let digest = RawDigest32(signingHash)
+        let recoverableSignature = try recoveryKey.signature(for: digest)
 
-        // Sign the hash using the Signing API
-        let signature = try privateKey.signature(for: signingHash)
-        let compactSig = try signature.compactRepresentation
+        // dataRepresentation is r(32) || s(32) || recoveryId(1) = 65 bytes
+        let sigData = recoverableSignature.dataRepresentation
+        guard sigData.count == 65 else {
+            throw Error.signingFailed("unexpected signature length \(sigData.count)")
+        }
 
-        // Extract r and s (each 32 bytes)
-        let r = compactSig.prefix(32)
-        let s = compactSig.suffix(32)
-
-        // Compute recovery ID by trying all 4 possibilities
-        let recoveryId = try computeRecoveryId(signingHash: signingHash, publicKey: publicKey,
-                                                r: r, s: s)
-        let v = UInt8(27 + recoveryId)
+        let r = sigData[sigData.startIndex ..< sigData.startIndex + 32]
+        let s = sigData[sigData.startIndex + 32 ..< sigData.startIndex + 64]
+        let recoveryId = sigData[sigData.startIndex + 64]
+        let v = UInt8(27) + recoveryId
 
         let rHex = r.map { String(format: "%02x", $0) }.joined()
         let sHex = s.map { String(format: "%02x", $0) }.joined()
         let vHex = String(format: "%02x", v)
 
         return "0x\(rHex)\(sHex)\(vHex)"
-    }
-
-    private static func computeRecoveryId(signingHash: Data, publicKey: secp256k1.Signing.PublicKey,
-                                           r: Data, s: Data) throws -> UInt8 {
-        let publicKeyData = publicKey.dataRepresentation
-
-        // Try each recovery ID (0, 1, 2, 3) and see which one recovers our public key
-        for recoveryId: UInt8 in 0..<4 {
-            do {
-                // Reconstruct the signature with this recovery ID
-                var sigBytes = Data(r + s)
-                sigBytes.append(recoveryId)
-
-                // Try to recover the public key
-                let recoverySignature = try secp256k1.Recovery.ECDSASignature(dataRepresentation: sigBytes)
-                let recoveredKey = try secp256k1.Recovery.PublicKey(signingHash,
-                                                                     signature: recoverySignature,
-                                                                     format: .uncompressed)
-                let recoveredData = recoveredKey.dataRepresentation
-
-                // Check if this matches our public key
-                if recoveredData == publicKeyData {
-                    return recoveryId
-                }
-            } catch {
-                // This recovery ID didn't work, try the next one
-                continue
-            }
-        }
-
-        // Fallback: if recovery fails, default to recovery ID 0
-        // This shouldn't happen with a valid signature
-        return 0
     }
 }
