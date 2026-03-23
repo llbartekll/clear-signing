@@ -197,10 +197,17 @@ fn render_fields<'a>(
 
         for field in &fields {
             match field {
-                DisplayField::Reference { reference } => {
+                DisplayField::Reference {
+                    reference,
+                    path,
+                    params: ref_params,
+                    visible,
+                } => {
                     if let Some(resolved) = resolve_reference(ctx.descriptor, reference) {
-                        let resolved_slice = vec![resolved];
-                        let mut sub = render_fields(ctx, &resolved_slice, warnings).await?;
+                        let merged =
+                            merge_ref_with_definition(resolved, path, ref_params, visible);
+                        let merged_slice = vec![merged];
+                        let mut sub = render_fields(ctx, &merged_slice, warnings).await?;
                         entries.append(&mut sub);
                     } else {
                         warnings.push(format!("unresolved reference: {reference}"));
@@ -322,10 +329,132 @@ async fn render_field_group<'a>(
 }
 
 /// Resolve a `$ref` to a definition.
+///
+/// Accepts both ERC-7730 spec format (`$.display.definitions.foo`) and
+/// legacy JSON Pointer format (`#/definitions/foo`).
 fn resolve_reference(descriptor: &Descriptor, reference: &str) -> Option<DisplayField> {
-    // Expected format: "#/definitions/foo"
-    let key = reference.strip_prefix("#/definitions/")?;
+    let key = reference
+        .strip_prefix("$.display.definitions.")
+        .or_else(|| reference.strip_prefix("#/definitions/"))?;
     descriptor.display.definitions.get(key).cloned()
+}
+
+/// Merge a resolved definition with the reference's own path, params, and visible.
+///
+/// The definition provides label + format + base params. The reference provides
+/// path, overriding params, and visible. Reference params win on conflict.
+pub fn merge_ref_with_definition(
+    definition: DisplayField,
+    ref_path: &Option<String>,
+    ref_params: &Option<FormatParams>,
+    ref_visible: &VisibleRule,
+) -> DisplayField {
+    match definition {
+        DisplayField::Simple {
+            path: def_path,
+            label,
+            value,
+            format,
+            params: def_params,
+            separator,
+            visible: _,
+        } => {
+            // Reference path takes precedence over definition path
+            let path = ref_path.clone().or(def_path);
+
+            // Merge params: start with definition, overlay reference
+            let params = match (def_params, ref_params) {
+                (None, None) => None,
+                (Some(dp), None) => Some(dp),
+                (None, Some(rp)) => Some(rp.clone()),
+                (Some(mut dp), Some(rp)) => {
+                    // Reference params override definition params
+                    if let Some(v) = &rp.token_path {
+                        dp.token_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.native_currency_address {
+                        dp.native_currency_address = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.threshold {
+                        dp.threshold = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.message {
+                        dp.message = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.ref_path {
+                        dp.ref_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.callee_path {
+                        dp.callee_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.amount_path {
+                        dp.amount_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.spender_path {
+                        dp.spender_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.selector_path {
+                        dp.selector_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.chain_id_path {
+                        dp.chain_id_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.encoding {
+                        dp.encoding = Some(v.clone());
+                    }
+                    if rp.prefix.is_some() {
+                        dp.prefix = rp.prefix;
+                    }
+                    if let Some(v) = &rp.base {
+                        dp.base = Some(v.clone());
+                    }
+                    if rp.decimals.is_some() {
+                        dp.decimals = rp.decimals;
+                    }
+                    if let Some(v) = &rp.types {
+                        dp.types = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.sources {
+                        dp.sources = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.map_reference {
+                        dp.map_reference = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.enum_path {
+                        dp.enum_path = Some(v.clone());
+                    }
+                    if rp.chain_id.is_some() {
+                        dp.chain_id = rp.chain_id;
+                    }
+                    if let Some(v) = &rp.sender_address {
+                        dp.sender_address = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.collection_path {
+                        dp.collection_path = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.collection {
+                        dp.collection = Some(v.clone());
+                    }
+                    if let Some(v) = &rp.encryption {
+                        dp.encryption = Some(v.clone());
+                    }
+                    Some(dp)
+                }
+            };
+
+            DisplayField::Simple {
+                path,
+                label,
+                value,
+                format,
+                params,
+                separator,
+                visible: ref_visible.clone(),
+            }
+        }
+        // If the definition is itself a reference or group, return as-is
+        other => other,
+    }
 }
 
 /// Resolve a path like `@.to` or `@.args[0]` to a decoded value.

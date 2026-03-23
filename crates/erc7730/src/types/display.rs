@@ -60,10 +60,25 @@ pub struct DisplayFormat {
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
 pub enum DisplayField {
-    /// A reference to a definition: `{ "$ref": "#/definitions/foo" }`.
+    /// A reference to a definition: `{ "$ref": "$.display.definitions.foo", "path": "...", ... }`.
+    ///
+    /// Per ERC-7730 spec, a reference object carries `$ref` plus the field's own
+    /// `path`, optional `params` (which override definition params), and `visible`.
     Reference {
         #[serde(rename = "$ref")]
         reference: String,
+
+        /// Path to resolve in decoded arguments (from the referencing field).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+
+        /// Params that override/extend the definition's params.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        params: Option<FormatParams>,
+
+        /// Visibility rule (from the referencing field).
+        #[serde(default = "default_visible")]
+        visible: VisibleRule,
     },
 
     /// A grouped set of fields (v2): `{ "fieldGroup": { ... } }`.

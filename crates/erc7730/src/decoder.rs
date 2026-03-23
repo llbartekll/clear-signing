@@ -396,10 +396,10 @@ pub fn decode_calldata(
     let data = &calldata[4..];
     let mut args = Vec::with_capacity(sig.params.len());
 
-    // Decode head section
+    // Decode head section — top-level base is 0 (offsets relative to data start)
     let mut offset = 0;
     for (i, param) in sig.params.iter().enumerate() {
-        let value = decode_value(param, data, offset)?;
+        let value = decode_value(param, data, offset, 0)?;
         args.push(DecodedArgument {
             index: i,
             name: sig.param_names.get(i).cloned().flatten(),
@@ -417,15 +417,22 @@ pub fn decode_calldata(
 }
 
 /// Decode a single value from ABI-encoded data.
+///
+/// `base_offset` is the start of the current encoding scope (0 at top level,
+/// tuple start inside tuples, array body start inside dynamic arrays).
+/// Dynamic-type offsets read from the head are **relative to `base_offset`**
+/// per the Solidity ABI spec.
 fn decode_value(
     param: &ParamType,
     data: &[u8],
     head_offset: usize,
+    base_offset: usize,
 ) -> Result<ArgumentValue, DecodeError> {
     if param.is_dynamic() {
-        // Dynamic types: head contains offset to tail
-        let offset = read_u256_as_usize(data, head_offset)?;
-        decode_value_at(param, data, offset)
+        // Dynamic types: head contains offset relative to the current scope
+        let relative_offset = read_u256_as_usize(data, head_offset)?;
+        let absolute_offset = base_offset + relative_offset;
+        decode_value_at(param, data, absolute_offset)
     } else {
         decode_value_at(param, data, head_offset)
     }
@@ -479,14 +486,17 @@ fn decode_value_at(
         ParamType::Array(inner) => {
             let len = read_u256_as_usize(data, offset)?;
             let elements_start = offset + 32;
-            decode_array_elements(inner, data, elements_start, len)
+            decode_array_elements(inner, data, elements_start, len, elements_start)
         }
-        ParamType::FixedArray(inner, len) => decode_array_elements(inner, data, offset, *len),
+        ParamType::FixedArray(inner, len) => {
+            decode_array_elements(inner, data, offset, *len, offset)
+        }
         ParamType::Tuple(members) => {
             let mut values = Vec::with_capacity(members.len());
             let mut member_offset = offset;
+            // Tuple members' dynamic offsets are relative to the tuple's head start
             for (name, member_type) in members {
-                let value = decode_value(member_type, data, member_offset)?;
+                let value = decode_value(member_type, data, member_offset, offset)?;
                 values.push((name.clone(), value));
                 member_offset += 32;
             }
@@ -500,11 +510,12 @@ fn decode_array_elements(
     data: &[u8],
     offset: usize,
     len: usize,
+    base_offset: usize,
 ) -> Result<ArgumentValue, DecodeError> {
     let mut values = Vec::with_capacity(len);
     let mut elem_offset = offset;
     for _ in 0..len {
-        let value = decode_value(inner, data, elem_offset)?;
+        let value = decode_value(inner, data, elem_offset, base_offset)?;
         values.push(value);
         elem_offset += 32;
     }

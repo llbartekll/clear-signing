@@ -138,16 +138,28 @@ fn render_typed_fields<'a>(
 
         for field in &fields {
             match field {
-                DisplayField::Reference { reference } => {
+                DisplayField::Reference {
+                    reference,
+                    path,
+                    params: ref_params,
+                    visible,
+                } => {
                     let key = reference
-                        .strip_prefix("#/definitions/")
+                        .strip_prefix("$.display.definitions.")
+                        .or_else(|| reference.strip_prefix("#/definitions/"))
                         .unwrap_or(reference);
                     if let Some(resolved) = descriptor.display.definitions.get(key) {
-                        let resolved_slice = vec![resolved.clone()];
+                        let merged = crate::engine::merge_ref_with_definition(
+                            resolved.clone(),
+                            path,
+                            ref_params,
+                            visible,
+                        );
+                        let merged_slice = vec![merged];
                         let mut sub = render_typed_fields(
                             descriptor,
                             message,
-                            &resolved_slice,
+                            &merged_slice,
                             chain_id,
                             data_provider,
                             warnings,
