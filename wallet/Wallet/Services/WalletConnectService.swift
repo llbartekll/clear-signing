@@ -64,6 +64,14 @@ actor WalletConnectService {
         try await WalletKit.instance.rejectSession(proposalId: proposal.id, reason: .userRejected)
     }
 
+    func respondSuccess(_ request: Request, value: AnyCodable) async throws {
+        try await WalletKit.instance.respond(
+            topic: request.topic,
+            requestId: request.id,
+            response: .response(value)
+        )
+    }
+
     func rejectRequest(_ request: Request) async throws {
         try await WalletKit.instance.respond(
             topic: request.topic,

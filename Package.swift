@@ -2,7 +2,7 @@
 import Foundation
 import PackageDescription
 
-let useLocal = ProcessInfo.processInfo.environment["USE_LOCAL_RUST_XCFRAMEWORK"] == "1"
+let useLocal = true //ProcessInfo.processInfo.environment["USE_LOCAL_RUST_XCFRAMEWORK"] == "1"
 
 let package = Package(
     name: "Erc7730",

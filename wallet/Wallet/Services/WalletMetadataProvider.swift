@@ -71,11 +71,28 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         lookupNFTCollectionName(chainId: chainId, address: collectionAddress)
     }
 
+    // MARK: - Native Gas Token
+
+    private static let nativeTokenSentinel = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+
+    private static let nativeGasTokens: [UInt64: TokenMetadata] = [
+        1:     TokenMetadata(symbol: "ETH",   decimals: 18, name: "Ether"),
+        10:    TokenMetadata(symbol: "ETH",   decimals: 18, name: "Ether"),
+        56:    TokenMetadata(symbol: "BNB",   decimals: 18, name: "BNB"),
+        137:   TokenMetadata(symbol: "POL",   decimals: 18, name: "POL"),
+        8453:  TokenMetadata(symbol: "ETH",   decimals: 18, name: "Ether"),
+        42161: TokenMetadata(symbol: "ETH",   decimals: 18, name: "Ether"),
+    ]
+
     // MARK: - Token Resolution
 
     private func lookupToken(chainId: UInt64, address: String) -> TokenMetadata? {
         guard let resolvedAddress = normalizedAddress(address) else {
             return nil
+        }
+
+        if resolvedAddress == Self.nativeTokenSentinel {
+            return Self.nativeGasTokens[chainId]
         }
 
         let cacheKey = LookupKey.token(chainId: chainId, address: resolvedAddress)

@@ -94,7 +94,7 @@ Local Swift package product:
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
 | `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource` | Descriptor resolution (static, HTTP) |
-| `token.rs` | `TokenSource` (trait), `TokenMeta`, `WellKnownTokenSource`, `CompositeTokenSource` | Token metadata (CAIP-19 keys, embedded well-known tokens) |
+| `token.rs` | `TokenSource` (trait), `TokenMeta` | Token metadata trait — resolution is fully the wallet's responsibility via `DataProviderFfi` |
 | `merge.rs` | `merge_descriptor_values`, `merge_descriptors` | JSON-level descriptor merge for `includes` mechanism |
 | `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
 | `uniffi_compat/` | `TransactionInput`, `TokenMetaFfi`, `FfiError`, `DataProviderFfi` (trait), exported FFI functions | Stateless UniFFI wrapper layer |

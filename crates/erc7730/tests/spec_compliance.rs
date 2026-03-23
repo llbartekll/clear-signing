@@ -1300,3 +1300,144 @@ async fn test_merge_produces_valid_descriptor() {
         panic!("expected Item");
     }
 }
+
+// ─── EIP-712 encodeType format key matching ───
+
+#[tokio::test]
+async fn test_eip712_encode_type_format_key() {
+    // Real Velora/Portikus DeltaV2 descriptor — format key is the full encodeType string
+    let descriptor_json = r#"{
+        "context": {
+            "eip712": {
+                "deployments": [
+                    { "chainId": 10, "address": "0x0000000000bbf5c5fd284e657f01bd000933c96d" }
+                ],
+                "domain": { "name": "Portikus", "version": "2.0.0" }
+            }
+        },
+        "metadata": { "owner": "Velora" },
+        "display": {
+            "formats": {
+                "Order(address owner,address beneficiary,address srcToken,address destToken,uint256 srcAmount,uint256 destAmount,uint256 expectedAmount,uint256 deadline,uint8 kind,uint256 nonce,uint256 partnerAndFee,bytes permit,bytes metadata,Bridge bridge)Bridge(bytes4 protocolSelector,uint256 destinationChainId,address outputToken,int8 scalingFactor,bytes protocolData)": {
+                    "intent": "Swap order",
+                    "fields": [
+                        { "path": "srcAmount", "label": "Amount to send", "format": "tokenAmount", "params": { "tokenPath": "srcToken" } },
+                        { "path": "destAmount", "label": "Minimum to receive", "format": "tokenAmount", "params": { "tokenPath": "destToken" } },
+                        { "path": "bridge.destinationChainId", "label": "Destination chain ID", "format": "raw" },
+                        { "path": "beneficiary", "label": "Beneficiary", "format": "raw" },
+                        { "path": "deadline", "label": "Expiration time", "format": "date", "params": { "encoding": "timestamp" } }
+                    ]
+                }
+            }
+        }
+    }"#;
+
+    // Real typed data from wallet — primaryType is "Order", not the full encodeType key
+    let typed_data_json = r#"{
+        "domain": {
+            "chainId": 10,
+            "name": "Portikus",
+            "version": "2.0.0",
+            "verifyingContract": "0x0000000000bbf5c5fd284e657f01bd000933c96d"
+        },
+        "message": {
+            "owner": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+            "beneficiary": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+            "srcToken": "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
+            "destToken": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "srcAmount": "38627265",
+            "destAmount": "18816200237962656",
+            "expectedAmount": "18910754008002670",
+            "deadline": 1774257465,
+            "nonce": "1774257068031",
+            "permit": "0x",
+            "partnerAndFee": "90631063861114836560958097440945986548822432573276877133894239693005947666959",
+            "bridge": {
+                "protocolSelector": "0x00000000",
+                "destinationChainId": 0,
+                "outputToken": "0x0000000000000000000000000000000000000000",
+                "scalingFactor": 0,
+                "protocolData": "0x"
+            },
+            "kind": 0,
+            "metadata": "0x"
+        },
+        "primaryType": "Order",
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "Order": [
+                { "name": "owner", "type": "address" },
+                { "name": "beneficiary", "type": "address" },
+                { "name": "srcToken", "type": "address" },
+                { "name": "destToken", "type": "address" },
+                { "name": "srcAmount", "type": "uint256" },
+                { "name": "destAmount", "type": "uint256" },
+                { "name": "expectedAmount", "type": "uint256" },
+                { "name": "deadline", "type": "uint256" },
+                { "name": "kind", "type": "uint8" },
+                { "name": "nonce", "type": "uint256" },
+                { "name": "partnerAndFee", "type": "uint256" },
+                { "name": "permit", "type": "bytes" },
+                { "name": "metadata", "type": "bytes" },
+                { "name": "bridge", "type": "Bridge" }
+            ],
+            "Bridge": [
+                { "name": "protocolSelector", "type": "bytes4" },
+                { "name": "destinationChainId", "type": "uint256" },
+                { "name": "outputToken", "type": "address" },
+                { "name": "scalingFactor", "type": "int8" },
+                { "name": "protocolData", "type": "bytes" }
+            ]
+        }
+    }"#;
+
+    let descriptor = Descriptor::from_json(descriptor_json).unwrap();
+    let typed_data: TypedData = serde_json::from_str(typed_data_json).unwrap();
+    let descriptors = wrap_rd(
+        descriptor,
+        10,
+        "0x0000000000bbf5c5fd284e657f01bd000933c96d",
+    );
+
+    let result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    // Must match the descriptor format, not fall back to raw
+    assert_eq!(result.intent, "Swap order");
+    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    assert_eq!(result.entries.len(), 5);
+
+    if let DisplayEntry::Item(ref item) = result.entries[0] {
+        assert_eq!(item.label, "Amount to send");
+    } else {
+        panic!("expected Item for Amount to send");
+    }
+    if let DisplayEntry::Item(ref item) = result.entries[1] {
+        assert_eq!(item.label, "Minimum to receive");
+    } else {
+        panic!("expected Item for Minimum to receive");
+    }
+    if let DisplayEntry::Item(ref item) = result.entries[2] {
+        assert_eq!(item.label, "Destination chain ID");
+        assert_eq!(item.value, "0");
+    } else {
+        panic!("expected Item for Destination chain ID");
+    }
+    if let DisplayEntry::Item(ref item) = result.entries[3] {
+        assert_eq!(item.label, "Beneficiary");
+        assert_eq!(item.value, "0xbf01daf454dce008d3e2bfd47d5e186f71477253");
+    } else {
+        panic!("expected Item for Beneficiary");
+    }
+    if let DisplayEntry::Item(ref item) = result.entries[4] {
+        assert_eq!(item.label, "Expiration time");
+    } else {
+        panic!("expected Item for Expiration time");
+    }
+}

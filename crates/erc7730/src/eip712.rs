@@ -68,8 +68,21 @@ pub async fn format_typed_data(
 ) -> Result<DisplayModel, Error> {
     let chain_id = data.domain.chain_id.unwrap_or(1);
 
-    // Find format by primary type name
-    let format = descriptor.display.formats.get(&data.primary_type);
+    // Find format by primary type name (exact match first, then signature prefix match)
+    let format = descriptor
+        .display
+        .formats
+        .get(&data.primary_type)
+        .or_else(|| {
+            // Try matching by type name prefix: "Order(address owner,...)" matches primaryType "Order"
+            let prefix = format!("{}(", data.primary_type);
+            descriptor
+                .display
+                .formats
+                .iter()
+                .find(|(key, _)| key.starts_with(&prefix))
+                .map(|(_, v)| v)
+        });
 
     // Graceful fallback: if no format matches, show raw message fields
     let Some(format) = format else {

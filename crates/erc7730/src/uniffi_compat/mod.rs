@@ -712,4 +712,144 @@ mod tests {
             _ => panic!("expected item entry"),
         }
     }
+
+    /// Simulates the exact wallet flow: descriptor JSON → serde round-trip → format_typed_data.
+    /// Tests the encodeType format key matching through the FFI layer.
+    #[tokio::test]
+    async fn format_typed_data_velora_encode_type_key() {
+        // Real descriptor from remote registry (with encodeType format key)
+        let raw_descriptor_json = r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [
+                        { "chainId": 1, "address": "0x0000000000bbf5c5fd284e657f01bd000933c96d" },
+                        { "chainId": 10, "address": "0x0000000000bbf5c5fd284e657f01bd000933c96d" }
+                    ],
+                    "domain": { "name": "Portikus", "version": "2.0.0" }
+                }
+            },
+            "metadata": { "owner": "Velora" },
+            "display": {
+                "formats": {
+                    "Order(address owner,address beneficiary,address srcToken,address destToken,uint256 srcAmount,uint256 destAmount,uint256 expectedAmount,uint256 deadline,uint8 kind,uint256 nonce,uint256 partnerAndFee,bytes permit,bytes metadata,Bridge bridge)Bridge(bytes4 protocolSelector,uint256 destinationChainId,address outputToken,int8 scalingFactor,bytes protocolData)": {
+                        "intent": "Swap order",
+                        "fields": [
+                            { "path": "srcAmount", "label": "Amount to send", "format": "tokenAmount", "params": { "tokenPath": "srcToken" } },
+                            { "path": "destAmount", "label": "Minimum to receive", "format": "tokenAmount", "params": { "tokenPath": "destToken" } },
+                            { "path": "beneficiary", "label": "Beneficiary", "format": "raw" },
+                            { "path": "deadline", "label": "Expiration time", "format": "date", "params": { "encoding": "timestamp" } }
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        // Simulate the resolve round-trip: parse → serialize (like erc7730_resolve_descriptor does)
+        let descriptor: Descriptor = serde_json::from_str(raw_descriptor_json).unwrap();
+        let round_tripped_json = serde_json::to_string(&descriptor).unwrap();
+
+        // Verify the format key survives round-trip
+        assert!(
+            round_tripped_json.contains("Order(address owner"),
+            "encodeType key lost during serde round-trip: {}",
+            round_tripped_json
+        );
+
+        let typed_data_json = r#"{
+            "domain": {
+                "chainId": 10,
+                "name": "Portikus",
+                "version": "2.0.0",
+                "verifyingContract": "0x0000000000bbf5c5fd284e657f01bd000933c96d"
+            },
+            "message": {
+                "owner": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+                "beneficiary": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+                "srcToken": "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
+                "destToken": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "srcAmount": "38627265",
+                "destAmount": "18805928711910788",
+                "expectedAmount": "18900430866241998",
+                "deadline": 1774258780,
+                "nonce": "1774258180237",
+                "permit": "0x",
+                "partnerAndFee": "90631063861114836560958097440945986548822432573276877133894239693005947666959",
+                "bridge": {
+                    "protocolSelector": "0x00000000",
+                    "destinationChainId": 0,
+                    "outputToken": "0x0000000000000000000000000000000000000000",
+                    "scalingFactor": 0,
+                    "protocolData": "0x"
+                },
+                "kind": 0,
+                "metadata": "0x"
+            },
+            "primaryType": "Order",
+            "types": {
+                "EIP712Domain": [
+                    { "name": "name", "type": "string" },
+                    { "name": "version", "type": "string" },
+                    { "name": "chainId", "type": "uint256" },
+                    { "name": "verifyingContract", "type": "address" }
+                ],
+                "Order": [
+                    { "name": "owner", "type": "address" },
+                    { "name": "beneficiary", "type": "address" },
+                    { "name": "srcToken", "type": "address" },
+                    { "name": "destToken", "type": "address" },
+                    { "name": "srcAmount", "type": "uint256" },
+                    { "name": "destAmount", "type": "uint256" },
+                    { "name": "expectedAmount", "type": "uint256" },
+                    { "name": "deadline", "type": "uint256" },
+                    { "name": "kind", "type": "uint8" },
+                    { "name": "nonce", "type": "uint256" },
+                    { "name": "partnerAndFee", "type": "uint256" },
+                    { "name": "permit", "type": "bytes" },
+                    { "name": "metadata", "type": "bytes" },
+                    { "name": "bridge", "type": "Bridge" }
+                ],
+                "Bridge": [
+                    { "name": "protocolSelector", "type": "bytes4" },
+                    { "name": "destinationChainId", "type": "uint256" },
+                    { "name": "outputToken", "type": "address" },
+                    { "name": "scalingFactor", "type": "int8" },
+                    { "name": "protocolData", "type": "bytes" }
+                ]
+            }
+        }"#;
+
+        // Call through the FFI function with the round-tripped descriptor
+        let result = erc7730_format_typed_data(
+            vec![round_tripped_json],
+            typed_data_json.to_string(),
+            None,
+        )
+        .await
+        .expect("typed data formatting should succeed");
+
+        assert_eq!(result.intent, "Swap order");
+        assert!(
+            result.warnings.is_empty(),
+            "unexpected warnings: {:?}",
+            result.warnings
+        );
+        assert_eq!(result.entries.len(), 4);
+
+        match &result.entries[0] {
+            DisplayEntry::Item(item) => assert_eq!(item.label, "Amount to send"),
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[1] {
+            DisplayEntry::Item(item) => assert_eq!(item.label, "Minimum to receive"),
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[2] {
+            DisplayEntry::Item(item) => assert_eq!(item.label, "Beneficiary"),
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[3] {
+            DisplayEntry::Item(item) => assert_eq!(item.label, "Expiration time"),
+            _ => panic!("expected Item"),
+        }
+    }
 }

@@ -166,6 +166,13 @@ final class WalletViewModel {
 
     func processRequest(_ request: Request) {
         log.info("Received request: method=\(request.method) topic=\(request.topic.prefix(8))...")
+
+        // Auto-respond to capability queries without showing UI
+        if request.method == "wallet_getCapabilities" {
+            respondCapabilities(request)
+            return
+        }
+
         pendingRequest = request
         displayModel = nil
         requestError = nil
@@ -183,6 +190,31 @@ final class WalletViewModel {
             requestError = "Unsupported method: \(method)"
         }
         showRequest = true
+    }
+
+    private func respondCapabilities(_ request: Request) {
+        Task {
+            // Build capabilities keyed by hex chain ID from active sessions
+            var capabilities: [String: [String: AnyCodable]] = [:]
+            let sessions = await wc.sessions
+            for session in sessions {
+                guard let chains = session.namespaces["eip155"]?.chains else { continue }
+                for chain in chains {
+                    let hexChainId = "0x" + String(Int(chain.reference) ?? 0, radix: 16)
+                    capabilities[hexChainId] = [:]
+                }
+            }
+            if capabilities.isEmpty {
+                capabilities["0x1"] = [:]
+            }
+
+            do {
+                try await wc.respondSuccess(request, value: AnyCodable(capabilities))
+                log.info("Responded to wallet_getCapabilities with \(capabilities.count) chain(s)")
+            } catch {
+                log.error("Failed to respond to wallet_getCapabilities: \(error)")
+            }
+        }
     }
 
     func rejectRequest() {
