@@ -184,6 +184,8 @@ final class WalletViewModel {
             processTransaction(request)
         } else if method == "eth_signTypedData" || method == "eth_signTypedData_v4" {
             processTypedData(request)
+        } else if method == "personal_sign" {
+            processPersonalSign(request)
         } else {
             log.warning("Unsupported method: \(method)")
             rawRequestJSON = prettyJSON(request.params)
@@ -261,6 +263,16 @@ final class WalletViewModel {
                     )
                     responseValue = AnyCodable(signature)
 
+                case "personal_sign":
+                    log.info("Signing personal_sign for address=\(expectedAddress)")
+                    let signature = try signer.signPersonalMessage(
+                        request: request,
+                        privateKeyHex: keyManager.privateKeyHex,
+                        expectedAddress: expectedAddress
+                    )
+                    log.info("personal_sign signature: \(signature.prefix(20))...")
+                    responseValue = AnyCodable(signature)
+
                 default:
                     throw EvmSigningService.SigningError.invalidParams("unsupported method \(request.method)")
                 }
@@ -279,11 +291,13 @@ final class WalletViewModel {
                     rawRequestJSON = nil
                 }
             } catch {
+                log.error("approveRequest failed: method=\(request.method) error=\(error)")
                 let rpcError: JSONRPCError
                 switch error {
                 case EvmSigningService.SigningError.addressMismatch(_, _):
                     rpcError = JSONRPCError(code: 4001, message: "User rejected")
                 case EvmSigningService.SigningError.invalidParams(_):
+                    log.error("invalidParams error sent to dApp")
                     rpcError = JSONRPCError.invalidParams
                 default:
                     rpcError = JSONRPCError(code: -32000, message: error.localizedDescription)
@@ -365,6 +379,25 @@ final class WalletViewModel {
                     requestError = error.localizedDescription
                 }
             }
+        }
+    }
+
+    private func processPersonalSign(_ request: Request) {
+        do {
+            let payload = try EvmSigningService.shared.extractPersonalSignPayload(from: request.params)
+            let decoded = String(data: payload.message, encoding: .utf8)
+            let hexStr = "0x" + payload.message.map { String(format: "%02x", $0) }.joined()
+
+            if let text = decoded {
+                rawRequestJSON = "Message:\n\(text)\n\nHex:\n\(hexStr)"
+            } else {
+                rawRequestJSON = "Hex:\n\(hexStr)"
+            }
+            log.info("Processing personal_sign: \(hexStr.prefix(20))...")
+        } catch {
+            log.error("Could not parse personal_sign params: \(error)")
+            requestError = error.localizedDescription
+            rawRequestJSON = prettyJSON(request.params)
         }
     }
 

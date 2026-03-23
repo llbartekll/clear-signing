@@ -11,6 +11,7 @@ struct SessionRequestSheet: View {
     let onReject: () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @State private var showRaw = true
 
     var body: some View {
         NavigationStack {
@@ -39,7 +40,7 @@ struct SessionRequestSheet: View {
                     }
 
                     if let raw = rawJSON {
-                        DisclosureGroup("Raw Data") {
+                        DisclosureGroup("Raw Data", isExpanded: $showRaw) {
                             Button {
                                 copyToClipboard(raw)
                             } label: {

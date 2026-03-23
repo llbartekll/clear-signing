@@ -75,6 +75,17 @@ enum Eip712Signer {
         }
     }
 
+    /// Signs an Ethereum personal message (EIP-191) and returns a 0x-prefixed hex signature (r||s||v)
+    ///
+    /// Prepends the standard prefix: `\x19Ethereum Signed Message:\n{len}` before hashing.
+    static func signPersonalMessage(_ message: Data, privateKeyHex: String) throws -> String {
+        let prefix = "\u{19}Ethereum Signed Message:\n\(message.count)"
+        var input = Data(prefix.utf8)
+        input.append(message)
+        let hash = KeyManager_keccak256(input)
+        return try performSignature(signingHash: hash, privateKeyHex: privateKeyHex)
+    }
+
     /// Signs an EIP-712 typed data message and returns a 0x-prefixed hex signature (r||s||v)
     static func sign(typedDataJson: String, privateKeyHex: String) throws -> String {
         guard let jsonData = typedDataJson.data(using: .utf8) else {
@@ -504,16 +515,16 @@ enum Eip712Signer {
         let digest = RawDigest32(signingHash)
         let recoverableSignature = try recoveryKey.signature(for: digest)
 
-        // dataRepresentation is r(32) || s(32) || recoveryId(1) = 65 bytes
-        let sigData = recoverableSignature.dataRepresentation
-        guard sigData.count == 65 else {
-            throw Error.signingFailed("unexpected signature length \(sigData.count)")
+        // Use compactRepresentation for properly serialized r(32) || s(32) in big-endian
+        let compact = try recoverableSignature.compactRepresentation
+        let sigBytes = compact.signature
+        guard sigBytes.count == 64 else {
+            throw Error.signingFailed("unexpected compact signature length \(sigBytes.count)")
         }
 
-        let r = sigData[sigData.startIndex ..< sigData.startIndex + 32]
-        let s = sigData[sigData.startIndex + 32 ..< sigData.startIndex + 64]
-        let recoveryId = sigData[sigData.startIndex + 64]
-        let v = UInt8(27) + recoveryId
+        let r = sigBytes[sigBytes.startIndex ..< sigBytes.startIndex + 32]
+        let s = sigBytes[sigBytes.startIndex + 32 ..< sigBytes.startIndex + 64]
+        let v = UInt8(27) + UInt8(compact.recoveryId)
 
         let rHex = r.map { String(format: "%02x", $0) }.joined()
         let sHex = s.map { String(format: "%02x", $0) }.joined()
