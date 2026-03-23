@@ -87,6 +87,13 @@ pub enum DisplayField {
         field_group: FieldGroup,
     },
 
+    /// Inline scope group (spec: group with optional label): `{ "path": "...", "fields": [...] }`.
+    /// Per spec, child paths concatenate with parent path.
+    Scope {
+        path: String,
+        fields: Vec<DisplayField>,
+    },
+
     /// A simple field with path, label, format, etc.
     Simple {
         /// Path to resolve in decoded arguments. Optional when `value` is provided.
@@ -227,10 +234,11 @@ pub struct FormatParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_path: Option<String>,
 
-    /// Native currency indicator.
+    /// Native currency address — single address or array of addresses/constant refs.
+    /// Per spec: "Either a string or an array of strings."
     #[serde(rename = "nativeCurrencyAddress")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub native_currency_address: Option<String>,
+    pub native_currency_address: Option<NativeCurrencyAddress>,
 
     /// Static chain ID for cross-chain token resolution.
     #[serde(rename = "chainId")]
@@ -327,6 +335,41 @@ pub struct FormatParams {
     /// Constant collection address for nftName format.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
+}
+
+/// Native currency address — single address or array of addresses/constant refs.
+/// Per ERC-7730 spec: "Either a string or an array of strings."
+/// Values may be `$.metadata.constants.xxx` references resolved at comparison time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum NativeCurrencyAddress {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+impl NativeCurrencyAddress {
+    /// Check if `addr` matches any native currency address, resolving `$.metadata.constants.*` refs.
+    pub fn matches(
+        &self,
+        addr: &str,
+        constants: &HashMap<String, serde_json::Value>,
+    ) -> bool {
+        let items: Vec<&str> = match self {
+            NativeCurrencyAddress::Single(s) => vec![s.as_str()],
+            NativeCurrencyAddress::Multiple(v) => v.iter().map(|s| s.as_str()).collect(),
+        };
+        items.iter().any(|item| {
+            let resolved = if let Some(key) = item.strip_prefix("$.metadata.constants.") {
+                constants
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(item)
+            } else {
+                item
+            };
+            resolved.eq_ignore_ascii_case(addr)
+        })
+    }
 }
 
 /// Sender address — can be a single address or an array of addresses/paths.

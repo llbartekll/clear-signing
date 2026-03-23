@@ -188,6 +188,28 @@ fn render_typed_fields<'a>(
                         entries.push(entry);
                     }
                 }
+                DisplayField::Scope {
+                    path: scope_path,
+                    fields: children,
+                } => {
+                    // Inline scope: prepend scope path to child paths, then render
+                    let expanded: Vec<DisplayField> = children
+                        .iter()
+                        .map(|child| crate::engine::prepend_scope_path(child, scope_path))
+                        .collect();
+                    let mut sub = render_typed_fields(
+                        descriptor,
+                        message,
+                        &expanded,
+                        chain_id,
+                        data_provider,
+                        warnings,
+                        descriptors,
+                        depth,
+                    )
+                    .await?;
+                    entries.append(&mut sub);
+                }
                 DisplayField::Simple {
                     path,
                     label,

@@ -41,6 +41,25 @@ impl ParamType {
             _ => false,
         }
     }
+
+    /// Number of bytes this type occupies in the ABI head section.
+    ///
+    /// Dynamic types always take 32 bytes (an offset pointer).
+    /// Static types take 32 bytes for atomic types, or the sum of member head sizes
+    /// for static tuples and fixed arrays of static elements.
+    pub fn head_size(&self) -> usize {
+        if self.is_dynamic() {
+            32 // offset pointer
+        } else {
+            match self {
+                ParamType::Tuple(members) => {
+                    members.iter().map(|(_, m)| m.head_size()).sum()
+                }
+                ParamType::FixedArray(inner, len) => inner.head_size() * len,
+                _ => 32, // address, uint, int, bool, fixedBytes
+            }
+        }
+    }
 }
 
 /// Decoded calldata arguments.
@@ -406,7 +425,7 @@ pub fn decode_calldata(
             param_type: param.clone(),
             value,
         });
-        offset += 32; // Each head entry is 32 bytes (value or offset pointer)
+        offset += param.head_size();
     }
 
     Ok(DecodedArguments {
@@ -498,7 +517,7 @@ fn decode_value_at(
             for (name, member_type) in members {
                 let value = decode_value(member_type, data, member_offset, offset)?;
                 values.push((name.clone(), value));
-                member_offset += 32;
+                member_offset += member_type.head_size();
             }
             Ok(ArgumentValue::Tuple(values))
         }
@@ -514,10 +533,11 @@ fn decode_array_elements(
 ) -> Result<ArgumentValue, DecodeError> {
     let mut values = Vec::with_capacity(len);
     let mut elem_offset = offset;
+    let step = inner.head_size();
     for _ in 0..len {
         let value = decode_value(inner, data, elem_offset, base_offset)?;
         values.push(value);
-        elem_offset += 32;
+        elem_offset += step;
     }
     Ok(ArgumentValue::Array(values))
 }

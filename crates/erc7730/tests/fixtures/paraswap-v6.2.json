@@ -1,0 +1,276 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "AugustusSwapperV6.2",
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0x6a000f20005980200259b80c5102003040001068" },
+        { "chainId": 10, "address": "0x6a000f20005980200259b80c5102003040001068" },
+        { "chainId": 56, "address": "0x6a000f20005980200259b80c5102003040001068" },
+        { "chainId": 137, "address": "0x6a000f20005980200259b80c5102003040001068" },
+        { "chainId": 8453, "address": "0x6a000f20005980200259b80c5102003040001068" },
+        { "chainId": 42161, "address": "0x6a000f20005980200259b80c5102003040001068" },
+        { "chainId": 43114, "address": "0x6a000f20005980200259b80c5102003040001068" }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Velora",
+    "info": { "url": "https://www.velora.xyz/" },
+    "enums": { "balancerSwapType": { "82": "Single swap" } },
+    "constants": {
+      "addressAsEth": "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+      "addressAsNull": "0x0000000000000000000000000000000000000000"
+    },
+    "contractName": "AugustusSwapperV6.2"
+  },
+  "display": {
+    "definitions": {
+      "sendAmount": {
+        "label": "Amount to Send",
+        "format": "tokenAmount",
+        "params": { "nativeCurrencyAddress": ["$.metadata.constants.addressAsEth", "$.metadata.constants.addressAsNull"] }
+      },
+      "minReceiveAmount": {
+        "label": "Minimum to Receive",
+        "format": "tokenAmount",
+        "params": { "nativeCurrencyAddress": ["$.metadata.constants.addressAsEth", "$.metadata.constants.addressAsNull"] }
+      },
+      "maxSendAmount": {
+        "label": "Maximum to Send",
+        "format": "tokenAmount",
+        "params": { "nativeCurrencyAddress": ["$.metadata.constants.addressAsEth", "$.metadata.constants.addressAsNull"] }
+      },
+      "receiveAmount": {
+        "label": "Amount to Receive",
+        "format": "tokenAmount",
+        "params": { "nativeCurrencyAddress": ["$.metadata.constants.addressAsEth", "$.metadata.constants.addressAsNull"] }
+      },
+      "beneficiary": { "label": "Beneficiary", "format": "addressName", "params": { "senderAddress": "$.metadata.constants.addressAsNull" } },
+      "balancerSelector": { "format": "enum", "label": "Swap type", "params": { "$ref": "$.metadata.enums.balancerSwapType" } }
+    },
+    "formats": {
+      "swapExactAmountIn(address executor, (address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary) swapData, uint256 partnerAndFee, bytes permit, bytes executorData)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.swapData",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.sendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.minReceiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Executor", "path": "#.executor", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Executor Data", "path": "#.executorData", "visible": "never" },
+          { "label": "Swap Data Quoted Amount", "path": "#.swapData.quotedAmount", "visible": "never" },
+          { "label": "Swap Data Metadata", "path": "#.swapData.metadata", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountOut(address executor, (address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary) swapData, uint256 partnerAndFee, bytes permit, bytes executorData)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.swapData",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.maxSendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.receiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Executor", "path": "#.executor", "visible": "never" },
+          { "label": "Swap Data Metadata", "path": "#.swapData.metadata", "visible": "never" },
+          { "label": "Swap Data Quoted Amount", "path": "#.swapData.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Executor Data", "path": "#.executorData", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountInOnUniswapV2((address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary, bytes pools) uniData, uint256 partnerAndFee, bytes permit)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.uniData",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.sendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.minReceiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Uni Data Metadata", "path": "#.uniData.metadata", "visible": "never" },
+          { "label": "Uni Data Pools", "path": "#.uniData.pools", "visible": "never" },
+          { "label": "Uni Data Quoted Amount", "path": "#.uniData.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountInOnUniswapV3((address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary, bytes pools) uniData, uint256 partnerAndFee, bytes permit)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.uniData",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.sendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.minReceiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Uni Data Metadata", "path": "#.uniData.metadata", "visible": "never" },
+          { "label": "Uni Data Pools", "path": "#.uniData.pools", "visible": "never" },
+          { "label": "Uni Data Quoted Amount", "path": "#.uniData.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountOutOnUniswapV2((address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary, bytes pools) uniData, uint256 partnerAndFee, bytes permit)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.uniData",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.maxSendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.receiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Uni Data Metadata", "path": "#.uniData.metadata", "visible": "never" },
+          { "label": "Uni Data Pools", "path": "#.uniData.pools", "visible": "never" },
+          { "label": "Uni Data Quoted Amount", "path": "#.uniData.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountOutOnUniswapV3((address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary, bytes pools) uniData, uint256 partnerAndFee, bytes permit)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.uniData",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.maxSendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.receiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Uni Data Metadata", "path": "#.uniData.metadata", "visible": "never" },
+          { "label": "Uni Data Pools", "path": "#.uniData.pools", "visible": "never" },
+          { "label": "Uni Data Quoted Amount", "path": "#.uniData.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountInOnCurveV1((uint256 curveData, uint256 curveAssets, address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary) curveV1Data, uint256 partnerAndFee, bytes permit)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.curveV1Data",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.sendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.minReceiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Curve V1 Data Curve Assets", "path": "#.curveV1Data.curveAssets", "visible": "never" },
+          { "label": "Curve V1 Data Curve Data", "path": "#.curveV1Data.curveData", "visible": "never" },
+          { "label": "Curve V1 Data Metadata", "path": "#.curveV1Data.metadata", "visible": "never" },
+          { "label": "Curve V1 Data Quoted Amount", "path": "#.curveV1Data.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountInOnCurveV2((uint256 curveData, uint256 i, uint256 j, address poolAddress, address srcToken, address destToken, uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, address beneficiary) curveV2Data, uint256 partnerAndFee, bytes permit)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.curveV2Data",
+            "fields": [
+              { "path": "fromAmount", "$ref": "$.display.definitions.sendAmount", "params": { "tokenPath": "srcToken" } },
+              { "path": "toAmount", "$ref": "$.display.definitions.minReceiveAmount", "params": { "tokenPath": "destToken" } },
+              { "path": "beneficiary", "$ref": "$.display.definitions.beneficiary" }
+            ]
+          },
+          { "label": "Curve V2 Data Curve Data", "path": "#.curveV2Data.curveData", "visible": "never" },
+          { "label": "Curve V2 Data I", "path": "#.curveV2Data.i", "visible": "never" },
+          { "label": "Curve V2 Data J", "path": "#.curveV2Data.j", "visible": "never" },
+          { "label": "Curve V2 Data Metadata", "path": "#.curveV2Data.metadata", "visible": "never" },
+          { "label": "Curve V2 Data Pool Address", "path": "#.curveV2Data.poolAddress", "visible": "never" },
+          { "label": "Curve V2 Data Quoted Amount", "path": "#.curveV2Data.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountInOnBalancerV2((uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, uint256 beneficiaryAndApproveFlag) balancerData, uint256 partnerAndFee, bytes permit, bytes data)": {
+        "intent": "Swap",
+        "fields": [
+          { "path": "#.data.[:1]", "$ref": "$.display.definitions.balancerSelector" },
+          {
+            "path": "#.balancerData.fromAmount",
+            "$ref": "$.display.definitions.sendAmount",
+            "params": { "tokenPath": "#.data.[292:324]" },
+            "visible": "always"
+          },
+          {
+            "path": "#.balancerData.toAmount",
+            "$ref": "$.display.definitions.minReceiveAmount",
+            "params": { "tokenPath": "#.data.[324:356]" },
+            "visible": "always"
+          },
+          { "path": "#.balancerData.beneficiaryAndApproveFlag.[-20:]", "$ref": "$.display.definitions.beneficiary" },
+          { "label": "Balancer Data Metadata", "path": "#.balancerData.metadata", "visible": "never" },
+          { "label": "Balancer Data Quoted Amount", "path": "#.balancerData.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapExactAmountOutOnBalancerV2((uint256 fromAmount, uint256 toAmount, uint256 quotedAmount, bytes32 metadata, uint256 beneficiaryAndApproveFlag) balancerData, uint256 partnerAndFee, bytes permit, bytes data)": {
+        "intent": "Swap",
+        "fields": [
+          { "path": "#.data.[:1]", "$ref": "$.display.definitions.balancerSelector" },
+          {
+            "path": "#.balancerData.fromAmount",
+            "$ref": "$.display.definitions.maxSendAmount",
+            "params": { "tokenPath": "#.data.[292:324]" },
+            "visible": "always"
+          },
+          {
+            "path": "#.balancerData.toAmount",
+            "$ref": "$.display.definitions.receiveAmount",
+            "params": { "tokenPath": "#.data.[324:356]" },
+            "visible": "always"
+          },
+          { "path": "#.balancerData.beneficiaryAndApproveFlag.[-20:]", "$ref": "$.display.definitions.beneficiary" },
+          { "label": "Balancer Data Metadata", "path": "#.balancerData.metadata", "visible": "never" },
+          { "label": "Balancer Data Quoted Amount", "path": "#.balancerData.quotedAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" },
+          { "label": "Partner And Fee", "path": "#.partnerAndFee", "visible": "never" }
+        ]
+      },
+      "swapOnAugustusRFQTryBatchFill((uint256 fromAmount, uint256 toAmount, uint8 wrapApproveDirection, bytes32 metadata, address beneficiary) data, ((uint256 nonceAndMeta, uint128 expiry, address makerAsset, address takerAsset, address maker, address taker, uint256 makerAmount, uint256 takerAmount) order, bytes signature, uint256 takerTokenFillAmount, bytes permitTakerAsset, bytes permitMakerAsset)[] orders, bytes permit)": {
+        "intent": "Swap",
+        "fields": [
+          {
+            "path": "#.data.fromAmount",
+            "$ref": "$.display.definitions.sendAmount",
+            "params": { "tokenPath": "#.orders.[0].order.takerAsset" },
+            "visible": "always"
+          },
+          {
+            "path": "#.data.toAmount",
+            "$ref": "$.display.definitions.minReceiveAmount",
+            "params": { "tokenPath": "#.orders.[0].order.makerAsset" },
+            "visible": "always"
+          },
+          { "path": "#.data.beneficiary", "$ref": "$.display.definitions.beneficiary", "visible": "always" },
+          { "label": "Orders Order Expiry", "path": "#.orders.[].order.expiry", "visible": "never" },
+          { "label": "Orders Order Maker", "path": "#.orders.[].order.maker", "visible": "never" },
+          { "label": "Orders Order Taker", "path": "#.orders.[].order.taker", "visible": "never" },
+          { "label": "Orders Order Maker Amount", "path": "#.orders.[].order.makerAmount", "visible": "never" },
+          { "label": "Orders Order Taker Amount", "path": "#.orders.[].order.takerAmount", "visible": "never" },
+          { "label": "Orders Taker Token Fill Amount", "path": "#.orders.[].takerTokenFillAmount", "visible": "never" },
+          { "label": "Permit", "path": "#.permit", "visible": "never" }
+        ]
+      }
+    }
+  }
+}

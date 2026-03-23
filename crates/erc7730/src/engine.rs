@@ -218,6 +218,18 @@ fn render_fields<'a>(
                         entries.push(entry);
                     }
                 }
+                DisplayField::Scope {
+                    path: scope_path,
+                    fields: children,
+                } => {
+                    // Inline scope: prepend scope path to all child paths, then render flat
+                    let expanded: Vec<DisplayField> = children
+                        .iter()
+                        .map(|child| prepend_scope_path(child, scope_path))
+                        .collect();
+                    let mut sub = render_fields(ctx, &expanded, warnings).await?;
+                    entries.append(&mut sub);
+                }
                 DisplayField::Simple {
                     path,
                     label,
@@ -337,6 +349,84 @@ fn resolve_reference(descriptor: &Descriptor, reference: &str) -> Option<Display
         .strip_prefix("$.display.definitions.")
         .or_else(|| reference.strip_prefix("#/definitions/"))?;
     descriptor.display.definitions.get(key).cloned()
+}
+
+/// Prepend a scope path to all path fields in a `DisplayField`.
+///
+/// Per ERC-7730 spec, inline scope groups concatenate parent paths with child paths.
+/// Also prepends to `tokenPath` in params when the token path is relative (no `#.` prefix).
+pub fn prepend_scope_path(field: &DisplayField, scope: &str) -> DisplayField {
+    match field {
+        DisplayField::Reference {
+            reference,
+            path,
+            params,
+            visible,
+        } => DisplayField::Reference {
+            reference: reference.clone(),
+            path: Some(prepend_path(scope, path.as_deref())),
+            params: params.as_ref().map(|p| prepend_params(scope, p)),
+            visible: visible.clone(),
+        },
+        DisplayField::Group { field_group } => DisplayField::Group {
+            field_group: FieldGroup {
+                label: field_group.label.clone(),
+                iteration: field_group.iteration.clone(),
+                fields: field_group
+                    .fields
+                    .iter()
+                    .map(|f| prepend_scope_path(f, scope))
+                    .collect(),
+            },
+        },
+        DisplayField::Scope {
+            path,
+            fields: children,
+        } => {
+            let new_scope = format!("{scope}.{path}");
+            DisplayField::Scope {
+                path: new_scope.clone(),
+                fields: children.clone(),
+            }
+        }
+        DisplayField::Simple {
+            path,
+            label,
+            value,
+            format,
+            params,
+            separator,
+            visible,
+        } => DisplayField::Simple {
+            path: Some(prepend_path(scope, path.as_deref())),
+            label: label.clone(),
+            value: value.clone(),
+            format: format.clone(),
+            params: params.as_ref().map(|p| prepend_params(scope, p)),
+            separator: separator.clone(),
+            visible: visible.clone(),
+        },
+    }
+}
+
+/// Concatenate scope + child path. If child is empty/None, return scope.
+fn prepend_path(scope: &str, child: Option<&str>) -> String {
+    match child {
+        Some(p) if !p.is_empty() => format!("{scope}.{p}"),
+        _ => scope.to_string(),
+    }
+}
+
+/// Prepend scope to relative paths in FormatParams (tokenPath, etc.).
+fn prepend_params(scope: &str, params: &FormatParams) -> FormatParams {
+    let mut p = params.clone();
+    // Prepend scope to tokenPath if it's a relative name (no # prefix, no @. prefix)
+    if let Some(ref tp) = p.token_path {
+        if !tp.starts_with('#') && !tp.starts_with("@.") {
+            p.token_path = Some(format!("{scope}.{tp}"));
+        }
+    }
+    p
 }
 
 /// Merge a resolved definition with the reference's own path, params, and visible.
@@ -464,6 +554,9 @@ pub fn merge_ref_with_definition(
 /// same name.  Without the prefix, function params are matched first.
 fn resolve_path(decoded: &DecodedArguments, path: &str) -> Option<ArgumentValue> {
     let path = path.trim();
+
+    // Strip `#.` prefix (v2 spec: root reference for structured data)
+    let path = path.strip_prefix("#.").unwrap_or(path);
 
     // Detect `@.` prefix — means "prefer container value" for named lookup
     let (prefer_container, path) = if let Some(stripped) = path.strip_prefix("@.") {
@@ -1148,7 +1241,7 @@ async fn format_token_amount(
 
                 // Check for native currency
                 if let Some(ref native) = params.native_currency_address {
-                    if addr_hex.to_lowercase() == native.to_lowercase() {
+                    if native.matches(&addr_hex, &ctx.descriptor.metadata.constants) {
                         Some(native_token_meta(lookup_chain_id))
                     } else {
                         ctx.data_provider
@@ -1748,7 +1841,7 @@ async fn format_token_amount_for_interpolation(
             if let Some(ArgumentValue::Address(addr)) = token_addr {
                 let addr_hex = format!("0x{}", hex::encode(addr));
                 if let Some(ref native) = p.native_currency_address {
-                    if addr_hex.to_lowercase() == native.to_lowercase() {
+                    if native.matches(&addr_hex, &ctx.descriptor.metadata.constants) {
                         Some(native_token_meta(lookup_chain_id))
                     } else {
                         ctx.data_provider
