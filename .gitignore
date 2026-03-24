@@ -7,6 +7,7 @@
 wallet/Config.xcconfig
 **/xcuserdata/
 .env
+crates/erc7730/tests/.test-contracts.json
 android/build/
 android/.gradle/
 android/local.properties
