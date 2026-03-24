@@ -93,8 +93,14 @@ fn value_bytes(hex_str: &str) -> Option<Vec<u8>> {
     if s == "0" || s.is_empty() {
         return None;
     }
+    // Pad odd-length hex to even before decoding
+    let even = if s.len() % 2 != 0 {
+        format!("0{s}")
+    } else {
+        s.to_string()
+    };
     // Pad to 32 bytes (big-endian)
-    let raw = hex::decode(s).unwrap_or_else(|e| panic!("invalid value hex '{hex_str}': {e}"));
+    let raw = hex::decode(&even).unwrap_or_else(|e| panic!("invalid value hex '{hex_str}': {e}"));
     if raw.is_empty() || raw.iter().all(|&b| b == 0) {
         return None;
     }

@@ -146,6 +146,7 @@ grep ALCHEMY_API_KEY wallet/Config.xcconfig | cut -d= -f2 | tr -d ' '
 | Ethereum | 1 | `eth-mainnet` |
 | Optimism | 10 | `opt-mainnet` |
 | Polygon | 137 | `polygon-mainnet` |
+| Polygon (RPC fallback) | 137 | `https://polygon-bor-rpc.publicnode.com` |
 | Base | 8453 | `base-mainnet` |
 | Arbitrum | 42161 | `arb-mainnet` |
 | Avalanche | 43114 | `avax-mainnet` |
