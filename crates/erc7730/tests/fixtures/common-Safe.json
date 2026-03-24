@@ -1,0 +1,263 @@
+{
+  "context": {
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552" }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Safe{Wallet}",
+    "contractName": "Safe",
+    "info": {
+      "url": "https://app.safe.global/welcome"
+    },
+    "enums": {
+      "operation": {
+        "0": "Call",
+        "1": "Delegate Call"
+      }
+    },
+    "constants": {
+      "addressAsNull": "0x0000000000000000000000000000000000000000"
+    }
+  },
+  "display": {
+    "formats": {
+      "setup(address[] _owners, uint256 _threshold, address to, bytes data, address fallbackHandler, address paymentToken, uint256 payment, address paymentReceiver)": {
+        "$id": "setup",
+        "intent": "Setup Safe",
+        "fields": [
+          {
+            "path": "_owners.[]",
+            "label": "Signer",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa", "wallet"]
+            }
+          },
+          {
+            "path": "_threshold",
+            "label": "Threshold",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "path": "fallbackHandler",
+            "label": "Fallback handler",
+            "format": "addressName",
+            "params": {
+              "types": ["contract"]
+            },
+            "visible": "always"
+          },
+          {
+            "path": "payment",
+            "label": "Payment",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "paymentToken",
+              "nativeCurrencyAddress": "$.metadata.constants.addressAsNull"
+            },
+            "visible": "always"
+          },
+          {
+            "path": "paymentReceiver",
+            "label": "Payment receiver",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa", "wallet", "contract"]
+            },
+            "visible": "always"
+          },
+          {
+            "path": "data",
+            "label": "Module",
+            "format": "calldata",
+            "params": {
+              "calleePath": "to"
+            },
+            "visible": "always"
+          }
+        ]
+      },
+      "execTransaction(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, bytes signatures)": {
+        "$id": "execTransaction",
+        "intent": "sign multisig operation",
+        "fields": [
+          {
+            "path": "operation",
+            "label": "Operation type",
+            "format": "enum",
+            "params": {
+              "$ref": "$.metadata.enums.operation"
+            },
+            "visible": "always"
+          },
+          {
+            "path": "@.to",
+            "label": "From Safe",
+            "format": "addressName",
+            "params": {
+              "types": ["contract"]
+            }
+          },
+          {
+            "path": "@.from",
+            "label": "Execution signer",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa"]
+            }
+          },
+          {
+            "path": "data",
+            "label": "Transaction",
+            "format": "calldata",
+            "params": {
+              "calleePath": "to",
+              "amountPath": "value",
+              "spenderPath": "@.to"
+            },
+            "visible": "always"
+          },
+          {
+            "path": "baseGas",
+            "label": "Gas amount",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "path": "gasPrice",
+            "label": "Gas price",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "gasToken",
+              "nativeCurrencyAddress": "$.metadata.constants.addressAsNull"
+            },
+            "visible": "always"
+          },
+          {
+            "path": "refundReceiver",
+            "label": "Gas receiver",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa", "wallet", "contract"]
+            },
+            "visible": "always"
+          },
+          {
+            "label": "Safe Tx Gas",
+            "path": "safeTxGas",
+            "visible": "never"
+          },
+          {
+            "label": "Signatures",
+            "path": "signatures",
+            "visible": "never"
+          }
+        ]
+      },
+      "addOwnerWithThreshold(address owner, uint256 _threshold)": {
+        "$id": "addOwnerWithThreshold",
+        "intent": "Add signer",
+        "fields": [
+          {
+            "path": "owner",
+            "label": "Signer",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa"]
+            },
+            "visible": "always"
+          },
+          {
+            "path": "_threshold",
+            "label": "New threshold",
+            "format": "raw",
+            "visible": "always"
+          }
+        ]
+      },
+      "removeOwner(address prevOwner, address owner, uint256 _threshold)": {
+        "$id": "removeOwner",
+        "intent": "Remove signer",
+        "fields": [
+          {
+            "path": "owner",
+            "label": "Signer",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa"]
+            },
+            "visible": "always"
+          },
+          {
+            "path": "_threshold",
+            "label": "New threshold",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "label": "Prev Owner",
+            "path": "prevOwner",
+            "visible": "never"
+          }
+        ]
+      },
+      "swapOwner(address prevOwner, address oldOwner, address newOwner)": {
+        "$id": "swapOwner",
+        "intent": "Swap signer",
+        "fields": [
+          {
+            "path": "oldOwner",
+            "label": "Old signer",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa"]
+            },
+            "visible": "always"
+          },
+          {
+            "path": "newOwner",
+            "label": "New signer",
+            "format": "addressName",
+            "params": {
+              "types": ["eoa"]
+            },
+            "visible": "always"
+          },
+          {
+            "label": "Prev Owner",
+            "path": "prevOwner",
+            "visible": "never"
+          }
+        ]
+      },
+      "changeThreshold(uint256 _threshold)": {
+        "$id": "changeThreshold",
+        "intent": "Modify threshold",
+        "fields": [
+          {
+            "path": "_threshold",
+            "label": "New threshold",
+            "format": "raw",
+            "visible": "always"
+          }
+        ]
+      },
+      "approveHash(bytes32 hashToApprove)": {
+        "$id": "approveHash",
+        "intent": "Approve Safe hash",
+        "fields": [
+          {
+            "path": "hashToApprove",
+            "label": "Hash to approve",
+            "format": "raw",
+            "visible": "always"
+          }
+        ]
+      }
+    }
+  }
+}
