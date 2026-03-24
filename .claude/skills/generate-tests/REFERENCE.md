@@ -64,7 +64,7 @@ GET https://api.etherscan.io/v2/api?chainid={chainId}&module=contract&action=get
 | Optimism | 10 | Yes |
 | BNB Smart Chain | 56 | No (premium) |
 | Polygon | 137 | Yes |
-| Base | 8453 | Yes |
+| Base | 8453 | No (premium) |
 | Arbitrum One | 42161 | Yes |
 | Avalanche C-Chain | 43114 | Yes |
 | Celo | 42220 | No (unsupported) |
