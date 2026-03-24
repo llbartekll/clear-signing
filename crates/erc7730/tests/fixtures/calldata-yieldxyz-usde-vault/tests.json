@@ -1,0 +1,91 @@
+{
+  "descriptor": "../calldata-yieldxyz-usde-vault.json",
+  "tokens": [
+    {
+      "chain_id": 1,
+      "address": "0x4c9edd5852cd905f086c759e8383e09bff1e68b3",
+      "symbol": "USDe",
+      "decimals": 18,
+      "name": "Ethena USDe"
+    },
+    {
+      "chain_id": 1,
+      "address": "0x2d152fb171353e70e45322d32bc748f8a61d9971",
+      "symbol": "stk-USDe",
+      "decimals": 18,
+      "name": "StakeKit Ethena USDe Vault"
+    }
+  ],
+  "tests": [
+    {
+      "name": "deposit",
+      "tx_hash": "0x66fad57e99156e12af9bf64bc4facf72cc8ce427d5e208fc1afb00f822b58016",
+      "chain_id": 1,
+      "to": "0x2d152fb171353e70e45322d32bc748f8a61d9971",
+      "calldata": "0x6e553f650000000000000000000000000000000000000000000000056bc75e2d6310000000000000000000000000000088fc6efa5e8b5637c5f263c9921b3869a4c92584",
+      "value": "0x0",
+      "from": "0x88fc6efa5e8b5637c5f263c9921b3869a4c92584",
+      "expected": {
+        "entries": [
+          {
+            "Item": {
+              "label": "Deposit asset",
+              "value": "100 USDe"
+            }
+          },
+          {
+            "Item": {
+              "label": "Share ticker",
+              "value": "stk-USDe"
+            }
+          },
+          {
+            "Item": {
+              "label": "Send shares to",
+              "value": "0x88Fc6EfA5e8B5637c5F263c9921b3869A4C92584"
+            }
+          }
+        ],
+        "intent": "Deposit",
+        "interpolated_intent": null,
+        "owner": "Yield.xyz",
+        "warnings": []
+      }
+    },
+    {
+      "name": "redeem",
+      "tx_hash": "0xe134758f8a1748066a1364b067171c873d72c5766e357d92aaeedbb277b060aa",
+      "chain_id": 1,
+      "to": "0x2d152fb171353e70e45322d32bc748f8a61d9971",
+      "calldata": "0xba0876520000000000000000000000000000000000000000199c0bb1b53a26cfdbed6e1100000000000000000000000036272f3569daf11bb4464354cc136acd9eca1d2b00000000000000000000000036272f3569daf11bb4464354cc136acd9eca1d2b",
+      "value": "0x0",
+      "from": "0x36272f3569daf11bb4464354cc136acd9eca1d2b",
+      "expected": {
+        "entries": [
+          {
+            "Item": {
+              "label": "Shares to redeem",
+              "value": "7925772897.557314225765707281 stk-USDe"
+            }
+          },
+          {
+            "Item": {
+              "label": "To",
+              "value": "0x36272F3569DaF11Bb4464354cC136Acd9ecA1D2B"
+            }
+          },
+          {
+            "Item": {
+              "label": "Owner",
+              "value": "0x36272F3569DaF11Bb4464354cC136Acd9ecA1D2B"
+            }
+          }
+        ],
+        "intent": "Redeem",
+        "interpolated_intent": null,
+        "owner": "Yield.xyz",
+        "warnings": []
+      }
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+{
+  "descriptor": "../calldata-leadblock-USDC-RWA.json",
+  "tokens": [
+    {
+      "chain_id": 1,
+      "address": "0x4ca0e178c94f039d7f202e09d8d1a655ed3fb6b6",
+      "symbol": "USDC RWA",
+      "decimals": 18,
+      "name": "LeadBlock USDC RWA"
+    }
+  ],
+  "tests": [
+    {
+      "name": "deposit",
+      "tx_hash": "0xb589b5b2a8620636254facfac1e87e0b2f20dd4727d0d9c41f2b75cd0c33ad4c",
+      "chain_id": 1,
+      "to": "0x4ca0e178c94f039d7f202e09d8d1a655ed3fb6b6",
+      "calldata": "0x6e553f650000000000000000000000000000000000000000000000000000000005f5e1000000000000000000000000004a9ffdbc1c8d6aabafce2b6afed90e714487ea74",
+      "value": "0x0",
+      "from": "0x77e75c2a92061c9c61282d04495766ca6f98784e",
+      "expected": {
+        "entries": [
+          {
+            "Item": {
+              "label": "Deposit asset",
+              "value": "100 USDC"
+            }
+          },
+          {
+            "Item": {
+              "label": "Share ticker",
+              "value": "USDC RWA"
+            }
+          },
+          {
+            "Item": {
+              "label": "Send shares to",
+              "value": "0x4a9fFDBc1c8d6aAbAfce2b6AFED90E714487ea74"
+            }
+          }
+        ],
+        "intent": "Deposit",
+        "interpolated_intent": null,
+        "owner": "LeadBlock",
+        "warnings": []
+      }
+    },
+    {
+      "name": "mint",
+      "tx_hash": "0xc11a51bddb224d826f0f9c1b1ac198d2eb55d5deebfdb62caf23e2baf811a1c7",
+      "chain_id": 1,
+      "to": "0x4ca0e178c94f039d7f202e09d8d1a655ed3fb6b6",
+      "calldata": "0x94bf804d000000000000000000000000000000000000000000000000000000003b9aca00000000000000000000000000000000000000000000000000000000000000dead",
+      "value": "0x0",
+      "from": "0x59efacc8668e6918e1d9930768402a41e794404b",
+      "expected": {
+        "entries": [
+          {
+            "Item": {
+              "label": "Deposit asset",
+              "value": "USDC"
+            }
+          },
+          {
+            "Item": {
+              "label": "Minted shares",
+              "value": "0.000000001 USDC RWA"
+            }
+          },
+          {
+            "Item": {
+              "label": "Mint shares to",
+              "value": "0x000000000000000000000000000000000000dEaD"
+            }
+          }
+        ],
+        "intent": "Mint",
+        "interpolated_intent": null,
+        "owner": "LeadBlock",
+        "warnings": []
+      }
+    },
+    {
+      "name": "withdraw",
+      "tx_hash": "0x6582a51fdf0d20abc20e386520d3a69cc88e3649d174177549cebe7b2bf36ada",
+      "chain_id": 1,
+      "to": "0x4ca0e178c94f039d7f202e09d8d1a655ed3fb6b6",
+      "calldata": "0xb460af940000000000000000000000000000000000000000000000000000000002fb3f7b0000000000000000000000008379bd16381620914d8fa3d535f6ca9ef23ece530000000000000000000000008379bd16381620914d8fa3d535f6ca9ef23ece53",
+      "value": "0x0",
+      "from": "0x8379bd16381620914d8fa3d535f6ca9ef23ece53",
+      "expected": {
+        "entries": [
+          {
+            "Item": {
+              "label": "Withdraw exactly",
+              "value": "50.020219 USDC"
+            }
+          },
+          {
+            "Item": {
+              "label": "To",
+              "value": "0x8379bD16381620914d8fA3d535F6Ca9eF23ece53"
+            }
+          },
+          {
+            "Item": {
+              "label": "Owner",
+              "value": "0x8379bD16381620914d8fA3d535F6Ca9eF23ece53"
+            }
+          }
+        ],
+        "intent": "Withdraw",
+        "interpolated_intent": null,
+        "owner": "LeadBlock",
+        "warnings": []
+      }
+    },
+    {
+      "name": "redeem",
+      "tx_hash": "0xf8c6290e4524c1c238418cc14f8d5da99e3701e9bbba267cdc3d250b9a96e8ef",
+      "chain_id": 1,
+      "to": "0x4ca0e178c94f039d7f202e09d8d1a655ed3fb6b6",
+      "calldata": "0xba0876520000000000000000000000000000000000000000000000008870570820358234000000000000000000000000e0a68a5650c72f2d65b8b5de386234420b90afed000000000000000000000000e0a68a5650c72f2d65b8b5de386234420b90afed",
+      "value": "0x0",
+      "from": "0xe0a68a5650c72f2d65b8b5de386234420b90afed",
+      "expected": {
+        "entries": [
+          {
+            "Item": {
+              "label": "Shares to redeem",
+              "value": "9.8314536789615253 USDC RWA"
+            }
+          },
+          {
+            "Item": {
+              "label": "To",
+              "value": "0xe0A68A5650C72f2d65B8B5de386234420B90Afed"
+            }
+          },
+          {
+            "Item": {
+              "label": "Owner",
+              "value": "0xe0A68A5650C72f2d65B8B5de386234420B90Afed"
+            }
+          }
+        ],
+        "intent": "Redeem",
+        "interpolated_intent": null,
+        "owner": "LeadBlock",
+        "warnings": []
+      }
+    }
+  ]
+}
