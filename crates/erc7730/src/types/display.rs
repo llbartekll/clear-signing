@@ -229,10 +229,14 @@ pub enum FieldFormat {
 /// Format parameters — varies by format type.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FormatParams {
-    /// Token address for tokenAmount/tokenTicker.
+    /// Token address path for tokenAmount/tokenTicker (resolved from calldata).
     #[serde(rename = "tokenPath")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub token_path: Option<String>,
+
+    /// Static token address or `$.metadata.constants.*` ref for tokenAmount/tokenTicker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
 
     /// Native currency address — single address or array of addresses/constant refs.
     /// Per spec: "Either a string or an array of strings."

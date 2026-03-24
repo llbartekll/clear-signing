@@ -239,12 +239,12 @@ fn render_fields<'a>(
                     separator,
                     visible,
                 } => {
-                    // If literal value is provided (no path), use it directly
+                    // If literal value is provided (no path), resolve constant refs and use it
                     if let Some(lit) = literal_value {
-                        // Literal value fields skip visibility checks against decoded data
+                        let resolved = resolve_metadata_constant_str(ctx.descriptor, lit);
                         entries.push(DisplayEntry::Item(DisplayItem {
                             label: label.clone(),
-                            value: lit.clone(),
+                            value: resolved,
                         }));
                         continue;
                     }
@@ -1256,6 +1256,22 @@ async fn format_token_amount(
             } else {
                 None
             }
+        } else if let Some(ref token_ref) = params.token {
+            // Static token address or $.metadata.constants.* ref
+            let addr = resolve_metadata_constant_str(ctx.descriptor, token_ref);
+            if let Some(ref native) = params.native_currency_address {
+                if native.matches(&addr, &ctx.descriptor.metadata.constants) {
+                    Some(native_token_meta(lookup_chain_id))
+                } else {
+                    ctx.data_provider
+                        .resolve_token(lookup_chain_id, &addr)
+                        .await
+                }
+            } else {
+                ctx.data_provider
+                    .resolve_token(lookup_chain_id, &addr)
+                    .await
+            }
         } else {
             None
         }
@@ -1286,6 +1302,21 @@ async fn format_token_amount(
             label, path
         ));
         Ok(raw_amount.to_string())
+    }
+}
+
+/// Resolve a `$.metadata.constants.xxx` reference to its string value, or return the input as-is.
+pub(crate) fn resolve_metadata_constant_str(descriptor: &Descriptor, ref_str: &str) -> String {
+    if let Some(const_name) = ref_str.strip_prefix("$.metadata.constants.") {
+        descriptor
+            .metadata
+            .constants
+            .get(const_name)
+            .and_then(|v| v.as_str())
+            .unwrap_or(ref_str)
+            .to_string()
+    } else {
+        ref_str.to_string()
     }
 }
 
@@ -1855,6 +1886,21 @@ async fn format_token_amount_for_interpolation(
                 }
             } else {
                 None
+            }
+        } else if let Some(ref token_ref) = p.token {
+            let addr = resolve_metadata_constant_str(ctx.descriptor, token_ref);
+            if let Some(ref native) = p.native_currency_address {
+                if native.matches(&addr, &ctx.descriptor.metadata.constants) {
+                    Some(native_token_meta(lookup_chain_id))
+                } else {
+                    ctx.data_provider
+                        .resolve_token(lookup_chain_id, &addr)
+                        .await
+                }
+            } else {
+                ctx.data_provider
+                    .resolve_token(lookup_chain_id, &addr)
+                    .await
             }
         } else {
             None

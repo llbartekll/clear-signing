@@ -7,7 +7,9 @@ use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::{DisplayEntry, DisplayItem, DisplayModel, GroupIteration};
+use crate::engine::{
+    resolve_metadata_constant_str, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
+};
 use crate::error::Error;
 use crate::provider::DataProvider;
 use crate::resolver::ResolvedDescriptor;
@@ -219,11 +221,12 @@ fn render_typed_fields<'a>(
                     separator: _,
                     visible,
                 } => {
-                    // If literal value is provided (no path), use it directly
+                    // If literal value is provided (no path), resolve constant refs and use it
                     if let Some(lit) = literal_value {
+                        let resolved = resolve_metadata_constant_str(descriptor, lit);
                         entries.push(DisplayEntry::Item(DisplayItem {
                             label: label.clone(),
-                            value: lit.clone(),
+                            value: resolved,
                         }));
                         continue;
                     }
@@ -733,6 +736,9 @@ async fn format_typed_value(
                     } else {
                         None
                     }
+                } else if let Some(ref token_ref) = params.token {
+                    let addr = resolve_metadata_constant_str(descriptor, token_ref);
+                    data_provider.resolve_token(lookup_chain, &addr).await
                 } else {
                     None
                 }
