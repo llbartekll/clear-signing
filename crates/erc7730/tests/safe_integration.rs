@@ -100,7 +100,7 @@ fn build_erc20_transfer_calldata(to: &str, amount: u128) -> Vec<u8> {
 
 #[tokio::test]
 async fn safe_exec_transaction_wrapping_erc20_transfer() {
-    let safe_descriptor = load_descriptor("safe-exec-transaction.json");
+    let safe_descriptor = load_descriptor("common-Safe.json");
     let erc20_descriptor = load_descriptor("erc20-transfer.json");
 
     let safe_addr = "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552";
@@ -145,28 +145,35 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
-    assert_eq!(result.intent, "Execute Safe transaction");
+    assert_eq!(result.intent, "sign multisig operation");
 
     // Check outer fields
-    // Entry 0: Operation = "Call"
+    // Entry 0: Operation type = "Call"
     if let DisplayEntry::Item(ref item) = result.entries[0] {
-        assert_eq!(item.label, "Operation");
+        assert_eq!(item.label, "Operation type");
         assert_eq!(item.value, "Call");
     } else {
-        panic!("expected Item for Operation, got {:?}", result.entries[0]);
+        panic!("expected Item for Operation type, got {:?}", result.entries[0]);
     }
 
     // Entry 1: From Safe (addressName for @.to)
     if let DisplayEntry::Item(ref item) = result.entries[1] {
         assert_eq!(item.label, "From Safe");
-        // Should be the safe's own contract name "GnosisSafe" (from address book)
-        // or the checksummed address since the safe's address book has its own contract
     } else {
         panic!("expected Item for From Safe, got {:?}", result.entries[1]);
     }
 
-    // Entry 2: Transaction (Nested calldata)
-    match &result.entries[2] {
+    // Entry 2: Execution signer (addressName for @.from) — not present when from is None
+
+    // Entry 3 (or 2 if @.from absent): Transaction (Nested calldata)
+    // Find the Nested entry by label since @.from may be absent
+    let nested_idx = result
+        .entries
+        .iter()
+        .position(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Transaction"))
+        .expect("expected Nested entry for Transaction");
+
+    match &result.entries[nested_idx] {
         DisplayEntry::Nested {
             label,
             intent,
@@ -201,18 +208,18 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
         }
     }
 
-    // Entry 3: Gas amount
-    if let DisplayEntry::Item(ref item) = result.entries[3] {
+    // Gas amount follows the Nested entry
+    if let DisplayEntry::Item(ref item) = result.entries[nested_idx + 1] {
         assert_eq!(item.label, "Gas amount");
         assert_eq!(item.value, "21000");
     } else {
         panic!("expected Item for Gas amount");
     }
 
-    // Entry 4: Gas price
-    if let DisplayEntry::Item(ref item) = result.entries[4] {
+    // Gas price — now tokenAmount format with native currency
+    if let DisplayEntry::Item(ref item) = result.entries[nested_idx + 2] {
         assert_eq!(item.label, "Gas price");
-        assert_eq!(item.value, "0");
+        assert_eq!(item.value, "0.0 ETH");
     } else {
         panic!("expected Item for Gas price");
     }
@@ -220,7 +227,7 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
 
 #[tokio::test]
 async fn safe_exec_transaction_no_inner_descriptor() {
-    let safe_descriptor = load_descriptor("safe-exec-transaction.json");
+    let safe_descriptor = load_descriptor("common-Safe.json");
     let safe_addr = "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552";
     let unknown_contract = "0x0000000000000000000000000000000000000042";
 
@@ -248,10 +255,16 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         .await
         .unwrap();
 
-    assert_eq!(result.intent, "Execute Safe transaction");
+    assert_eq!(result.intent, "sign multisig operation");
 
-    // Transaction field should be a Nested with raw fallback
-    match &result.entries[2] {
+    // Transaction field should be a Nested with raw fallback — find by label
+    let nested = result
+        .entries
+        .iter()
+        .find(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Transaction"))
+        .expect("expected Nested entry for Transaction");
+
+    match nested {
         DisplayEntry::Nested {
             label,
             intent,
@@ -276,7 +289,7 @@ async fn safe_exec_transaction_no_inner_descriptor() {
 
 #[tokio::test]
 async fn safe_exec_transaction_container_value_propagation() {
-    let safe_descriptor = load_descriptor("safe-exec-transaction.json");
+    let safe_descriptor = load_descriptor("common-Safe.json");
     let erc20_descriptor = load_descriptor("erc20-transfer.json");
 
     let safe_addr = "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552";
@@ -322,8 +335,14 @@ async fn safe_exec_transaction_container_value_propagation() {
     };
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
-    // The inner call should still decode properly
-    match &result.entries[2] {
+    // The inner call should still decode properly — find Nested by label
+    let nested = result
+        .entries
+        .iter()
+        .find(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Transaction"))
+        .expect("expected Nested entry for Transaction");
+
+    match nested {
         DisplayEntry::Nested {
             intent, entries, ..
         } => {
@@ -340,8 +359,7 @@ async fn safe_exec_transaction_container_value_propagation() {
 
 #[tokio::test]
 async fn safe_exec_transaction_depth_limit() {
-    // Create a descriptor that wraps itself (depth test)
-    let safe_descriptor = load_descriptor("safe-exec-transaction.json");
+    let safe_descriptor = load_descriptor("common-Safe.json");
     let safe_addr = "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552";
 
     // Build 4-level nesting: Safe → Safe → Safe → Safe → ERC20
@@ -390,7 +408,7 @@ async fn safe_exec_transaction_depth_limit() {
         .unwrap();
 
     // Verify the result doesn't panic and has nested structure
-    assert_eq!(result.intent, "Execute Safe transaction");
+    assert_eq!(result.intent, "sign multisig operation");
 
     // Walk down to find the depth-limited entry
     fn find_depth_warning(entries: &[DisplayEntry], depth: usize) -> bool {

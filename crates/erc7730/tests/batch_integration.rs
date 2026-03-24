@@ -404,7 +404,7 @@ async fn wallet_batch_intent_concatenation() {
 #[tokio::test]
 async fn wallet_batch_with_safe_wrapper() {
     let erc20_descriptor = load_descriptor("erc20-transfer.json");
-    let safe_descriptor = load_descriptor("safe-exec-transaction.json");
+    let safe_descriptor = load_descriptor("common-Safe.json");
 
     let safe_addr = "0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552";
     let usdc_addr = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
@@ -474,10 +474,16 @@ async fn wallet_batch_with_safe_wrapper() {
         .unwrap();
 
     // Verify outer Safe formatting
-    assert_eq!(safe_result.intent, "Execute Safe transaction");
+    assert_eq!(safe_result.intent, "sign multisig operation");
 
-    // Verify nested inner call is rendered inside Safe wrapper
-    match &safe_result.entries[2] {
+    // Verify nested inner call is rendered inside Safe wrapper — find by label
+    let nested = safe_result
+        .entries
+        .iter()
+        .find(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Transaction"))
+        .expect("expected Nested entry for Transaction");
+
+    match nested {
         DisplayEntry::Nested {
             label,
             intent,
