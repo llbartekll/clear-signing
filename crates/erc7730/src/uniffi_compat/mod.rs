@@ -334,13 +334,17 @@ pub async fn erc7730_resolve_descriptor(
 pub async fn erc7730_resolve_descriptor_for_typed_data(
     chain_id: u64,
     verifying_contract: String,
+    primary_type: String,
     data_provider: Arc<dyn DataProviderFfi>,
 ) -> Result<Option<String>, FfiError> {
-    println!("[erc7730] resolve_descriptor_for_typed_data: chain_id={}, verifying_contract={}", chain_id, verifying_contract);
+    println!("[erc7730] resolve_descriptor_for_typed_data: chain_id={}, verifying_contract={}, primary_type={}", chain_id, verifying_contract, primary_type);
     let source = get_registry_source().await?;
 
-    // Try direct lookup by verifying contract
-    match source.resolve_typed(chain_id, &verifying_contract).await {
+    // Try direct lookup by verifying contract, filtered by primary_type
+    match source
+        .resolve_typed_for_primary_type(chain_id, &verifying_contract, &primary_type)
+        .await
+    {
         Ok(resolved) => {
             let json = serde_json::to_string(&resolved.descriptor)
                 .map_err(|e| FfiError::Descriptor(e.to_string()))?;
@@ -361,7 +365,10 @@ pub async fn erc7730_resolve_descriptor_for_typed_data(
     println!("[erc7730] resolve_typed_data: get_implementation_address({}, {}) = {:?}", chain_id, verifying_contract, impl_addr);
 
     if let Some(impl_addr) = impl_addr {
-        match source.resolve_typed(chain_id, &impl_addr).await {
+        match source
+            .resolve_typed_for_primary_type(chain_id, &impl_addr, &primary_type)
+            .await
+        {
             Ok(resolved) => {
                 let json = serde_json::to_string(&resolved.descriptor)
                     .map_err(|e| FfiError::Descriptor(e.to_string()))?;

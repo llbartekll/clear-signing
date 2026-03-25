@@ -50,13 +50,15 @@ struct ClearSigningService {
     /// Automatically detects proxies via dataProvider.getImplementationAddress().
     func formatTypedData(typedDataJson: String) async -> Result<DisplayModel, Error> {
         do {
-            // Parse domain to get chainId + verifyingContract for resolution
-            let domainInfo = parseDomainInfo(from: typedDataJson)
-            let descriptor: String? = if let chainId = domainInfo.chainId,
-                                         let address = domainInfo.verifyingContract {
+            // Parse domain + primaryType for descriptor resolution
+            let info = parseTypedDataInfo(from: typedDataJson)
+            let descriptor: String? = if let chainId = info.chainId,
+                                         let address = info.verifyingContract,
+                                         let primaryType = info.primaryType {
                 try await erc7730ResolveDescriptorForTypedData(
                     chainId: chainId,
                     verifyingContract: address,
+                    primaryType: primaryType,
                     dataProvider: dataProvider
                 )
             } else {
@@ -77,19 +79,21 @@ struct ClearSigningService {
 
     // MARK: - Private
 
-    private struct DomainInfo {
+    private struct TypedDataInfo {
         let chainId: UInt64?
         let verifyingContract: String?
+        let primaryType: String?
     }
 
-    private func parseDomainInfo(from json: String) -> DomainInfo {
+    private func parseTypedDataInfo(from json: String) -> TypedDataInfo {
         guard let data = json.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let domain = obj["domain"] as? [String: Any] else {
-            return DomainInfo(chainId: nil, verifyingContract: nil)
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return TypedDataInfo(chainId: nil, verifyingContract: nil, primaryType: nil)
         }
-        let chainId = (domain["chainId"] as? NSNumber)?.uint64Value
-        let contract = domain["verifyingContract"] as? String
-        return DomainInfo(chainId: chainId, verifyingContract: contract)
+        let domain = obj["domain"] as? [String: Any]
+        let chainId = (domain?["chainId"] as? NSNumber)?.uint64Value
+        let contract = domain?["verifyingContract"] as? String
+        let primaryType = obj["primaryType"] as? String
+        return TypedDataInfo(chainId: chainId, verifyingContract: contract, primaryType: primaryType)
     }
 }

@@ -1740,11 +1740,11 @@ public func erc7730ResolveDescriptor(chainId: UInt64, address: String)async thro
  * Returns the descriptor JSON string, or `None` if no descriptor is found.
  * Requires the `github-registry` feature.
  */
-public func erc7730ResolveDescriptorForTypedData(chainId: UInt64, verifyingContract: String, dataProvider: DataProviderFfi)async throws  -> String?  {
+public func erc7730ResolveDescriptorForTypedData(chainId: UInt64, verifyingContract: String, primaryType: String, dataProvider: DataProviderFfi)async throws  -> String?  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_resolve_descriptor_for_typed_data(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(verifyingContract),FfiConverterTypeDataProviderFfi_lower(dataProvider)
+                uniffi_erc7730_fn_func_erc7730_resolve_descriptor_for_typed_data(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(verifyingContract),FfiConverterString.lower(primaryType),FfiConverterTypeDataProviderFfi_lower(dataProvider)
                 )
             },
             pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
@@ -1804,7 +1804,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor() != 56571) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor_for_typed_data() != 39185) {
+    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor_for_typed_data() != 5903) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx() != 7820) {

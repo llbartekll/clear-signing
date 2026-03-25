@@ -335,10 +335,11 @@ impl GitHubRegistrySource {
         chain_id: u64,
         address: &str,
         prefer_eip712: bool,
+        primary_type: Option<&str>,
     ) -> Result<ResolvedDescriptor, ResolveError> {
         let address_owned = address.to_lowercase();
         let key = Self::make_key(chain_id, &address_owned);
-        println!("[erc7730] resolve_by_context: key={}, prefer_eip712={}", key, prefer_eip712);
+        println!("[erc7730] resolve_by_context: key={}, prefer_eip712={}, primary_type={:?}", key, prefer_eip712, primary_type);
 
         let paths = self
             .index
@@ -353,31 +354,56 @@ impl GitHubRegistrySource {
             .clone();
         println!("[erc7730] resolve_by_context: found {} paths: {:?}", paths.len(), paths);
 
-        // Check cache for a descriptor with matching context
+        // Helper: check if a descriptor's format keys match the primary_type filter.
+        let format_keys_match = |desc: &Descriptor, pt: &str| -> bool {
+            let prefix = format!("{}(", pt);
+            desc.display
+                .formats
+                .keys()
+                .any(|k| k == pt || k.starts_with(&prefix))
+        };
+
+        // Check cache for a descriptor with matching context (+ primary_type when set)
         {
             let cache = self.cache.lock().await;
-            let mut fallback = None;
+            let mut context_fallback = None;
+            let mut any_fallback = None;
             for path in &paths {
                 if let Some(cached) = cache.get(path) {
-                    let matches = match &cached.context {
+                    let context_matches = match &cached.context {
                         crate::types::context::DescriptorContext::Eip712(_) => prefer_eip712,
                         crate::types::context::DescriptorContext::Contract(_) => !prefer_eip712,
                     };
-                    if matches {
-                        return Ok(ResolvedDescriptor {
-                            descriptor: cached.clone(),
-                            chain_id,
-                            address: address_owned,
-                        });
+                    if context_matches {
+                        if let Some(pt) = primary_type {
+                            if format_keys_match(cached, pt) {
+                                println!("[erc7730] resolve_by_context: cache HIT with primary_type match: {}", path);
+                                return Ok(ResolvedDescriptor {
+                                    descriptor: cached.clone(),
+                                    chain_id,
+                                    address: address_owned,
+                                });
+                            }
+                            if context_fallback.is_none() {
+                                context_fallback = Some(cached.clone());
+                            }
+                        } else {
+                            return Ok(ResolvedDescriptor {
+                                descriptor: cached.clone(),
+                                chain_id,
+                                address: address_owned,
+                            });
+                        }
                     }
-                    if fallback.is_none() {
-                        fallback = Some(cached.clone());
+                    if any_fallback.is_none() {
+                        any_fallback = Some(cached.clone());
                     }
                 }
             }
-            // If all paths are cached but none match the preferred context, use fallback
+            // If all paths are cached but none matched primary_type, use context fallback
             if paths.iter().all(|p| cache.contains_key(p.as_str())) {
-                if let Some(desc) = fallback {
+                if let Some(desc) = context_fallback.or(any_fallback) {
+                    println!("[erc7730] resolve_by_context: cache fallback (no primary_type match)");
                     return Ok(ResolvedDescriptor {
                         descriptor: desc,
                         chain_id,
@@ -387,8 +413,9 @@ impl GitHubRegistrySource {
             }
         }
 
-        // Fetch uncached descriptors, return first with matching context
-        let mut fallback = None;
+        // Fetch uncached descriptors, return first with matching context + primary_type
+        let mut context_fallback = None;
+        let mut any_fallback = None;
         for path in &paths {
             // Skip if already cached and didn't match above
             if self.cache.lock().await.contains_key(path.as_str()) {
@@ -404,34 +431,64 @@ impl GitHubRegistrySource {
                 .await
                 .insert(path.clone(), descriptor.clone());
 
-            let matches = match &descriptor.context {
+            let context_matches = match &descriptor.context {
                 crate::types::context::DescriptorContext::Eip712(_) => prefer_eip712,
                 crate::types::context::DescriptorContext::Contract(_) => !prefer_eip712,
             };
-            if matches {
-                return Ok(ResolvedDescriptor {
-                    descriptor,
-                    chain_id,
-                    address: address_owned,
-                });
-            }
-            if fallback.is_none() {
-                fallback = Some(descriptor);
+            if context_matches {
+                if let Some(pt) = primary_type {
+                    if format_keys_match(&descriptor, pt) {
+                        println!("[erc7730] resolve_by_context: fetched with primary_type match: {}", path);
+                        return Ok(ResolvedDescriptor {
+                            descriptor,
+                            chain_id,
+                            address: address_owned,
+                        });
+                    }
+                    if context_fallback.is_none() {
+                        context_fallback = Some(descriptor);
+                    }
+                } else {
+                    return Ok(ResolvedDescriptor {
+                        descriptor,
+                        chain_id,
+                        address: address_owned,
+                    });
+                }
+            } else if any_fallback.is_none() {
+                any_fallback = Some(descriptor);
             }
         }
 
-        // Fallback to first available descriptor (single-entry backwards compat)
-        match fallback {
-            Some(desc) => Ok(ResolvedDescriptor {
-                descriptor: desc,
-                chain_id,
-                address: address_owned,
-            }),
+        // Fallback: prefer context match, then any descriptor
+        match context_fallback.or(any_fallback) {
+            Some(desc) => {
+                println!("[erc7730] resolve_by_context: fallback (no primary_type match found)");
+                Ok(ResolvedDescriptor {
+                    descriptor: desc,
+                    chain_id,
+                    address: address_owned,
+                })
+            }
             None => Err(ResolveError::NotFound {
                 chain_id,
                 address: address_owned,
             }),
         }
+    }
+
+    /// Resolve an EIP-712 descriptor filtered by `primary_type`.
+    ///
+    /// Prefers a descriptor whose format keys match `primary_type` (exact or
+    /// prefix like `"SafeTx(..."`) over other eip712 descriptors for the same address.
+    pub async fn resolve_typed_for_primary_type(
+        &self,
+        chain_id: u64,
+        address: &str,
+        primary_type: &str,
+    ) -> Result<ResolvedDescriptor, ResolveError> {
+        self.resolve_by_context(chain_id, address, true, Some(primary_type))
+            .await
     }
 }
 
@@ -443,7 +500,7 @@ impl DescriptorSource for GitHubRegistrySource {
         address: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>> {
         let addr = address.to_string();
-        Box::pin(async move { self.resolve_by_context(chain_id, &addr, false).await })
+        Box::pin(async move { self.resolve_by_context(chain_id, &addr, false, None).await })
     }
 
     fn resolve_typed(
@@ -452,7 +509,7 @@ impl DescriptorSource for GitHubRegistrySource {
         address: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>> {
         let addr = address.to_string();
-        Box::pin(async move { self.resolve_by_context(chain_id, &addr, true).await })
+        Box::pin(async move { self.resolve_by_context(chain_id, &addr, true, None).await })
     }
 }
 
