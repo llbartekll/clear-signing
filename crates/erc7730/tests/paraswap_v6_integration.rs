@@ -7,7 +7,10 @@ use erc7730::types::descriptor::Descriptor;
 use erc7730::{format_calldata, DisplayEntry, TransactionContext};
 
 fn load_descriptor() -> Descriptor {
-    let path = format!("{}/tests/fixtures/paraswap-v6.2.json", env!("CARGO_MANIFEST_DIR"));
+    let path = format!(
+        "{}/tests/fixtures/paraswap-v6.2.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
     let json = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
     Descriptor::from_json(&json).unwrap_or_else(|e| panic!("parse {path}: {e}"))
 }
@@ -22,20 +25,83 @@ fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<Resolved
 
 fn token_source() -> CompositeDataProvider {
     let mut custom = StaticTokenSource::new();
-    custom.insert(1, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", TokenMeta { symbol: "USDC".to_string(), decimals: 6, name: "USD Coin".to_string() });
-    custom.insert(1, "0xdac17f958d2ee523a2206206994597c13d831ec7", TokenMeta { symbol: "USDT".to_string(), decimals: 6, name: "Tether USD".to_string() });
-    custom.insert(1, "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", TokenMeta { symbol: "WETH".to_string(), decimals: 18, name: "Wrapped Ether".to_string() });
-    custom.insert(1, "0x6b175474e89094c44da98b954eedeac495271d0f", TokenMeta { symbol: "DAI".to_string(), decimals: 18, name: "Dai Stablecoin".to_string() });
-    custom.insert(1, "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", TokenMeta { symbol: "WBTC".to_string(), decimals: 8, name: "Wrapped BTC".to_string() });
-    custom.insert(1, "0x514910771af9ca656af840dff83e8264ecf986ca", TokenMeta { symbol: "LINK".to_string(), decimals: 18, name: "ChainLink Token".to_string() });
-    custom.insert(1, "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0", TokenMeta { symbol: "wstETH".to_string(), decimals: 18, name: "Wrapped stETH".to_string() });
-    custom.insert(1, "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", TokenMeta { symbol: "ETH".to_string(), decimals: 18, name: "Ether".to_string() });
+    custom.insert(
+        1,
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+    custom.insert(
+        1,
+        "0xdac17f958d2ee523a2206206994597c13d831ec7",
+        TokenMeta {
+            symbol: "USDT".to_string(),
+            decimals: 6,
+            name: "Tether USD".to_string(),
+        },
+    );
+    custom.insert(
+        1,
+        "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+        TokenMeta {
+            symbol: "WETH".to_string(),
+            decimals: 18,
+            name: "Wrapped Ether".to_string(),
+        },
+    );
+    custom.insert(
+        1,
+        "0x6b175474e89094c44da98b954eedeac495271d0f",
+        TokenMeta {
+            symbol: "DAI".to_string(),
+            decimals: 18,
+            name: "Dai Stablecoin".to_string(),
+        },
+    );
+    custom.insert(
+        1,
+        "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",
+        TokenMeta {
+            symbol: "WBTC".to_string(),
+            decimals: 8,
+            name: "Wrapped BTC".to_string(),
+        },
+    );
+    custom.insert(
+        1,
+        "0x514910771af9ca656af840dff83e8264ecf986ca",
+        TokenMeta {
+            symbol: "LINK".to_string(),
+            decimals: 18,
+            name: "ChainLink Token".to_string(),
+        },
+    );
+    custom.insert(
+        1,
+        "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0",
+        TokenMeta {
+            symbol: "wstETH".to_string(),
+            decimals: 18,
+            name: "Wrapped stETH".to_string(),
+        },
+    );
+    custom.insert(
+        1,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        TokenMeta {
+            symbol: "ETH".to_string(),
+            decimals: 18,
+            name: "Ether".to_string(),
+        },
+    );
     CompositeDataProvider::new(vec![
         Box::new(custom),
         Box::new(WellKnownTokenSource::new()),
     ])
 }
-
 
 #[tokio::test]
 async fn test_paraswap_v6_swapExactAmountIn() {
@@ -79,7 +145,10 @@ async fn test_paraswap_v6_swapExactAmountIn() {
         }
         Err(e) => panic!("swapExactAmountIn failed: {e}"),
     }
-    assert!(result.is_ok(), "swapExactAmountIn should format successfully");
+    assert!(
+        result.is_ok(),
+        "swapExactAmountIn should format successfully"
+    );
 }
 
 #[tokio::test]
@@ -125,7 +194,10 @@ async fn test_paraswap_v6_swapExactAmountInOnUniswapV2() {
         }
         Err(e) => panic!("swapExactAmountInOnUniswapV2 failed: {e}"),
     }
-    assert!(result.is_ok(), "swapExactAmountInOnUniswapV2 should format successfully");
+    assert!(
+        result.is_ok(),
+        "swapExactAmountInOnUniswapV2 should format successfully"
+    );
 }
 
 #[tokio::test]
@@ -170,7 +242,10 @@ async fn test_paraswap_v6_swapExactAmountInOnUniswapV3() {
         }
         Err(e) => panic!("swapExactAmountInOnUniswapV3 failed: {e}"),
     }
-    assert!(result.is_ok(), "swapExactAmountInOnUniswapV3 should format successfully");
+    assert!(
+        result.is_ok(),
+        "swapExactAmountInOnUniswapV3 should format successfully"
+    );
 }
 
 #[tokio::test]
@@ -215,7 +290,10 @@ async fn test_paraswap_v6_swapOnAugustusRFQTryBatchFill() {
         }
         Err(e) => panic!("swapOnAugustusRFQTryBatchFill failed: {e}"),
     }
-    assert!(result.is_ok(), "swapOnAugustusRFQTryBatchFill should format successfully");
+    assert!(
+        result.is_ok(),
+        "swapOnAugustusRFQTryBatchFill should format successfully"
+    );
 }
 
 #[tokio::test]
@@ -260,7 +338,10 @@ async fn test_paraswap_v6_swapExactAmountIn_eth() {
         }
         Err(e) => panic!("swapExactAmountIn_eth failed: {e}"),
     }
-    assert!(result.is_ok(), "swapExactAmountIn_eth should format successfully");
+    assert!(
+        result.is_ok(),
+        "swapExactAmountIn_eth should format successfully"
+    );
 }
 
 #[tokio::test]
@@ -305,7 +386,10 @@ async fn test_paraswap_v6_swapExactAmountInOnUniswapV2_b() {
         }
         Err(e) => panic!("swapExactAmountInOnUniswapV2_b failed: {e}"),
     }
-    assert!(result.is_ok(), "swapExactAmountInOnUniswapV2_b should format successfully");
+    assert!(
+        result.is_ok(),
+        "swapExactAmountInOnUniswapV2_b should format successfully"
+    );
 }
 
 #[tokio::test]
@@ -350,5 +434,8 @@ async fn test_paraswap_v6_swapOnAugustusRFQTryBatchFill_b() {
         }
         Err(e) => panic!("swapOnAugustusRFQTryBatchFill_b failed: {e}"),
     }
-    assert!(result.is_ok(), "swapOnAugustusRFQTryBatchFill_b should format successfully");
+    assert!(
+        result.is_ok(),
+        "swapOnAugustusRFQTryBatchFill_b should format successfully"
+    );
 }

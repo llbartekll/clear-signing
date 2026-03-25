@@ -10,7 +10,7 @@ struct ClearSigningService {
     }
 
     /// Format a contract call using the ERC-7730 library.
-    /// Resolves descriptors from the GitHub registry, then formats.
+    /// Resolves all descriptors (outer + nested calldata) from the GitHub registry, then formats.
     func formatCalldata(
         chainId: UInt64,
         to: String,
@@ -20,13 +20,6 @@ struct ClearSigningService {
         implementationAddress: String? = nil
     ) async -> Result<DisplayModel, Error> {
         do {
-            let resolveAddr = implementationAddress ?? to
-            let descriptor = try await erc7730ResolveDescriptor(
-                chainId: chainId,
-                address: resolveAddr
-            )
-            let descriptors = descriptor.map { [$0] } ?? []
-
             let tx = TransactionInput(
                 chainId: chainId,
                 to: to,
@@ -35,6 +28,10 @@ struct ClearSigningService {
                 fromAddress: from,
                 implementationAddress: implementationAddress
             )
+
+            // Single call resolves outer + any nested descriptors (e.g., Safe → inner contract)
+            let descriptors = try await erc7730ResolveDescriptorsForTx(transaction: tx)
+
             let model = try await erc7730FormatCalldata(
                 descriptorsJson: descriptors,
                 transaction: tx,

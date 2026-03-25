@@ -52,9 +52,7 @@ impl ParamType {
             32 // offset pointer
         } else {
             match self {
-                ParamType::Tuple(members) => {
-                    members.iter().map(|(_, m)| m.head_size()).sum()
-                }
+                ParamType::Tuple(members) => members.iter().map(|(_, m)| m.head_size()).sum(),
                 ParamType::FixedArray(inner, len) => inner.head_size() * len,
                 _ => 32, // address, uint, int, bool, fixedBytes
             }

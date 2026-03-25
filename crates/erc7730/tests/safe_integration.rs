@@ -153,7 +153,10 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
         assert_eq!(item.label, "Operation type");
         assert_eq!(item.value, "Call");
     } else {
-        panic!("expected Item for Operation type, got {:?}", result.entries[0]);
+        panic!(
+            "expected Item for Operation type, got {:?}",
+            result.entries[0]
+        );
     }
 
     // Entry 1: From Safe (addressName for @.to)

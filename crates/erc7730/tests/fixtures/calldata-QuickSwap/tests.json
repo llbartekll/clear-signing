@@ -269,7 +269,7 @@
           {
             "Item": {
               "label": "Minimum to Receive",
-              "value": "3980165"
+              "value": "3.980165 USDC.e"
             }
           },
           {
@@ -288,9 +288,7 @@
         "intent": "Swap",
         "interpolated_intent": null,
         "owner": "QuickSwap",
-        "warnings": [
-          "token metadata not found for field 'Minimum to Receive' (path: amountOutMin)"
-        ]
+        "warnings": []
       }
     },
     {
@@ -312,7 +310,7 @@
           {
             "Item": {
               "label": "Minimum to Receive",
-              "value": "0"
+              "value": "0.0 TDOX"
             }
           },
           {
@@ -331,9 +329,7 @@
         "intent": "Swap",
         "interpolated_intent": null,
         "owner": "QuickSwap",
-        "warnings": [
-          "token metadata not found for field 'Minimum to Receive' (path: amountOutMin)"
-        ]
+        "warnings": []
       }
     },
     {
@@ -513,7 +509,7 @@
           {
             "Item": {
               "label": "Amount to Receive",
-              "value": "94521046935280350658560"
+              "value": "94521.04693528035065856 GEO$"
             }
           },
           {
@@ -538,9 +534,7 @@
         "intent": "Swap",
         "interpolated_intent": null,
         "owner": "QuickSwap",
-        "warnings": [
-          "token metadata not found for field 'Amount to Receive' (path: amountOut)"
-        ]
+        "warnings": []
       }
     },
     {
@@ -609,7 +603,7 @@
           {
             "Item": {
               "label": "Minimum to Receive",
-              "value": "803683"
+              "value": "0.803683 USDT"
             }
           },
           {
@@ -628,9 +622,7 @@
         "intent": "Swap",
         "interpolated_intent": null,
         "owner": "QuickSwap",
-        "warnings": [
-          "token metadata not found for field 'Minimum to Receive' (path: amountOutMin)"
-        ]
+        "warnings": []
       }
     },
     {
@@ -652,7 +644,7 @@
           {
             "Item": {
               "label": "Minimum to Receive",
-              "value": "122270929"
+              "value": "122.270929 USDT"
             }
           },
           {
@@ -671,9 +663,7 @@
         "intent": "Swap",
         "interpolated_intent": null,
         "owner": "QuickSwap",
-        "warnings": [
-          "token metadata not found for field 'Minimum to Receive' (path: amountOutMin)"
-        ]
+        "warnings": []
       }
     }
   ]

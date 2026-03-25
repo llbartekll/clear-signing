@@ -301,6 +301,42 @@ pub async fn erc7730_resolve_descriptor(
     }
 }
 
+/// Resolve all descriptors needed for a transaction, including nested calldata.
+///
+/// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
+/// First element is the outer descriptor, subsequent are inner callees.
+/// Returns empty vec if no descriptor is found for the outer address.
+#[cfg(feature = "github-registry")]
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn erc7730_resolve_descriptors_for_tx(
+    transaction: TransactionInput,
+) -> Result<Vec<String>, FfiError> {
+    let source = get_registry_source().await?;
+    let calldata = decode_hex(&transaction.calldata_hex, HexContext::Calldata)?;
+    let value = match transaction.value_hex {
+        Some(ref hex_value) => Some(decode_hex(hex_value, HexContext::Value)?),
+        None => None,
+    };
+    let tx = crate::TransactionContext {
+        chain_id: transaction.chain_id,
+        to: &transaction.to,
+        calldata: &calldata,
+        value: value.as_deref(),
+        from: transaction.from_address.as_deref(),
+        implementation_address: transaction.implementation_address.as_deref(),
+    };
+    let descriptors = crate::resolve_descriptors_for_tx(&tx, source)
+        .await
+        .map_err(|e| FfiError::Resolve(e.to_string()))?;
+
+    descriptors
+        .iter()
+        .map(|rd| {
+            serde_json::to_string(&rd.descriptor).map_err(|e| FfiError::Descriptor(e.to_string()))
+        })
+        .collect()
+}
+
 /// Merge two descriptor JSON strings (including + included).
 ///
 /// Returns merged JSON ready for use with `erc7730_format_calldata` / `erc7730_format_typed_data`.
@@ -819,13 +855,10 @@ mod tests {
         }"#;
 
         // Call through the FFI function with the round-tripped descriptor
-        let result = erc7730_format_typed_data(
-            vec![round_tripped_json],
-            typed_data_json.to_string(),
-            None,
-        )
-        .await
-        .expect("typed data formatting should succeed");
+        let result =
+            erc7730_format_typed_data(vec![round_tripped_json], typed_data_json.to_string(), None)
+                .await
+                .expect("typed data formatting should succeed");
 
         assert_eq!(result.intent, "Swap order");
         assert!(

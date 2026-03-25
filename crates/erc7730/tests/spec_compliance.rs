@@ -1398,11 +1398,7 @@ async fn test_eip712_encode_type_format_key() {
 
     let descriptor = Descriptor::from_json(descriptor_json).unwrap();
     let typed_data: TypedData = serde_json::from_str(typed_data_json).unwrap();
-    let descriptors = wrap_rd(
-        descriptor,
-        10,
-        "0x0000000000bbf5c5fd284e657f01bd000933c96d",
-    );
+    let descriptors = wrap_rd(descriptor, 10, "0x0000000000bbf5c5fd284e657f01bd000933c96d");
 
     let result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
         .await
@@ -1410,7 +1406,11 @@ async fn test_eip712_encode_type_format_key() {
 
     // Must match the descriptor format, not fall back to raw
     assert_eq!(result.intent, "Swap order");
-    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
     assert_eq!(result.entries.len(), 5);
 
     if let DisplayEntry::Item(ref item) = result.entries[0] {

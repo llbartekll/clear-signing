@@ -353,21 +353,14 @@ pub enum NativeCurrencyAddress {
 
 impl NativeCurrencyAddress {
     /// Check if `addr` matches any native currency address, resolving `$.metadata.constants.*` refs.
-    pub fn matches(
-        &self,
-        addr: &str,
-        constants: &HashMap<String, serde_json::Value>,
-    ) -> bool {
+    pub fn matches(&self, addr: &str, constants: &HashMap<String, serde_json::Value>) -> bool {
         let items: Vec<&str> = match self {
             NativeCurrencyAddress::Single(s) => vec![s.as_str()],
             NativeCurrencyAddress::Multiple(v) => v.iter().map(|s| s.as_str()).collect(),
         };
         items.iter().any(|item| {
             let resolved = if let Some(key) = item.strip_prefix("$.metadata.constants.") {
-                constants
-                    .get(key)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(item)
+                constants.get(key).and_then(|v| v.as_str()).unwrap_or(item)
             } else {
                 item
             };

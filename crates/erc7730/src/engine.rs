@@ -204,8 +204,7 @@ fn render_fields<'a>(
                     visible,
                 } => {
                     if let Some(resolved) = resolve_reference(ctx.descriptor, reference) {
-                        let merged =
-                            merge_ref_with_definition(resolved, path, ref_params, visible);
+                        let merged = merge_ref_with_definition(resolved, path, ref_params, visible);
                         let merged_slice = vec![merged];
                         let mut sub = render_fields(ctx, &merged_slice, warnings).await?;
                         entries.append(&mut sub);
@@ -552,7 +551,7 @@ pub fn merge_ref_with_definition(
 /// When the path starts with `@.`, container values (appended last by
 /// `inject_container_values`) take priority over function params with the
 /// same name.  Without the prefix, function params are matched first.
-fn resolve_path(decoded: &DecodedArguments, path: &str) -> Option<ArgumentValue> {
+pub(crate) fn resolve_path(decoded: &DecodedArguments, path: &str) -> Option<ArgumentValue> {
     let path = path.trim();
 
     // Strip `#.` prefix (v2 spec: root reference for structured data)
@@ -661,7 +660,7 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
                         let slice: Vec<ArgumentValue> = members.get(start..end)?.to_vec();
                         return navigate_value(&ArgumentValue::Array(slice), &segments[1..]);
                     }
-                    let index: usize = idx_str.parse().ok()?;
+                    let index = resolve_array_index(idx_str, members.len())?;
                     return members
                         .get(index)
                         .and_then(|v| navigate_value(v, &segments[1..]));
@@ -676,7 +675,7 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
                 return navigate_value(&ArgumentValue::Array(slice), &segments[1..]);
             }
 
-            if let Ok(index) = seg.parse::<usize>() {
+            if let Some(index) = resolve_array_index(seg, members.len()) {
                 members
                     .get(index)
                     .and_then(|v| navigate_value(v, &segments[1..]))
@@ -685,6 +684,20 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
             }
         }
         _ => None,
+    }
+}
+
+/// Parse an array index that may be negative.
+/// Negative indices count from the end: -1 = last, -2 = second-to-last.
+fn resolve_array_index(idx_str: &str, len: usize) -> Option<usize> {
+    if let Some(neg) = idx_str.strip_prefix('-') {
+        let n: usize = neg.parse().ok()?;
+        if n == 0 || n > len {
+            return None;
+        }
+        Some(len - n)
+    } else {
+        idx_str.parse().ok()
     }
 }
 

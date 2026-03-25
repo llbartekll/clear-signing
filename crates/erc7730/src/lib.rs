@@ -24,7 +24,7 @@ use error::Error;
 pub use engine::{DisplayEntry, DisplayItem, DisplayModel};
 pub use merge::merge_descriptors;
 pub use provider::{DataProvider, EmptyDataProvider};
-pub use resolver::{DescriptorSource, ResolvedDescriptor};
+pub use resolver::{resolve_descriptors_for_tx, DescriptorSource, ResolvedDescriptor};
 pub use token::{CompositeDataProvider, TokenMeta, WellKnownTokenSource};
 pub use types::descriptor::Descriptor;
 
