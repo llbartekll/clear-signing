@@ -1776,6 +1776,28 @@ public func erc7730ResolveDescriptorsForTx(transaction: TransactionInput, dataPr
             errorHandler: FfiConverterTypeFfiError_lift
         )
 }
+/**
+ * Resolve all descriptors needed for EIP-712 typed data, including nested calldata.
+ *
+ * Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
+ * First element is the outer EIP-712 descriptor, subsequent are inner calldata descriptors.
+ * Returns empty vec if no descriptor is found for the outer verifying contract.
+ * Automatically detects proxy contracts via `data_provider.get_implementation_address`.
+ */
+public func erc7730ResolveDescriptorsForTypedData(typedDataJson: String, dataProvider: DataProviderFfi)async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_erc7730_fn_func_erc7730_resolve_descriptors_for_typed_data(FfiConverterString.lower(typedDataJson),FfiConverterTypeDataProviderFfi_lower(dataProvider)
+                )
+            },
+            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
+            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
+            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
 
 private enum InitializationResult {
     case ok
@@ -1808,6 +1830,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx() != 7820) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_typed_data() != 46885) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_token() != 7230) {

@@ -682,14 +682,14 @@ fn resolve_recursive<'a>(
 }
 
 /// Info extracted from a `FieldFormat::Calldata` display field.
-struct CalldataFieldInfo {
-    callee_path: Option<String>,
-    data_path: Option<String>,
-    chain_id_path: Option<String>,
+pub(crate) struct CalldataFieldInfo {
+    pub(crate) callee_path: Option<String>,
+    pub(crate) data_path: Option<String>,
+    pub(crate) chain_id_path: Option<String>,
 }
 
 /// Walk display fields (resolving `$ref` references) and collect calldata-format fields.
-fn collect_calldata_fields(
+pub(crate) fn collect_calldata_fields(
     fields: &[DisplayField],
     definitions: &HashMap<String, DisplayField>,
 ) -> Vec<CalldataFieldInfo> {
@@ -762,6 +762,139 @@ fn collect_calldata_fields_recursive(
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Nested descriptor resolution for EIP-712 typed data
+// ---------------------------------------------------------------------------
+
+/// Resolve all descriptors needed to format EIP-712 typed data, including nested calldata.
+///
+/// 1. Resolves outer EIP-712 descriptor by `(chain_id, verifying_contract, primary_type)`
+/// 2. Finds `FieldFormat::Calldata` fields in the matching format
+/// 3. Reads inner callee addresses from the EIP-712 JSON message via `calleePath`
+/// 4. Resolves inner calldata descriptors from the registry
+/// 5. Returns `[outer, inner1, inner2, ...]` for use with `format_typed_data`
+///
+/// If the outer descriptor is not found, returns an empty vec (graceful degradation).
+/// Inner descriptor resolution failures are silently skipped.
+#[cfg(feature = "github-registry")]
+pub async fn resolve_descriptors_for_typed_data(
+    chain_id: u64,
+    verifying_contract: &str,
+    primary_type: &str,
+    message: &serde_json::Value,
+    source: &GitHubRegistrySource,
+) -> Result<Vec<ResolvedDescriptor>, ResolveError> {
+    let mut results = Vec::new();
+
+    // 1. Resolve outer EIP-712 descriptor (with primary_type filter)
+    let outer = match source
+        .resolve_typed_for_primary_type(chain_id, verifying_contract, primary_type)
+        .await
+    {
+        Ok(r) => r,
+        Err(ResolveError::NotFound { .. }) => return Ok(results),
+        Err(e) => return Err(e),
+    };
+
+    // 2. Find matching format key for this primary type
+    let format = outer
+        .descriptor
+        .display
+        .formats
+        .get(primary_type)
+        .or_else(|| {
+            let prefix = format!("{}(", primary_type);
+            outer
+                .descriptor
+                .display
+                .formats
+                .iter()
+                .find(|(key, _)| key.starts_with(&prefix))
+                .map(|(_, v)| v)
+        });
+
+    // 3. Collect calldata fields from the format
+    let calldata_fields = format
+        .map(|fmt| collect_calldata_fields(&fmt.fields, &outer.descriptor.display.definitions))
+        .unwrap_or_default();
+
+    results.push(outer);
+
+    // 4. For each calldata field, resolve inner callee from JSON message
+    for field in &calldata_fields {
+        let callee_path = match &field.callee_path {
+            Some(p) => p,
+            None => continue,
+        };
+
+        // Strip `#.` prefix (message-relative) same as render_typed_calldata_field does
+        let callee_key = callee_path.strip_prefix("#.").unwrap_or(callee_path);
+        let callee_addr = crate::eip712::resolve_typed_path(message, callee_key)
+            .and_then(|v| match v {
+                serde_json::Value::String(s) => Some(s),
+                _ => None,
+            });
+
+        let callee_addr = match callee_addr {
+            Some(addr) => addr,
+            None => continue,
+        };
+
+        // Resolve inner chain_id (from chainIdPath in message, or default to outer)
+        let inner_chain = field
+            .chain_id_path
+            .as_ref()
+            .and_then(|p| {
+                let path = p.strip_prefix("#.").unwrap_or(p);
+                crate::eip712::resolve_typed_path(message, path)
+            })
+            .and_then(|v| match v {
+                serde_json::Value::Number(n) => n.as_u64(),
+                serde_json::Value::String(s) => s.parse::<u64>().ok(),
+                _ => None,
+            })
+            .unwrap_or(chain_id);
+
+        // Try to get inner calldata bytes for deeper nesting via resolve_recursive
+        if let Some(data_path) = &field.data_path {
+            let path = data_path.strip_prefix("#.").unwrap_or(data_path);
+            if let Some(inner_hex) = crate::eip712::resolve_typed_path(message, path)
+                .and_then(|v| v.as_str().map(String::from))
+            {
+                let hex_str = inner_hex
+                    .strip_prefix("0x")
+                    .or_else(|| inner_hex.strip_prefix("0X"))
+                    .unwrap_or(&inner_hex);
+                if let Ok(inner_bytes) = hex::decode(hex_str) {
+                    // Use resolve_recursive for the inner calldata (reuses calldata flow)
+                    let _ = resolve_recursive(
+                        inner_chain,
+                        &callee_addr,
+                        &inner_bytes,
+                        source,
+                        MAX_RESOLVE_DEPTH - 1,
+                        &mut results,
+                    )
+                    .await;
+                    continue;
+                }
+            }
+        }
+
+        // Fallback: resolve inner descriptor without deeper nesting
+        match source.resolve_calldata(inner_chain, &callee_addr).await {
+            Ok(inner_rd) => results.push(inner_rd),
+            Err(_) => continue,
+        }
+    }
+
+    println!(
+        "[erc7730] resolve_descriptors_for_typed_data: resolved {} total descriptors",
+        results.len()
+    );
+    Ok(results)
 }
 
 #[cfg(test)]

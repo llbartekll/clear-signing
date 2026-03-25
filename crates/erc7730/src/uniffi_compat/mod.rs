@@ -389,6 +389,91 @@ pub async fn erc7730_resolve_descriptor_for_typed_data(
     Ok(None)
 }
 
+/// Resolve all descriptors needed for EIP-712 typed data, including nested calldata.
+///
+/// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
+/// First element is the outer EIP-712 descriptor, subsequent are inner calldata descriptors.
+/// Returns empty vec if no descriptor is found for the outer verifying contract.
+/// Automatically detects proxy contracts via `data_provider.get_implementation_address`.
+#[cfg(feature = "github-registry")]
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn erc7730_resolve_descriptors_for_typed_data(
+    typed_data_json: String,
+    data_provider: Arc<dyn DataProviderFfi>,
+) -> Result<Vec<String>, FfiError> {
+    let typed_data: crate::eip712::TypedData = serde_json::from_str(&typed_data_json)
+        .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
+
+    let chain_id = typed_data.domain.chain_id.unwrap_or(1);
+    let verifying_contract = typed_data
+        .domain
+        .verifying_contract
+        .as_deref()
+        .unwrap_or("0x0000000000000000000000000000000000000000");
+    let primary_type = &typed_data.primary_type;
+
+    println!(
+        "[erc7730] resolve_descriptors_for_typed_data: chain_id={}, verifying_contract={}, primary_type={}",
+        chain_id, verifying_contract, primary_type
+    );
+
+    let source = get_registry_source().await?;
+
+    // Try direct lookup
+    let mut descriptors = crate::resolve_descriptors_for_typed_data(
+        chain_id,
+        verifying_contract,
+        primary_type,
+        &typed_data.message,
+        source,
+    )
+    .await
+    .map_err(|e| FfiError::Resolve(e.to_string()))?;
+
+    println!(
+        "[erc7730] resolve_descriptors_for_typed_data: direct lookup found {} descriptors",
+        descriptors.len()
+    );
+
+    // Proxy detection fallback
+    if descriptors.is_empty() {
+        let impl_addr =
+            data_provider.get_implementation_address(chain_id, verifying_contract.to_string());
+        println!(
+            "[erc7730] resolve_descriptors_for_typed_data: proxy detection impl_addr={:?}",
+            impl_addr
+        );
+        if let Some(impl_addr) = impl_addr {
+            descriptors = crate::resolve_descriptors_for_typed_data(
+                chain_id,
+                &impl_addr,
+                primary_type,
+                &typed_data.message,
+                source,
+            )
+            .await
+            .map_err(|e| FfiError::Resolve(e.to_string()))?;
+            println!(
+                "[erc7730] resolve_descriptors_for_typed_data: proxy retry found {} descriptors",
+                descriptors.len()
+            );
+        }
+    }
+
+    println!(
+        "[erc7730] resolve_descriptors_for_typed_data: returning {} descriptors total",
+        descriptors.len()
+    );
+
+    descriptors
+        .iter()
+        .map(|rd| {
+            serde_json::to_string(&rd.descriptor)
+                .map_err(|e| FfiError::Descriptor(e.to_string()))
+        })
+        .collect()
+}
+
 /// Resolve all descriptors needed for a transaction, including nested calldata.
 ///
 /// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.

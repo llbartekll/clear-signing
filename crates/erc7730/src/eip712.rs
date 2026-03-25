@@ -571,7 +571,7 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
 /// Resolve a path in EIP-712 message JSON (e.g., "recipient" or "details.amount").
 ///
 /// Supports `[index]` and `[start:end]` slice notation.
-fn resolve_typed_path(message: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
+pub(crate) fn resolve_typed_path(message: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
     let path = path.strip_prefix("@.").unwrap_or(path);
     let mut current = message.clone();
 
