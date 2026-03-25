@@ -16,8 +16,7 @@ struct ClearSigningService {
         to: String,
         calldata: String,
         value: String?,
-        from: String?,
-        implementationAddress: String? = nil
+        from: String?
     ) async -> Result<DisplayModel, Error> {
         do {
             let tx = TransactionInput(
@@ -25,12 +24,15 @@ struct ClearSigningService {
                 to: to,
                 calldataHex: calldata,
                 valueHex: value,
-                fromAddress: from,
-                implementationAddress: implementationAddress
+                fromAddress: from
             )
 
-            // Single call resolves outer + any nested descriptors (e.g., Safe → inner contract)
-            let descriptors = try await erc7730ResolveDescriptorsForTx(transaction: tx)
+            // Single call resolves outer + any nested descriptors (e.g., Safe → inner contract).
+            // Automatically detects proxies via dataProvider.getImplementationAddress().
+            let descriptors = try await erc7730ResolveDescriptorsForTx(
+                transaction: tx,
+                dataProvider: dataProvider
+            )
 
             let model = try await erc7730FormatCalldata(
                 descriptorsJson: descriptors,

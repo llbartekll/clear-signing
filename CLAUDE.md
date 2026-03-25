@@ -69,19 +69,24 @@ Shared types in `lib.rs`:
 - `TransactionContext { chain_id, to, calldata, value, from, implementation_address }` — transaction parameters bundled into a single struct; `implementation_address` for proxy contracts (descriptor matching uses this instead of `to`)
 
 Entry points in `lib.rs`:
-- `format_calldata(descriptors, tx, data_provider)` — format calldata with pre-resolved descriptors; outer descriptor matched by chain_id + tx.to; remaining descriptors for nested calldata (Safe/4337); single-element slice = simple case
+- `resolve_descriptors_for_tx(tx, source)` — resolve all descriptors needed for a transaction including nested calldata; walks `FieldFormat::Calldata` fields to find inner callees and recursively resolves their descriptors; returns `[outer, inner1, ...]` for use with `format_calldata`
+- `format_calldata(descriptors, tx, data_provider)` — format calldata with pre-resolved descriptors; outer descriptor matched by chain_id + tx.to (or implementation_address for proxies); remaining descriptors for nested calldata (Safe/4337); single-element slice = simple case
 - `format_typed_data(descriptors, data, data_provider)` — format EIP-712 typed data with pre-resolved descriptors; outer descriptor matched by chain_id + verifying_contract
 - `merge_descriptors(including_json, included_json)` — merge two descriptor JSON strings for `includes` mechanism; including file wins on conflicts, field arrays merge by `path`
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
 - `erc7730_resolve_descriptor(chain_id, address)` — resolve descriptor JSON from GitHub registry; returns `Option<String>` (requires `github-registry` feature)
-- `erc7730_format_calldata(descriptors_json, transaction, data_provider)` — format calldata with pre-resolved descriptors; `transaction` is a `TransactionInput` record
+- `erc7730_resolve_descriptors_for_tx(transaction, data_provider)` — resolve all descriptors for a transaction including nested calldata; auto-detects proxy contracts via `data_provider.get_implementation_address()`; returns descriptor JSON strings in dependency order (requires `github-registry` feature)
+- `erc7730_format_calldata(descriptors_json, transaction, data_provider)` — format calldata with pre-resolved descriptors; auto-detects proxies via `data_provider.get_implementation_address()` for descriptor matching
 - `erc7730_format_typed_data(descriptors_json, typed_data_json, data_provider)` — format EIP-712 typed data with pre-resolved descriptors
 - `erc7730_merge_descriptors(including_json, included_json)` — merge two descriptor JSONs for `includes` mechanism
 
 UniFFI FFI records:
-- `TransactionInput { chain_id, to, calldata_hex, value_hex, from_address, implementation_address }` — FFI-safe transaction input
+- `TransactionInput { chain_id, to, calldata_hex, value_hex, from_address }` — FFI-safe transaction input
 - `TokenMetaFfi { symbol, decimals, name }` — FFI-safe token metadata (used by `DataProviderFfi` return type)
+
+UniFFI FFI traits:
+- `DataProviderFfi` — wallet-implemented trait for token metadata, ENS/local name resolution, NFT collection names, and proxy detection (`get_implementation_address`); methods are synchronous across FFI boundary
 
 Local Swift package product:
 - `Erc7730` (binary target + Swift wrapper target)
@@ -93,7 +98,7 @@ Local Swift package product:
 | `engine.rs` | `DisplayModel`, `DisplayEntry` (Item/Group/Nested), `DisplayItem` | Main formatting pipeline + nested calldata |
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
-| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource` | Descriptor resolution (static, HTTP) |
+| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource`, `resolve_descriptors_for_tx` | Descriptor resolution (static, HTTP) + recursive nested calldata resolution |
 | `token.rs` | `TokenSource` (trait), `TokenMeta` | Token metadata trait — resolution is fully the wallet's responsibility via `DataProviderFfi` |
 | `merge.rs` | `merge_descriptor_values`, `merge_descriptors` | JSON-level descriptor merge for `includes` mechanism |
 | `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
@@ -136,6 +141,7 @@ The library supports v2 registry descriptor features:
 - **Encryption params**: `scheme` and `plaintextType` fields (parsing only)
 - **EIP-712 domain completeness**: `version`, `chainId`, `salt` fields on descriptor domain
 - **`includes` mechanism**: Descriptor inheritance via `"includes": "./base.json"` — JSON-level merge, field arrays merge by `path`, nested includes with depth limit 3, `GitHubRegistrySource` resolves automatically
+- **Proxy detection**: FFI layer auto-detects proxy contracts (EIP-1967, Safe slot 0) via `DataProviderFfi.get_implementation_address()` — retries descriptor resolution with implementation address when direct lookup fails; wallet implements the RPC storage reads
 
 Optional features:
 - `github-registry`: async HTTP descriptor fetching via `GitHubRegistrySource` (adds `reqwest` dependency; requires tokio runtime)

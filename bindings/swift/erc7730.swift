@@ -1684,6 +1684,27 @@ public func erc7730ResolveDescriptor(chainId: UInt64, address: String)async thro
             errorHandler: FfiConverterTypeFfiError_lift
         )
 }
+/**
+ * Resolve all descriptors needed for a transaction, including nested calldata.
+ *
+ * Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
+ * First element is the outer descriptor, subsequent are inner callees.
+ * Returns empty vec if no descriptor is found for the outer address.
+ */
+public func erc7730ResolveDescriptorsForTx(transaction: TransactionInput)async throws  -> [String]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_erc7730_fn_func_erc7730_resolve_descriptors_for_tx(FfiConverterTypeTransactionInput_lower(transaction)
+                )
+            },
+            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
+            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
+            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceString.lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
 
 private enum InitializationResult {
     case ok
@@ -1710,6 +1731,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor() != 57254) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx() != 6911) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_token() != 7230) {

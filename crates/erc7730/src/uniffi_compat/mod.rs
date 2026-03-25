@@ -90,6 +90,12 @@ pub trait DataProviderFfi: Send + Sync {
         collection_address: String,
         chain_id: u64,
     ) -> Option<String>;
+    /// Detect proxy contract implementation address.
+    ///
+    /// Called when descriptor resolution by `tx.to` fails. Wallets should read
+    /// EIP-1967 implementation slot and/or Safe storage slot 0 via `eth_getStorageAt`.
+    /// Return `None` if the address is not a known proxy.
+    fn get_implementation_address(&self, chain_id: u64, address: String) -> Option<String>;
 }
 
 // ---------------------------------------------------------------------------
@@ -177,7 +183,6 @@ pub struct TransactionInput {
     pub calldata_hex: String,
     pub value_hex: Option<String>,
     pub from_address: Option<String>,
-    pub implementation_address: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +231,7 @@ impl From<Error> for FfiError {
 ///
 /// Takes pre-resolved descriptor JSON strings and a `TransactionInput`.
 /// The wallet is responsible for descriptor resolution (via `erc7730_resolve_descriptor`
-/// or its own source).
+/// or its own source). Proxy detection is automatic when `data_provider` is provided.
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn erc7730_format_calldata(
     descriptors_json: Vec<String>,
@@ -239,6 +244,10 @@ pub async fn erc7730_format_calldata(
         Some(ref hex_value) => Some(decode_hex(hex_value, HexContext::Value)?),
         None => None,
     };
+    // Auto-detect proxy implementation address for descriptor matching.
+    let impl_addr = data_provider
+        .as_ref()
+        .and_then(|dp| dp.get_implementation_address(transaction.chain_id, transaction.to.clone()));
     let provider = build_data_provider(data_provider);
     let tx = crate::TransactionContext {
         chain_id: transaction.chain_id,
@@ -246,7 +255,7 @@ pub async fn erc7730_format_calldata(
         calldata: &calldata,
         value: value.as_deref(),
         from: transaction.from_address.as_deref(),
-        implementation_address: transaction.implementation_address.as_deref(),
+        implementation_address: impl_addr.as_deref(),
     };
     crate::format_calldata(&descriptors, &tx, provider.as_ref())
         .await
@@ -306,10 +315,12 @@ pub async fn erc7730_resolve_descriptor(
 /// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
 /// First element is the outer descriptor, subsequent are inner callees.
 /// Returns empty vec if no descriptor is found for the outer address.
+/// Automatically detects proxy contracts via `data_provider.get_implementation_address`.
 #[cfg(feature = "github-registry")]
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn erc7730_resolve_descriptors_for_tx(
     transaction: TransactionInput,
+    data_provider: Arc<dyn DataProviderFfi>,
 ) -> Result<Vec<String>, FfiError> {
     let source = get_registry_source().await?;
     let calldata = decode_hex(&transaction.calldata_hex, HexContext::Calldata)?;
@@ -323,11 +334,27 @@ pub async fn erc7730_resolve_descriptors_for_tx(
         calldata: &calldata,
         value: value.as_deref(),
         from: transaction.from_address.as_deref(),
-        implementation_address: transaction.implementation_address.as_deref(),
+        implementation_address: None,
     };
-    let descriptors = crate::resolve_descriptors_for_tx(&tx, source)
+    let mut descriptors = crate::resolve_descriptors_for_tx(&tx, source)
         .await
         .map_err(|e| FfiError::Resolve(e.to_string()))?;
+
+    // Proxy detection fallback: if no descriptors found, ask the wallet to detect
+    // the proxy's implementation address and retry.
+    if descriptors.is_empty() {
+        if let Some(impl_addr) =
+            data_provider.get_implementation_address(transaction.chain_id, transaction.to.clone())
+        {
+            let tx_with_impl = crate::TransactionContext {
+                implementation_address: Some(impl_addr.as_str()),
+                ..tx
+            };
+            descriptors = crate::resolve_descriptors_for_tx(&tx_with_impl, source)
+                .await
+                .map_err(|e| FfiError::Resolve(e.to_string()))?;
+        }
+    }
 
     descriptors
         .iter()
@@ -529,7 +556,6 @@ mod tests {
             calldata_hex: transfer_calldata_hex().to_string(),
             value_hex: None,
             from_address: None,
-            implementation_address: None,
         }
     }
 
@@ -678,6 +704,9 @@ mod tests {
             _collection_address: String,
             _chain_id: u64,
         ) -> Option<String> {
+            None
+        }
+        fn get_implementation_address(&self, _chain_id: u64, _address: String) -> Option<String> {
             None
         }
     }
