@@ -232,16 +232,21 @@ impl GitHubRegistrySource {
     }
 
     async fn fetch_descriptor(&self, rel_path: &str) -> Result<Descriptor, ResolveError> {
-        self.fetch_and_merge(rel_path, Self::MAX_INCLUDES_DEPTH)
-            .await
+        let value = self
+            .fetch_and_merge_value(rel_path, Self::MAX_INCLUDES_DEPTH)
+            .await?;
+        serde_json::from_value(value).map_err(|e| ResolveError::Parse(e.to_string()))
     }
 
-    /// Fetch a descriptor and recursively resolve `includes`.
-    fn fetch_and_merge<'a>(
+    /// Fetch a descriptor JSON and recursively resolve `includes`, returning
+    /// the merged JSON value. Deserialization into [`Descriptor`] happens only
+    /// at the top-level caller so that partial included files (which may lack
+    /// required fields like `context`) don't cause parse errors.
+    fn fetch_and_merge_value<'a>(
         &'a self,
         rel_path: &'a str,
         depth: u8,
-    ) -> Pin<Box<dyn Future<Output = Result<Descriptor, ResolveError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ResolveError>> + Send + 'a>> {
         Box::pin(async move {
             let body = self.fetch_raw(rel_path).await?;
             let value: serde_json::Value =
@@ -262,14 +267,12 @@ impl GitHubRegistrySource {
 
                 // Resolve relative URL against the including file's directory
                 let resolved_path = resolve_relative_path(rel_path, &includes_path);
-                let included = self.fetch_and_merge(&resolved_path, depth - 1).await?;
-                let included_value = serde_json::to_value(&included)
-                    .map_err(|e| ResolveError::Parse(e.to_string()))?;
+                let included_value =
+                    self.fetch_and_merge_value(&resolved_path, depth - 1).await?;
 
-                let merged = crate::merge::merge_descriptor_values(&value, &included_value);
-                serde_json::from_value(merged).map_err(|e| ResolveError::Parse(e.to_string()))
+                Ok(crate::merge::merge_descriptor_values(&value, &included_value))
             } else {
-                serde_json::from_value(value).map_err(|e| ResolveError::Parse(e.to_string()))
+                Ok(value)
             }
         })
     }
