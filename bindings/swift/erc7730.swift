@@ -516,6 +516,15 @@ public protocol DataProviderFfi: AnyObject, Sendable {
     
     func resolveNftCollectionName(collectionAddress: String, chainId: UInt64)  -> String?
     
+    /**
+     * Detect proxy contract implementation address.
+     *
+     * Called when descriptor resolution by `tx.to` fails. Wallets should read
+     * EIP-1967 implementation slot and/or Safe storage slot 0 via `eth_getStorageAt`.
+     * Return `None` if the address is not a known proxy.
+     */
+    func getImplementationAddress(chainId: UInt64, address: String)  -> String?
+    
 }
 /**
  * Sync callback trait for wallet-side data resolution.
@@ -616,6 +625,23 @@ open func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -
             self.uniffiCloneHandle(),
         FfiConverterString.lower(collectionAddress),
         FfiConverterUInt64.lower(chainId),$0
+    )
+})
+}
+    
+    /**
+     * Detect proxy contract implementation address.
+     *
+     * Called when descriptor resolution by `tx.to` fails. Wallets should read
+     * EIP-1967 implementation slot and/or Safe storage slot 0 via `eth_getStorageAt`.
+     * Return `None` if the address is not a known proxy.
+     */
+open func getImplementationAddress(chainId: UInt64, address: String) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_erc7730_fn_method_dataproviderffi_get_implementation_address(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(chainId),
+        FfiConverterString.lower(address),$0
     )
 })
 }
@@ -746,6 +772,32 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
                 return uniffiObj.resolveNftCollectionName(
                      collectionAddress: try FfiConverterString.lift(collectionAddress),
                      chainId: try FfiConverterUInt64.lift(chainId)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        getImplementationAddress: { (
+            uniffiHandle: UInt64,
+            chainId: UInt64,
+            address: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String? in
+                guard let uniffiObj = try? FfiConverterTypeDataProviderFfi.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.getImplementationAddress(
+                     chainId: try FfiConverterUInt64.lift(chainId),
+                     address: try FfiConverterString.lift(address)
                 )
             }
 
@@ -1018,17 +1070,15 @@ public struct TransactionInput: Equatable, Hashable {
     public var calldataHex: String
     public var valueHex: String?
     public var fromAddress: String?
-    public var implementationAddress: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?, implementationAddress: String?) {
+    public init(chainId: UInt64, to: String, calldataHex: String, valueHex: String?, fromAddress: String?) {
         self.chainId = chainId
         self.to = to
         self.calldataHex = calldataHex
         self.valueHex = valueHex
         self.fromAddress = fromAddress
-        self.implementationAddress = implementationAddress
     }
 
     
@@ -1051,8 +1101,7 @@ public struct FfiConverterTypeTransactionInput: FfiConverterRustBuffer {
                 to: FfiConverterString.read(from: &buf), 
                 calldataHex: FfiConverterString.read(from: &buf), 
                 valueHex: FfiConverterOptionString.read(from: &buf), 
-                fromAddress: FfiConverterOptionString.read(from: &buf), 
-                implementationAddress: FfiConverterOptionString.read(from: &buf)
+                fromAddress: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -1062,7 +1111,6 @@ public struct FfiConverterTypeTransactionInput: FfiConverterRustBuffer {
         FfiConverterString.write(value.calldataHex, into: &buf)
         FfiConverterOptionString.write(value.valueHex, into: &buf)
         FfiConverterOptionString.write(value.fromAddress, into: &buf)
-        FfiConverterOptionString.write(value.implementationAddress, into: &buf)
     }
 }
 
@@ -1616,7 +1664,7 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
  *
  * Takes pre-resolved descriptor JSON strings and a `TransactionInput`.
  * The wallet is responsible for descriptor resolution (via `erc7730_resolve_descriptor`
- * or its own source).
+ * or its own source). Proxy detection is automatic when `data_provider` is provided.
  */
 public func erc7730FormatCalldata(descriptorsJson: [String], transaction: TransactionInput, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
     return
@@ -1690,12 +1738,13 @@ public func erc7730ResolveDescriptor(chainId: UInt64, address: String)async thro
  * Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
  * First element is the outer descriptor, subsequent are inner callees.
  * Returns empty vec if no descriptor is found for the outer address.
+ * Automatically detects proxy contracts via `data_provider.get_implementation_address`.
  */
-public func erc7730ResolveDescriptorsForTx(transaction: TransactionInput)async throws  -> [String]  {
+public func erc7730ResolveDescriptorsForTx(transaction: TransactionInput, dataProvider: DataProviderFfi)async throws  -> [String]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_resolve_descriptors_for_tx(FfiConverterTypeTransactionInput_lower(transaction)
+                uniffi_erc7730_fn_func_erc7730_resolve_descriptors_for_tx(FfiConverterTypeTransactionInput_lower(transaction),FfiConverterTypeDataProviderFfi_lower(dataProvider)
                 )
             },
             pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
@@ -1721,7 +1770,7 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 3664) {
+    if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 9410) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_format_typed_data() != 64635) {
@@ -1733,7 +1782,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor() != 57254) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx() != 6911) {
+    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx() != 7820) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_token() != 7230) {
@@ -1746,6 +1795,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_nft_collection_name() != 61037) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_method_dataproviderffi_get_implementation_address() != 18616) {
         return InitializationResult.apiChecksumMismatch
     }
 

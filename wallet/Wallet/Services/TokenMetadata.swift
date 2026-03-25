@@ -65,6 +65,10 @@ enum LookupKey {
         "ens.eip155:\(chainId):\(address.lowercased())"
     }
 
+    static func implementation(chainId: UInt64, address: String) -> String {
+        "impl.eip155:\(chainId):\(address.lowercased())"
+    }
+
     static func tokenKey(chainId: UInt64, address: String) -> String {
         "eip155:\(chainId)/erc20:\(address.lowercased())"
     }

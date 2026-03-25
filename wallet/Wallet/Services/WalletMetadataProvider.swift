@@ -11,6 +11,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         static let ens: TimeInterval = 7 * 24 * 60 * 60
         static let nft: TimeInterval = 30 * 24 * 60 * 60
         static let negative: TimeInterval = 12 * 60 * 60
+        static let implementation: TimeInterval = 90 * 24 * 60 * 60
     }
 
     private let seedTokenStore: SeedTokenStore
@@ -71,11 +72,59 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         lookupNFTCollectionName(chainId: chainId, address: collectionAddress)
     }
 
+    private enum ProxySlot {
+        /// EIP-1967 implementation slot: keccak256("eip1967.proxy.implementation") - 1
+        static let eip1967 = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"
+        /// Safe proxy: singleton stored at slot 0
+        static let safe = "0x0000000000000000000000000000000000000000000000000000000000000000"
+    }
+
     func getImplementationAddress(chainId: UInt64, address: String) -> String? {
-        // TODO: Implement proxy detection via eth_getStorageAt
-        // 1. Read EIP-1967 implementation slot (0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc)
-        // 2. Read Safe storage slot 0 (singleton address)
-        nil
+        guard let resolvedAddress = normalizedAddress(address) else {
+            return nil
+        }
+
+        let cacheKey = LookupKey.implementation(chainId: chainId, address: resolvedAddress)
+        let date = now()
+
+        switch cachedValue(for: cacheKey, as: String.self, now: date, positiveTTL: TTL.implementation) {
+        case .value(let impl):
+            return impl
+        case .negative:
+            return nil
+        case .missing:
+            break
+        }
+
+        guard canPerformLiveLookup(on: chainId),
+              let alchemyClient else {
+            return nil
+        }
+
+        // Try EIP-1967 implementation slot first
+        switch alchemyClient.fetchStorageAt(chainId: chainId, address: resolvedAddress, slot: ProxySlot.eip1967) {
+        case .value(let impl) where impl != resolvedAddress:
+            store(impl, key: cacheKey, ttl: TTL.implementation, now: date)
+            return impl
+        case .value:
+            break // Self-reference, not a proxy — try Safe slot
+        case .notFound:
+            break
+        case .unavailable:
+            return nil
+        }
+
+        // Try Safe singleton slot (slot 0)
+        switch alchemyClient.fetchStorageAt(chainId: chainId, address: resolvedAddress, slot: ProxySlot.safe) {
+        case .value(let impl) where impl != resolvedAddress:
+            store(impl, key: cacheKey, ttl: TTL.implementation, now: date)
+            return impl
+        case .value, .notFound:
+            store(nil as String?, key: cacheKey, ttl: TTL.negative, now: date)
+            return nil
+        case .unavailable:
+            return nil
+        }
     }
 
     // MARK: - Native Gas Token

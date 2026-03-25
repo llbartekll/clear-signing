@@ -227,6 +227,42 @@ final class AlchemyClient {
         return URL(string: "https://\(host).g.alchemy.com/nft/v3/\(apiKey)")
     }
 
+    func fetchStorageAt(chainId: UInt64, address: String, slot: String) -> RemoteLookup<String> {
+        guard let url = rpcURL(for: chainId) else {
+            return .unavailable
+        }
+
+        let payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_getStorageAt",
+            "params": [address, slot, "latest"]
+        ]
+
+        guard let json = performJSONRequest(url: url, method: "POST", jsonBody: payload) else {
+            return .unavailable
+        }
+
+        if json["error"] != nil {
+            return .unavailable
+        }
+
+        guard let result = json["result"] as? String,
+              let addr = addressFromStorageWord(result) else {
+            return .notFound
+        }
+
+        return .value(addr)
+    }
+
+    private func addressFromStorageWord(_ hex: String) -> String? {
+        let clean = hex.hasPrefix("0x") ? String(hex.dropFirst(2)) : hex
+        let padded = String(repeating: "0", count: max(0, 64 - clean.count)) + clean
+        let addressHex = String(padded.suffix(40))
+        guard addressHex != String(repeating: "0", count: 40) else { return nil }
+        return normalizedAddress("0x" + addressHex)
+    }
+
     private static let chainHostnames: [UInt64: String] = [
         1: "eth-mainnet",
         10: "opt-mainnet",
