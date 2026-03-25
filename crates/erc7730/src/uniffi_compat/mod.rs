@@ -271,6 +271,7 @@ pub async fn erc7730_format_typed_data(
     typed_data_json: String,
     data_provider: Option<Arc<dyn DataProviderFfi>>,
 ) -> Result<DisplayModel, FfiError> {
+    println!("[erc7730] format_typed_data: descriptors_count={}, typed_data_len={}", descriptors_json.len(), typed_data_json.len());
     let typed_data: TypedData = serde_json::from_str::<TypedData>(&typed_data_json)
         .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
 
@@ -280,15 +281,27 @@ pub async fn erc7730_format_typed_data(
         .verifying_contract
         .as_deref()
         .unwrap_or("0x0000000000000000000000000000000000000000");
+    println!("[erc7730] format_typed_data: chain_id={}, verifying_contract={}, primaryType={}", chain_id, address, typed_data.primary_type);
     let descriptors = parse_descriptors(&descriptors_json, chain_id, address)?;
+    println!("[erc7730] format_typed_data: parsed {} descriptors", descriptors.len());
+    for (i, rd) in descriptors.iter().enumerate() {
+        let dep_addrs: Vec<String> = rd.descriptor.context.deployments().iter().map(|d| format!("{}:{}", d.chain_id, &d.address)).collect();
+        let format_keys: Vec<&String> = rd.descriptor.display.formats.keys().collect();
+        println!("[erc7730] format_typed_data: descriptor[{}] deployments={:?}, format_keys={:?}", i, dep_addrs, format_keys);
+    }
 
     let provider = build_data_provider(data_provider);
-    crate::format_typed_data(&descriptors, &typed_data, provider.as_ref())
+    let result = crate::format_typed_data(&descriptors, &typed_data, provider.as_ref())
         .await
-        .map_err(Into::into)
+        .map_err(Into::into);
+    match &result {
+        Ok(model) => println!("[erc7730] format_typed_data: SUCCESS intent={:?}, warnings={:?}, entries={}", model.intent, model.warnings, model.entries.len()),
+        Err(e) => println!("[erc7730] format_typed_data: ERROR {:?}", e),
+    }
+    result
 }
 
-/// Resolve a descriptor from the GitHub registry for a given chain + address.
+/// Resolve a calldata descriptor from the GitHub registry for a given chain + address.
 ///
 /// Returns the descriptor JSON string, or `None` if no descriptor is found.
 /// Requires the `github-registry` feature.
@@ -310,6 +323,65 @@ pub async fn erc7730_resolve_descriptor(
     }
 }
 
+/// Resolve an EIP-712 descriptor from the GitHub registry for typed data.
+///
+/// Looks up by `chain_id` + `verifying_contract`. Automatically detects proxy
+/// contracts via `data_provider.get_implementation_address()` as fallback.
+/// Returns the descriptor JSON string, or `None` if no descriptor is found.
+/// Requires the `github-registry` feature.
+#[cfg(feature = "github-registry")]
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn erc7730_resolve_descriptor_for_typed_data(
+    chain_id: u64,
+    verifying_contract: String,
+    data_provider: Arc<dyn DataProviderFfi>,
+) -> Result<Option<String>, FfiError> {
+    println!("[erc7730] resolve_descriptor_for_typed_data: chain_id={}, verifying_contract={}", chain_id, verifying_contract);
+    let source = get_registry_source().await?;
+
+    // Try direct lookup by verifying contract
+    match source.resolve_typed(chain_id, &verifying_contract).await {
+        Ok(resolved) => {
+            let json = serde_json::to_string(&resolved.descriptor)
+                .map_err(|e| FfiError::Descriptor(e.to_string()))?;
+            println!("[erc7730] resolve_typed_data: FOUND descriptor directly for {}", verifying_contract);
+            return Ok(Some(json));
+        }
+        Err(crate::error::ResolveError::NotFound { .. }) => {
+            println!("[erc7730] resolve_typed_data: NOT FOUND for {}, trying proxy detection", verifying_contract);
+        }
+        Err(e) => {
+            println!("[erc7730] resolve_typed_data: ERROR for {}: {}", verifying_contract, e);
+            return Err(FfiError::Resolve(e.to_string()));
+        }
+    }
+
+    // Proxy detection fallback
+    let impl_addr = data_provider.get_implementation_address(chain_id, verifying_contract.clone());
+    println!("[erc7730] resolve_typed_data: get_implementation_address({}, {}) = {:?}", chain_id, verifying_contract, impl_addr);
+
+    if let Some(impl_addr) = impl_addr {
+        match source.resolve_typed(chain_id, &impl_addr).await {
+            Ok(resolved) => {
+                let json = serde_json::to_string(&resolved.descriptor)
+                    .map_err(|e| FfiError::Descriptor(e.to_string()))?;
+                println!("[erc7730] resolve_typed_data: FOUND descriptor via proxy impl_addr={}", impl_addr);
+                return Ok(Some(json));
+            }
+            Err(crate::error::ResolveError::NotFound { .. }) => {
+                println!("[erc7730] resolve_typed_data: NOT FOUND for impl_addr={} either", impl_addr);
+            }
+            Err(e) => {
+                println!("[erc7730] resolve_typed_data: ERROR for impl_addr={}: {}", impl_addr, e);
+                return Err(FfiError::Resolve(e.to_string()));
+            }
+        }
+    }
+
+    println!("[erc7730] resolve_typed_data: returning None (no descriptor found)");
+    Ok(None)
+}
+
 /// Resolve all descriptors needed for a transaction, including nested calldata.
 ///
 /// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
@@ -322,6 +394,7 @@ pub async fn erc7730_resolve_descriptors_for_tx(
     transaction: TransactionInput,
     data_provider: Arc<dyn DataProviderFfi>,
 ) -> Result<Vec<String>, FfiError> {
+    println!("[erc7730] resolve_descriptors_for_tx: chain_id={}, to={}", transaction.chain_id, transaction.to);
     let source = get_registry_source().await?;
     let calldata = decode_hex(&transaction.calldata_hex, HexContext::Calldata)?;
     let value = match transaction.value_hex {
@@ -339,13 +412,14 @@ pub async fn erc7730_resolve_descriptors_for_tx(
     let mut descriptors = crate::resolve_descriptors_for_tx(&tx, source)
         .await
         .map_err(|e| FfiError::Resolve(e.to_string()))?;
+    println!("[erc7730] resolve_descriptors_for_tx: direct lookup found {} descriptors", descriptors.len());
 
     // Proxy detection fallback: if no descriptors found, ask the wallet to detect
     // the proxy's implementation address and retry.
     if descriptors.is_empty() {
-        if let Some(impl_addr) =
-            data_provider.get_implementation_address(transaction.chain_id, transaction.to.clone())
-        {
+        let impl_addr = data_provider.get_implementation_address(transaction.chain_id, transaction.to.clone());
+        println!("[erc7730] resolve_descriptors_for_tx: proxy detection impl_addr={:?}", impl_addr);
+        if let Some(impl_addr) = impl_addr {
             let tx_with_impl = crate::TransactionContext {
                 implementation_address: Some(impl_addr.as_str()),
                 ..tx
@@ -353,9 +427,11 @@ pub async fn erc7730_resolve_descriptors_for_tx(
             descriptors = crate::resolve_descriptors_for_tx(&tx_with_impl, source)
                 .await
                 .map_err(|e| FfiError::Resolve(e.to_string()))?;
+            println!("[erc7730] resolve_descriptors_for_tx: proxy retry found {} descriptors", descriptors.len());
         }
     }
 
+    println!("[erc7730] resolve_descriptors_for_tx: returning {} descriptors total", descriptors.len());
     descriptors
         .iter()
         .map(|rd| {

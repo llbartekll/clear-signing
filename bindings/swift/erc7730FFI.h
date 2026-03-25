@@ -252,14 +252,14 @@ typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod0)(uint64_t, uint64_t
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD1
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD1
-typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod1)(uint64_t, RustBuffer, uint64_t, RustBuffer* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod1)(uint64_t, RustBuffer, uint64_t, RustBuffer, RustBuffer* _Nonnull, 
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD2
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD2
-typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod2)(uint64_t, RustBuffer, uint64_t, RustBuffer* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod2)(uint64_t, RustBuffer, uint64_t, RustBuffer, RustBuffer* _Nonnull, 
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
@@ -267,6 +267,13 @@ typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod2)(uint64_t, RustBuff
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD3
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD3
 typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod3)(uint64_t, RustBuffer, uint64_t, RustBuffer* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD4
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD4
+typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod4)(uint64_t, uint64_t, RustBuffer, RustBuffer* _Nonnull, 
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
@@ -280,6 +287,7 @@ typedef struct UniffiVTableCallbackInterfaceDataProviderFfi {
     UniffiCallbackInterfaceDataProviderFfiMethod1 _Nonnull resolveEnsName;
     UniffiCallbackInterfaceDataProviderFfiMethod2 _Nonnull resolveLocalName;
     UniffiCallbackInterfaceDataProviderFfiMethod3 _Nonnull resolveNftCollectionName;
+    UniffiCallbackInterfaceDataProviderFfiMethod4 _Nonnull getImplementationAddress;
 } UniffiVTableCallbackInterfaceDataProviderFfi;
 
 #endif
@@ -305,17 +313,22 @@ RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_token(uint64_t ptr, 
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_RESOLVE_ENS_NAME
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_RESOLVE_ENS_NAME
-RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_ens_name(uint64_t ptr, RustBuffer address, uint64_t chain_id, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_ens_name(uint64_t ptr, RustBuffer address, uint64_t chain_id, RustBuffer types, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_RESOLVE_LOCAL_NAME
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_RESOLVE_LOCAL_NAME
-RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_local_name(uint64_t ptr, RustBuffer address, uint64_t chain_id, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_local_name(uint64_t ptr, RustBuffer address, uint64_t chain_id, RustBuffer types, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_RESOLVE_NFT_COLLECTION_NAME
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_RESOLVE_NFT_COLLECTION_NAME
 RustBuffer uniffi_erc7730_fn_method_dataproviderffi_resolve_nft_collection_name(uint64_t ptr, RustBuffer collection_address, uint64_t chain_id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_GET_IMPLEMENTATION_ADDRESS
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_METHOD_DATAPROVIDERFFI_GET_IMPLEMENTATION_ADDRESS
+RustBuffer uniffi_erc7730_fn_method_dataproviderffi_get_implementation_address(uint64_t ptr, uint64_t chain_id, RustBuffer address, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_FORMAT_CALLDATA
@@ -336,6 +349,16 @@ RustBuffer uniffi_erc7730_fn_func_erc7730_merge_descriptors(RustBuffer including
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTOR
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTOR
 uint64_t uniffi_erc7730_fn_func_erc7730_resolve_descriptor(uint64_t chain_id, RustBuffer address
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTOR_FOR_TYPED_DATA
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTOR_FOR_TYPED_DATA
+uint64_t uniffi_erc7730_fn_func_erc7730_resolve_descriptor_for_typed_data(uint64_t chain_id, RustBuffer verifying_contract, uint64_t data_provider
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTORS_FOR_TX
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_FN_FUNC_ERC7730_RESOLVE_DESCRIPTORS_FOR_TX
+uint64_t uniffi_erc7730_fn_func_erc7730_resolve_descriptors_for_tx(RustBuffer transaction, uint64_t data_provider
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_ERC7730_RUSTBUFFER_ALLOC
@@ -622,6 +645,18 @@ uint16_t uniffi_erc7730_checksum_func_erc7730_resolve_descriptor(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_RESOLVE_DESCRIPTOR_FOR_TYPED_DATA
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_RESOLVE_DESCRIPTOR_FOR_TYPED_DATA
+uint16_t uniffi_erc7730_checksum_func_erc7730_resolve_descriptor_for_typed_data(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_RESOLVE_DESCRIPTORS_FOR_TX
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_FUNC_ERC7730_RESOLVE_DESCRIPTORS_FOR_TX
+uint16_t uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_TOKEN
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_TOKEN
 uint16_t uniffi_erc7730_checksum_method_dataproviderffi_resolve_token(void
@@ -643,6 +678,12 @@ uint16_t uniffi_erc7730_checksum_method_dataproviderffi_resolve_local_name(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_NFT_COLLECTION_NAME
 #define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_NFT_COLLECTION_NAME
 uint16_t uniffi_erc7730_checksum_method_dataproviderffi_resolve_nft_collection_name(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_METHOD_DATAPROVIDERFFI_GET_IMPLEMENTATION_ADDRESS
+#define UNIFFI_FFIDEF_UNIFFI_ERC7730_CHECKSUM_METHOD_DATAPROVIDERFFI_GET_IMPLEMENTATION_ADDRESS
+uint16_t uniffi_erc7730_checksum_method_dataproviderffi_get_implementation_address(void
     
 );
 #endif

@@ -149,29 +149,33 @@ impl DescriptorSource for StaticSource {
 #[cfg(feature = "github-registry")]
 pub struct GitHubRegistrySource {
     base_url: String,
-    /// Maps "{chain_id}:{address_lowercase}" → relative path in registry
-    index: HashMap<String, String>,
-    /// In-memory descriptor cache (tokio Mutex for async safety)
+    /// Maps "{chain_id}:{address_lowercase}" → list of relative paths in registry.
+    /// Multiple paths per key when both calldata and EIP-712 descriptors exist.
+    index: HashMap<String, Vec<String>>,
+    /// In-memory descriptor cache keyed by relative path (tokio Mutex for async safety)
     cache: tokio::sync::Mutex<HashMap<String, Descriptor>>,
 }
 
 #[cfg(feature = "github-registry")]
 impl GitHubRegistrySource {
-    /// Create a new source with a manually provided index.
+    /// Create a new source with a manually provided index (single path per key).
     ///
     /// `base_url`: raw content URL prefix (e.g., `"https://raw.githubusercontent.com/org/repo/main"`).
     /// `index`: maps `"{chain_id}:{address}"` → relative path (e.g., `"aave/calldata-lpv3.json"`).
     pub fn new(base_url: &str, index: HashMap<String, String>) -> Self {
+        let multi: HashMap<String, Vec<String>> =
+            index.into_iter().map(|(k, v)| (k, vec![v])).collect();
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
-            index,
+            index: multi,
             cache: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
     /// Create a source by fetching `index.json` from the registry.
     ///
-    /// The index maps `"{chain_id}:{address_lowercase}"` → relative descriptor path.
+    /// Index values can be a single string or an array of strings (when both
+    /// calldata and EIP-712 descriptors exist for the same address).
     pub async fn from_registry(base_url: &str) -> Result<Self, ResolveError> {
         let base = base_url.trim_end_matches('/');
         let index_url = format!("{}/index.json", base);
@@ -195,9 +199,37 @@ impl GitHubRegistrySource {
             .text()
             .await
             .map_err(|e| ResolveError::Io(format!("read index response: {e}")))?;
-        let index: HashMap<String, String> =
+        let raw: HashMap<String, serde_json::Value> =
             serde_json::from_str(&body).map_err(|e| ResolveError::Parse(e.to_string()))?;
-        Ok(Self::new(base, index))
+
+        // Normalize: string → vec![string], array → vec of strings
+        let index: HashMap<String, Vec<String>> = raw
+            .into_iter()
+            .filter_map(|(k, v)| match v {
+                serde_json::Value::String(s) => Some((k, vec![s])),
+                serde_json::Value::Array(arr) => {
+                    let paths: Vec<String> = arr
+                        .into_iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect();
+                    if paths.is_empty() {
+                        None
+                    } else {
+                        Some((k, paths))
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+        let eip712_count = index.values().filter(|paths: &&Vec<String>| paths.iter().any(|p| p.contains("eip712"))).count();
+        println!("[erc7730] from_registry: loaded {} index entries ({} with eip712 paths) from {}", index.len(), eip712_count, index_url);
+
+        Ok(Self {
+            base_url: base.to_string(),
+            index,
+            cache: tokio::sync::Mutex::new(HashMap::new()),
+        })
     }
 
     fn make_key(chain_id: u64, address: &str) -> String {
@@ -232,10 +264,23 @@ impl GitHubRegistrySource {
     }
 
     async fn fetch_descriptor(&self, rel_path: &str) -> Result<Descriptor, ResolveError> {
+        println!("[erc7730] fetch_descriptor: {}", rel_path);
         let value = self
             .fetch_and_merge_value(rel_path, Self::MAX_INCLUDES_DEPTH)
             .await?;
-        serde_json::from_value(value).map_err(|e| ResolveError::Parse(e.to_string()))
+        let result = serde_json::from_value::<Descriptor>(value);
+        match &result {
+            Ok(desc) => {
+                let ctx_type = match &desc.context {
+                    crate::types::context::DescriptorContext::Eip712(_) => "eip712",
+                    crate::types::context::DescriptorContext::Contract(_) => "contract",
+                };
+                let format_keys: Vec<&String> = desc.display.formats.keys().collect();
+                println!("[erc7730] fetch_descriptor: OK context={}, format_keys={:?}", ctx_type, format_keys);
+            }
+            Err(e) => println!("[erc7730] fetch_descriptor: PARSE ERROR: {}", e),
+        }
+        result.map_err(|e| ResolveError::Parse(e.to_string()))
     }
 
     /// Fetch a descriptor JSON and recursively resolve `includes`, returning
@@ -279,39 +324,126 @@ impl GitHubRegistrySource {
 }
 
 #[cfg(feature = "github-registry")]
+impl GitHubRegistrySource {
+    /// Resolve a descriptor for a given key, preferring the given context type.
+    ///
+    /// Tries each path for the key. If a descriptor with the preferred context
+    /// type is found, returns it immediately. Otherwise falls back to the first
+    /// successfully fetched descriptor (backwards compatible for single-entry keys).
+    async fn resolve_by_context(
+        &self,
+        chain_id: u64,
+        address: &str,
+        prefer_eip712: bool,
+    ) -> Result<ResolvedDescriptor, ResolveError> {
+        let address_owned = address.to_lowercase();
+        let key = Self::make_key(chain_id, &address_owned);
+        println!("[erc7730] resolve_by_context: key={}, prefer_eip712={}", key, prefer_eip712);
+
+        let paths = self
+            .index
+            .get(&key)
+            .ok_or_else(|| {
+                println!("[erc7730] resolve_by_context: key NOT FOUND in index");
+                ResolveError::NotFound {
+                    chain_id,
+                    address: address_owned.clone(),
+                }
+            })?
+            .clone();
+        println!("[erc7730] resolve_by_context: found {} paths: {:?}", paths.len(), paths);
+
+        // Check cache for a descriptor with matching context
+        {
+            let cache = self.cache.lock().await;
+            let mut fallback = None;
+            for path in &paths {
+                if let Some(cached) = cache.get(path) {
+                    let matches = match &cached.context {
+                        crate::types::context::DescriptorContext::Eip712(_) => prefer_eip712,
+                        crate::types::context::DescriptorContext::Contract(_) => !prefer_eip712,
+                    };
+                    if matches {
+                        return Ok(ResolvedDescriptor {
+                            descriptor: cached.clone(),
+                            chain_id,
+                            address: address_owned,
+                        });
+                    }
+                    if fallback.is_none() {
+                        fallback = Some(cached.clone());
+                    }
+                }
+            }
+            // If all paths are cached but none match the preferred context, use fallback
+            if paths.iter().all(|p| cache.contains_key(p.as_str())) {
+                if let Some(desc) = fallback {
+                    return Ok(ResolvedDescriptor {
+                        descriptor: desc,
+                        chain_id,
+                        address: address_owned,
+                    });
+                }
+            }
+        }
+
+        // Fetch uncached descriptors, return first with matching context
+        let mut fallback = None;
+        for path in &paths {
+            // Skip if already cached and didn't match above
+            if self.cache.lock().await.contains_key(path.as_str()) {
+                continue;
+            }
+
+            let descriptor = match self.fetch_descriptor(path).await {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            self.cache
+                .lock()
+                .await
+                .insert(path.clone(), descriptor.clone());
+
+            let matches = match &descriptor.context {
+                crate::types::context::DescriptorContext::Eip712(_) => prefer_eip712,
+                crate::types::context::DescriptorContext::Contract(_) => !prefer_eip712,
+            };
+            if matches {
+                return Ok(ResolvedDescriptor {
+                    descriptor,
+                    chain_id,
+                    address: address_owned,
+                });
+            }
+            if fallback.is_none() {
+                fallback = Some(descriptor);
+            }
+        }
+
+        // Fallback to first available descriptor (single-entry backwards compat)
+        match fallback {
+            Some(desc) => Ok(ResolvedDescriptor {
+                descriptor: desc,
+                chain_id,
+                address: address_owned,
+            }),
+            None => Err(ResolveError::NotFound {
+                chain_id,
+                address: address_owned,
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "github-registry")]
 impl DescriptorSource for GitHubRegistrySource {
     fn resolve_calldata(
         &self,
         chain_id: u64,
         address: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>> {
-        let address_owned = address.to_lowercase();
-        Box::pin(async move {
-            let key = Self::make_key(chain_id, &address_owned);
-
-            // Check cache first
-            if let Some(cached) = self.cache.lock().await.get(&key) {
-                return Ok(ResolvedDescriptor {
-                    descriptor: cached.clone(),
-                    chain_id,
-                    address: address_owned,
-                });
-            }
-
-            let rel_path = self.index.get(&key).ok_or_else(|| ResolveError::NotFound {
-                chain_id,
-                address: address_owned.clone(),
-            })?;
-
-            let descriptor = self.fetch_descriptor(rel_path).await?;
-            self.cache.lock().await.insert(key, descriptor.clone());
-
-            Ok(ResolvedDescriptor {
-                descriptor,
-                chain_id,
-                address: address_owned,
-            })
-        })
+        let addr = address.to_string();
+        Box::pin(async move { self.resolve_by_context(chain_id, &addr, false).await })
     }
 
     fn resolve_typed(
@@ -319,7 +451,8 @@ impl DescriptorSource for GitHubRegistrySource {
         chain_id: u64,
         address: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>> {
-        self.resolve_calldata(chain_id, address)
+        let addr = address.to_string();
+        Box::pin(async move { self.resolve_by_context(chain_id, &addr, true).await })
     }
 }
 

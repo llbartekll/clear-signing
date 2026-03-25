@@ -47,15 +47,17 @@ struct ClearSigningService {
 
     /// Format EIP-712 typed data.
     /// Resolves descriptors from the GitHub registry, then formats.
+    /// Automatically detects proxies via dataProvider.getImplementationAddress().
     func formatTypedData(typedDataJson: String) async -> Result<DisplayModel, Error> {
         do {
             // Parse domain to get chainId + verifyingContract for resolution
             let domainInfo = parseDomainInfo(from: typedDataJson)
             let descriptor: String? = if let chainId = domainInfo.chainId,
                                          let address = domainInfo.verifyingContract {
-                try await erc7730ResolveDescriptor(
+                try await erc7730ResolveDescriptorForTypedData(
                     chainId: chainId,
-                    address: address
+                    verifyingContract: address,
+                    dataProvider: dataProvider
                 )
             } else {
                 nil
