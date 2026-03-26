@@ -8,6 +8,8 @@
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
     <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
@@ -25,11 +27,17 @@
     </dict>
     <key>NSCameraUsageDescription</key>
     <string>Camera is used to scan WalletConnect QR codes</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
     <key>WalletConnectProjectID</key>
     <string>$(WALLETCONNECT_PROJECT_ID)</string>
     <key>AlchemyAPIKey</key>
     <string>$(ALCHEMY_API_KEY)</string>
     <key>UILaunchScreen</key>
     <dict/>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+    </array>
 </dict>
 </plist>
