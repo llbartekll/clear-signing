@@ -11,6 +11,7 @@ use crate::engine::{
     resolve_metadata_constant_str, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
+use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -657,30 +658,43 @@ pub(crate) fn resolve_typed_path(message: &serde_json::Value, path: &str) -> Opt
         // Handle array index: "items[0]" or "items[0:3]"
         if let Some(bracket) = segment.find('[') {
             let key = &segment[..bracket];
-            let idx_str = &segment[bracket + 1..segment.len() - 1];
+            let access = &segment[bracket..];
 
             if !key.is_empty() {
                 current = current.get(key)?.clone();
             }
 
-            // Check for slice syntax
-            if let Some(colon) = idx_str.find(':') {
-                let start: usize = idx_str[..colon].parse().ok()?;
-                let end: usize = idx_str[colon + 1..].parse().ok()?;
-                let arr = current.as_array()?;
-                let slice: Vec<serde_json::Value> = arr.get(start..end)?.to_vec();
-                current = serde_json::Value::Array(slice);
-            } else if let Ok(idx) = idx_str.parse::<usize>() {
-                current = current.get(idx)?.clone();
-            } else {
-                return None;
-            }
+            current = apply_typed_access(&current, access)?;
         } else {
             current = current.get(segment)?.clone();
         }
     }
 
     Some(current)
+}
+
+fn apply_typed_access(current: &serde_json::Value, segment: &str) -> Option<serde_json::Value> {
+    match current {
+        serde_json::Value::Array(items) => match apply_collection_access(items, segment)? {
+            CollectionSelection::Item(item) => Some(item),
+            CollectionSelection::Slice(slice) => Some(serde_json::Value::Array(slice)),
+        },
+        serde_json::Value::String(s) => {
+            let hex_str = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))?;
+            let bytes = hex::decode(hex_str).ok()?;
+            match apply_collection_access(&bytes, segment)? {
+                CollectionSelection::Item(byte) => {
+                    Some(serde_json::Value::String(format!("0x{:02x}", byte)))
+                }
+                CollectionSelection::Slice(slice) => {
+                    Some(serde_json::Value::String(format!("0x{}", hex::encode(slice))))
+                }
+            }
+        }
+        _ => None,
+    }
 }
 
 fn check_typed_visibility(rule: &VisibleRule, value: &Option<serde_json::Value>) -> bool {
@@ -695,6 +709,44 @@ fn check_typed_visibility(rule: &VisibleRule, value: &Option<serde_json::Value>)
                 true
             }
         }
+    }
+}
+
+fn coerce_typed_numeric_string(val: &serde_json::Value) -> Option<String> {
+    match val {
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::String(s) => {
+            if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                let bytes = hex::decode(hex_str).ok()?;
+                if bytes.len() <= 32 {
+                    Some(num_bigint::BigUint::from_bytes_be(&bytes).to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn coerce_typed_address_string(val: &serde_json::Value) -> Option<String> {
+    match val {
+        serde_json::Value::String(s) => {
+            let hex_str = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))?;
+            let bytes = hex::decode(hex_str).ok()?;
+            let addr = crate::engine::address_bytes_from_raw_bytes(&bytes)?;
+            if bytes.len() == 20 && hex_str.len() == 40 {
+                Some(s.clone())
+            } else {
+                Some(format!("0x{}", hex::encode(addr)))
+            }
+        }
+        serde_json::Value::Number(n) => n.as_u64().map(|v| format!("0x{:040x}", v)),
+        _ => None,
     }
 }
 
@@ -739,9 +791,11 @@ async fn format_typed_value(
     };
 
     match fmt {
-        FieldFormat::Address => Ok(json_value_to_string(val)),
+        FieldFormat::Address => Ok(
+            coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val))
+        ),
         FieldFormat::AddressName | FieldFormat::InteroperableAddressName => {
-            let addr = json_value_to_string(val);
+            let addr = coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
 
             // Check senderAddress
             if let Some(params) = params {
@@ -809,14 +863,7 @@ async fn format_typed_value(
             let token_meta = if let Some(params) = params {
                 if let Some(ref token_path) = params.token_path {
                     let token_addr = resolve_typed_path(message, token_path);
-                    // Support both string addresses and uint256-packed addresses
-                    let addr_str = match token_addr {
-                        Some(serde_json::Value::String(addr)) => Some(addr),
-                        Some(serde_json::Value::Number(ref n)) => {
-                            n.as_u64().map(|v| format!("0x{:040x}", v))
-                        }
-                        _ => None,
-                    };
+                    let addr_str = token_addr.as_ref().and_then(coerce_typed_address_string);
                     if let Some(addr) = addr_str {
                         data_provider.resolve_token(lookup_chain, &addr).await
                     } else {
@@ -856,7 +903,7 @@ async fn format_typed_value(
                 .map_err(|e| Error::Render(format!("format error: {e}")))?)
         }
         FieldFormat::Enum => {
-            let raw = json_value_to_string(val);
+            let raw = coerce_typed_numeric_string(val).unwrap_or_else(|| json_value_to_string(val));
             if let Some(params) = params {
                 if let Some(ref enum_path) = params.enum_path {
                     if let Some(enum_def) = descriptor.metadata.enums.get(enum_path) {
@@ -881,7 +928,7 @@ async fn format_typed_value(
         FieldFormat::Number => Ok(json_value_to_string(val)),
         FieldFormat::TokenTicker => {
             let lookup_chain = resolve_typed_chain_id(params, chain_id, message);
-            let addr = json_value_to_string(val);
+            let addr = coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
             if let Some(meta) = data_provider.resolve_token(lookup_chain, &addr).await {
                 Ok(meta.symbol)
             } else {
@@ -1126,6 +1173,7 @@ fn resolve_and_format_typed_interpolation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::token::{StaticTokenSource, TokenMeta};
 
     #[test]
     fn test_resolve_typed_path() {
@@ -1149,10 +1197,112 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_typed_path_hex_slices() {
+        let message = serde_json::json!({
+            "hookData": "0x636374702d666f72776172640000000000000000000000000000000000000018f0a063a21be62b709937ca2a808594b662fe41e600000000",
+            "packed": "0x000000000000000000000000b21d281dedb17ae5b501f6aa8256fe38c4e45757"
+        });
+
+        assert_eq!(
+            resolve_typed_path(&message, "hookData.[32:52]"),
+            Some(serde_json::json!("0xf0a063a21be62b709937ca2a808594b662fe41e6"))
+        );
+        assert_eq!(
+            resolve_typed_path(&message, "hookData.[52:53]"),
+            Some(serde_json::json!("0x00"))
+        );
+        assert_eq!(
+            resolve_typed_path(&message, "packed.[-20:]"),
+            Some(serde_json::json!("0xb21d281dedb17ae5b501f6aa8256fe38c4e45757"))
+        );
+    }
+
+    #[test]
     fn test_json_value_to_string() {
         assert_eq!(json_value_to_string(&serde_json::json!("hello")), "hello");
         assert_eq!(json_value_to_string(&serde_json::json!(42)), "42");
         assert_eq!(json_value_to_string(&serde_json::json!(true)), "true");
+    }
+
+    #[tokio::test]
+    async fn test_typed_byte_slice_formatters() {
+        let descriptor_json = r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {
+                "owner": "test",
+                "enums": { "dex": { "0": "Perp" } },
+                "constants": {},
+                "maps": {}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "SliceTest": {
+                        "intent": "Slice test",
+                        "fields": [
+                            {"path": "hookData.[32:52]", "label": "Recipient", "format": "addressName"},
+                            {"path": "hookData.[52:53]", "label": "Dex", "format": "enum", "params": {"$ref": "$.metadata.enums.dex"}},
+                            {"path": "amount", "label": "Amount", "format": "tokenAmount", "params": {"tokenPath": "tokenWord.[-20:]"}}
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+            "types": {
+                "EIP712Domain": [],
+                "SliceTest": [
+                    {"name": "hookData", "type": "bytes"},
+                    {"name": "tokenWord", "type": "bytes32"},
+                    {"name": "amount", "type": "uint256"}
+                ]
+            },
+            "primaryType": "SliceTest",
+            "domain": {"chainId": 1, "verifyingContract": "0xabc"},
+            "message": {
+                "hookData": "0x636374702d666f72776172640000000000000000000000000000000000000018f0a063a21be62b709937ca2a808594b662fe41e600000000",
+                "tokenWord": "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+                "amount": "1500000"
+            }
+        }))
+        .unwrap();
+
+        let descriptor = Descriptor::from_json(descriptor_json).unwrap();
+        let mut tokens = StaticTokenSource::new();
+        tokens.insert(
+            1,
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            TokenMeta {
+                symbol: "USDC".to_string(),
+                decimals: 6,
+                name: "USD Coin".to_string(),
+            },
+        );
+
+        let result = format_typed_data(&descriptor, &typed_data, &tokens, &[])
+            .await
+            .unwrap();
+
+        match &result.entries[0] {
+            DisplayEntry::Item(item) => {
+                assert_eq!(item.label, "Recipient");
+                assert_eq!(item.value, "0xf0a063a21be62b709937ca2a808594b662fe41e6");
+            }
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[1] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "Perp"),
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[2] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "1.5 USDC"),
+            _ => panic!("expected Item"),
+        }
     }
 
     #[tokio::test]

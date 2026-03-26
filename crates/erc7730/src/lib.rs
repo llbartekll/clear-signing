@@ -11,6 +11,7 @@ pub mod eip712;
 pub mod engine;
 pub mod error;
 pub mod merge;
+mod path;
 pub mod provider;
 pub mod resolver;
 pub mod token;

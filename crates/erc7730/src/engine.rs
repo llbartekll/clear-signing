@@ -8,6 +8,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 
 use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::error::Error;
+use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -680,39 +681,25 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
         }
         ArgumentValue::Array(members) => {
             let seg = segments[0];
-
-            // Handle bracket notation within segment: "items[0]" or "items[0:3]"
-            if let Some(bracket) = seg.find('[') {
-                if seg.ends_with(']') {
-                    let idx_str = &seg[bracket + 1..seg.len() - 1];
-                    // Check for slice syntax
-                    if let Some(colon) = idx_str.find(':') {
-                        let start: usize = idx_str[..colon].parse().ok()?;
-                        let end: usize = idx_str[colon + 1..].parse().ok()?;
-                        let slice: Vec<ArgumentValue> = members.get(start..end)?.to_vec();
-                        return navigate_value(&ArgumentValue::Array(slice), &segments[1..]);
-                    }
-                    let index = resolve_array_index(idx_str, members.len())?;
-                    return members
-                        .get(index)
-                        .and_then(|v| navigate_value(v, &segments[1..]));
+            match apply_collection_access(members, seg)? {
+                CollectionSelection::Item(item) => navigate_value(&item, &segments[1..]),
+                CollectionSelection::Slice(slice) => {
+                    navigate_value(&ArgumentValue::Array(slice), &segments[1..])
                 }
             }
-
-            // Slice syntax at top level: "0:3"
-            if let Some(colon) = seg.find(':') {
-                let start: usize = seg[..colon].parse().ok()?;
-                let end: usize = seg[colon + 1..].parse().ok()?;
-                let slice: Vec<ArgumentValue> = members.get(start..end)?.to_vec();
-                return navigate_value(&ArgumentValue::Array(slice), &segments[1..]);
-            }
-
-            if let Some(index) = resolve_array_index(seg, members.len()) {
-                members
-                    .get(index)
-                    .and_then(|v| navigate_value(v, &segments[1..]))
-            } else {
-                None
+        }
+        ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes)
+        | ArgumentValue::Uint(bytes)
+        | ArgumentValue::Int(bytes) => {
+            let seg = segments[0];
+            match apply_collection_access(bytes, seg)? {
+                CollectionSelection::Item(byte) => {
+                    navigate_value(&ArgumentValue::Bytes(vec![byte]), &segments[1..])
+                }
+                CollectionSelection::Slice(slice) => {
+                    navigate_value(&ArgumentValue::Bytes(slice), &segments[1..])
+                }
             }
         }
         _ => None,
@@ -733,20 +720,6 @@ pub(crate) fn split_array_iter_path(path: &str) -> Option<(&str, &str)> {
     // Strip leading dot from remaining path
     let rest = rest.strip_prefix('.').unwrap_or(rest);
     Some((base, rest))
-}
-
-/// Parse an array index that may be negative.
-/// Negative indices count from the end: -1 = last, -2 = second-to-last.
-fn resolve_array_index(idx_str: &str, len: usize) -> Option<usize> {
-    if let Some(neg) = idx_str.strip_prefix('-') {
-        let n: usize = neg.parse().ok()?;
-        if n == 0 || n > len {
-            return None;
-        }
-        Some(len - n)
-    } else {
-        idx_str.parse().ok()
-    }
 }
 
 /// Check if a field should be visible based on the visibility rule and decoded value.
@@ -1132,11 +1105,39 @@ fn format_raw(val: &ArgumentValue) -> String {
     }
 }
 
-fn format_address(val: &ArgumentValue) -> String {
-    match val {
-        ArgumentValue::Address(addr) => eip55_checksum(addr),
-        _ => format_raw(val),
+pub(crate) fn address_bytes_from_raw_bytes(bytes: &[u8]) -> Option<[u8; 20]> {
+    let addr_bytes = match bytes.len() {
+        20 => bytes,
+        32 => &bytes[12..32],
+        _ => return None,
+    };
+    if addr_bytes.iter().all(|&b| b == 0) {
+        return None;
     }
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(addr_bytes);
+    Some(addr)
+}
+
+pub(crate) fn address_bytes_from_argument_value(val: &ArgumentValue) -> Option<[u8; 20]> {
+    match val {
+        ArgumentValue::Address(addr) => Some(*addr),
+        ArgumentValue::Uint(bytes)
+        | ArgumentValue::Int(bytes)
+        | ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes) => address_bytes_from_raw_bytes(bytes),
+        _ => None,
+    }
+}
+
+pub(crate) fn address_string_from_argument_value(val: &ArgumentValue) -> Option<String> {
+    address_bytes_from_argument_value(val).map(|addr| format!("0x{}", hex::encode(addr)))
+}
+
+fn format_address(val: &ArgumentValue) -> String {
+    address_bytes_from_argument_value(val)
+        .map(|addr| eip55_checksum(&addr))
+        .unwrap_or_else(|| format_raw(val))
 }
 
 /// Format an address as a trusted name (spec: addressName).
@@ -1150,7 +1151,7 @@ async fn format_address_name(
     val: &ArgumentValue,
     params: Option<&FormatParams>,
 ) -> Result<String, Error> {
-    let ArgumentValue::Address(addr) = val else {
+    let Some(addr) = address_bytes_from_argument_value(val) else {
         return Ok(format_raw(val));
     };
 
@@ -1166,10 +1167,8 @@ async fn format_address_name(
             for sender_ref in &sender_addrs {
                 // Resolve path references like "@.from"
                 let resolved_addr = if sender_ref.starts_with("@.") || sender_ref.starts_with('#') {
-                    resolve_path(ctx.decoded, sender_ref).and_then(|v| match v {
-                        ArgumentValue::Address(a) => Some(format!("0x{}", hex::encode(a))),
-                        _ => None,
-                    })
+                    resolve_path(ctx.decoded, sender_ref)
+                        .and_then(|v| address_string_from_argument_value(&v))
                 } else {
                     Some(sender_ref.to_string())
                 };
@@ -1222,7 +1221,7 @@ async fn format_address_name(
     }
 
     // 5. Fallback: EIP-55 checksum
-    Ok(eip55_checksum(addr))
+    Ok(eip55_checksum(&addr))
 }
 
 /// EIP-55 mixed-case checksum encoding.
@@ -1257,6 +1256,20 @@ fn format_number(val: &ArgumentValue) -> String {
         ArgumentValue::Uint(bytes) => BigUint::from_bytes_be(bytes).to_string(),
         ArgumentValue::Int(bytes) => int_to_bigint(bytes).to_string(),
         _ => format_raw(val),
+    }
+}
+
+fn numeric_string_from_argument_value(val: &ArgumentValue) -> Option<String> {
+    match val {
+        ArgumentValue::Uint(bytes)
+        | ArgumentValue::Int(bytes)
+        | ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes)
+            if bytes.len() <= 32 =>
+        {
+            Some(BigUint::from_bytes_be(bytes).to_string())
+        }
+        _ => None,
     }
 }
 
@@ -1297,13 +1310,9 @@ async fn format_token_amount(
         if let Some(ref token_path) = params.token_path {
             // Resolve token address from calldata (supports address and uint256-packed addresses)
             let token_addr = resolve_path(ctx.decoded, token_path);
-            let addr_hex = match token_addr {
-                Some(ArgumentValue::Address(addr)) => {
-                    Some(format!("0x{}", hex::encode(addr)))
-                }
-                Some(ArgumentValue::Uint(ref bytes)) => address_from_uint_bytes(bytes),
-                _ => None,
-            };
+            let addr_hex = token_addr
+                .as_ref()
+                .and_then(address_string_from_argument_value);
             if let Some(ref addr_hex) = addr_hex {
                 // Check for native currency
                 if let Some(ref native) = params.native_currency_address {
@@ -1371,20 +1380,6 @@ async fn format_token_amount(
     }
 }
 
-/// Extract a 20-byte address from uint256 bytes (low 20 bytes).
-///
-/// Handles gas-optimized contracts that store addresses as uint256.
-pub(crate) fn address_from_uint_bytes(bytes: &[u8]) -> Option<String> {
-    if bytes.len() < 20 {
-        return None;
-    }
-    let addr_bytes = &bytes[bytes.len() - 20..];
-    if addr_bytes.iter().all(|&b| b == 0) {
-        return None;
-    }
-    Some(format!("0x{}", hex::encode(addr_bytes)))
-}
-
 /// Resolve a `$.metadata.constants.xxx` reference to its string value, or return the input as-is.
 pub(crate) fn resolve_metadata_constant_str(descriptor: &Descriptor, ref_str: &str) -> String {
     if let Some(const_name) = ref_str.strip_prefix("$.metadata.constants.") {
@@ -1434,8 +1429,7 @@ async fn format_token_ticker(
 ) -> Result<String, Error> {
     let lookup_chain_id = resolve_chain_id(ctx, params);
 
-    if let ArgumentValue::Address(addr) = val {
-        let addr_hex = format!("0x{}", hex::encode(addr));
+    if let Some(addr_hex) = address_string_from_argument_value(val) {
         if let Some(meta) = ctx
             .data_provider
             .resolve_token(lookup_chain_id, &addr_hex)
@@ -1551,7 +1545,7 @@ fn format_enum(
     val: &ArgumentValue,
     params: Option<&FormatParams>,
 ) -> Result<String, Error> {
-    let raw = format_raw(val);
+    let raw = numeric_string_from_argument_value(val).unwrap_or_else(|| format_raw(val));
 
     if let Some(params) = params {
         // Try direct enumPath first
@@ -1911,7 +1905,7 @@ fn format_enum_for_interpolation(
     val: &ArgumentValue,
     params: Option<&FormatParams>,
 ) -> String {
-    let raw = format_raw(val);
+    let raw = numeric_string_from_argument_value(val).unwrap_or_else(|| format_raw(val));
     if let Some(params) = params {
         if let Some(ref enum_path) = params.enum_path {
             if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_path) {
@@ -2014,6 +2008,8 @@ async fn format_token_amount_for_interpolation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decoder::{DecodedArgument, ParamType};
+    use crate::path::{parse_collection_access, CollectionAccess};
 
     #[test]
     fn test_format_with_decimals() {
@@ -2050,9 +2046,111 @@ mod tests {
         assert_eq!(checksummed, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
     }
 
+    #[test]
+    fn test_byte_slice_path_resolution_supports_bytes_fixedbytes_and_uint() {
+        let decoded = DecodedArguments {
+            function_name: "demo".to_string(),
+            selector: [0; 4],
+            args: vec![
+                DecodedArgument {
+                    index: 0,
+                    name: Some("payload".to_string()),
+                    param_type: ParamType::Bytes,
+                    value: ArgumentValue::Bytes(vec![0x11, 0x22, 0x33, 0x44]),
+                },
+                DecodedArgument {
+                    index: 1,
+                    name: Some("packed".to_string()),
+                    param_type: ParamType::FixedBytes(32),
+                    value: ArgumentValue::FixedBytes(
+                        hex::decode(
+                            "000000000000000000000000b21d281dedb17ae5b501f6aa8256fe38c4e45757",
+                        )
+                        .unwrap(),
+                    ),
+                },
+                DecodedArgument {
+                    index: 2,
+                    name: Some("packed_addr".to_string()),
+                    param_type: ParamType::Uint(256),
+                    value: ArgumentValue::Uint(
+                        hex::decode(
+                            "0000000000000000000000001111111111111111111111111111111111111111",
+                        )
+                        .unwrap(),
+                    ),
+                },
+            ],
+        };
+
+        match resolve_path(&decoded, "payload.[1:3]") {
+            Some(ArgumentValue::Bytes(bytes)) => assert_eq!(hex::encode(bytes), "2233"),
+            other => panic!("unexpected payload slice: {other:?}"),
+        }
+        match resolve_path(&decoded, "packed.[-20:]") {
+            Some(ArgumentValue::Bytes(bytes)) => {
+                assert_eq!(hex::encode(bytes), "b21d281dedb17ae5b501f6aa8256fe38c4e45757")
+            }
+            other => panic!("unexpected packed slice: {other:?}"),
+        }
+        match resolve_path(&decoded, "packed_addr.[-20:]") {
+            Some(ArgumentValue::Bytes(bytes)) => {
+                assert_eq!(hex::encode(bytes), "1111111111111111111111111111111111111111")
+            }
+            other => panic!("unexpected packed uint slice: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_enum_and_address_coercions_accept_byte_like_values() {
+        let descriptor: Descriptor = serde_json::from_str(
+            r#"{"context":{"contract":{"deployments":[]}},"metadata":{"owner":"test","enums":{"dex":{"82":"Single swap"}},"constants":{},"maps":{}},"display":{"definitions":{},"formats":{}}}"#,
+        )
+        .unwrap();
+        let decoded = DecodedArguments {
+            function_name: "demo".to_string(),
+            selector: [0; 4],
+            args: vec![],
+        };
+        let provider = crate::provider::EmptyDataProvider;
+        let ctx = RenderContext {
+            descriptor: &descriptor,
+            decoded: &decoded,
+            chain_id: 1,
+            data_provider: &provider,
+            descriptors: &[],
+            depth: 0,
+        };
+        let params: FormatParams =
+            serde_json::from_value(serde_json::json!({"$ref": "$.metadata.enums.dex"})).unwrap();
+
+        assert_eq!(
+            format_enum(&ctx, &ArgumentValue::Bytes(vec![0x52]), Some(&params)).unwrap(),
+            "Single swap"
+        );
+        assert_eq!(
+            format_address(&ArgumentValue::Bytes(
+                hex::decode("b21d281dedb17ae5b501f6aa8256fe38c4e45757").unwrap()
+            )),
+            "0xb21D281DEdb17AE5B501F6AA8256fe38C4e45757"
+        );
+    }
+
+    #[test]
+    fn test_shared_slice_parser_supports_open_ended_bounds() {
+        assert_eq!(
+            parse_collection_access("[:1]", 4),
+            Some(CollectionAccess::Slice { start: 0, end: 1 })
+        );
+        assert_eq!(
+            parse_collection_access("[-2:]", 4),
+            Some(CollectionAccess::Slice { start: 2, end: 4 })
+        );
+        assert_eq!(parse_collection_access("[5:2]", 4), None);
+    }
+
     #[tokio::test]
     async fn test_interpolate_intent() {
-        use crate::decoder::{DecodedArgument, ParamType};
         use crate::provider::EmptyDataProvider;
 
         let decoded = DecodedArguments {
@@ -2099,7 +2197,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_interpolate_intent_address_name() {
-        use crate::decoder::{DecodedArgument, ParamType};
         use crate::types::display::{DisplayField, FieldFormat};
 
         // Provider that resolves a specific address to a local name
