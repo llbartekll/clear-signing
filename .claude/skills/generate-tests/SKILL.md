@@ -1,40 +1,34 @@
 ---
 name: generate-tests
 description: >
-  Fetch real blockchain transactions from Etherscan, validate them against an
-  ERC-7730 descriptor using the Rust library, and persist regression fixture tests.
+  Fetch real blockchain transactions from Etherscan and validate them against an
+  ERC-7730 descriptor using the Rust library. Reports pass/fail per function.
   Use when asked to "generate tests for this descriptor", "fetch real transactions
   for testing", "test descriptor with real data", or "/generate-tests <path-or-url>".
-tools: Read, Bash, WebFetch, Grep, Glob, Write
+tools: Read, Bash, WebFetch, Grep, Glob
 ---
 
 # generate-tests Skill
 
-Validate an ERC-7730 descriptor end-to-end by fetching real on-chain transactions,
-running them through the Rust clear-signing library, and persisting regression
-fixture tests.
+Validate an ERC-7730 descriptor end-to-end by fetching real on-chain transactions
+and running them through the Rust clear-signing library. Reports pass/fail status
+per function signature.
 
 ## Goal
 
 For each function signature in a descriptor's `display.formats`, fetch real
-transactions from Etherscan, run them through `format_calldata()`, and persist
-1 calldata per function as a regression fixture test. The fixture is auto-discovered
-by `fixture_tests.rs` and runs on every `cargo test`.
+transactions from Etherscan, run them through `format_calldata()`, and report
+whether the library correctly formats each one.
 
-**Single flow — every run:**
-1. Validates the descriptor against real transactions (transient report)
-2. Writes `tests/fixtures/{name}/tests.json` with 1 tx per function (persistent regression test)
-3. Runs `cargo test` to populate expected values via capture mode
-
-**Re-run policy:** Overwrites existing fixtures. Re-running means intentionally
-resetting the regression baseline (descriptor or engine changed). Day-to-day
-`cargo test` uses committed expected values to catch regressions.
+This is a **smoke test tool** for descriptor authors — it answers "does my
+descriptor work against real on-chain data?" The results are transient (not
+persisted as fixtures). If you want permanent regression coverage, promote
+interesting test cases to explicit integration tests in `crates/erc7730/tests/`.
 
 ## Inputs
 
 - **Descriptor**: local file path OR GitHub URL
 - **API key**: `ETHERSCAN_API_KEY` from env or `.env` file
-- If no descriptor specified: process all entries from contract registry (`.test-contracts.json`)
 
 ## Workflow
 
@@ -61,11 +55,6 @@ If input looks like a URL:
 
 If input is a local file path:
 - Read with Read tool
-
-If no input specified:
-- Read `crates/erc7730/tests/.test-contracts.json` (contract registry)
-- For each entry, use `local_fixture` to find the descriptor in `tests/fixtures/`
-- Process each descriptor in sequence
 
 Parse JSON into memory. Extract:
 ```
@@ -127,16 +116,14 @@ token address from fetched calldata at the referenced parameter position.
    Use the chain-specific subdomain from the Alchemy chain table.
 
 3. **Unknown**: If both fail, note the token address as unresolved. Add to the
-   improvement suggestions (Step 8).
+   improvement suggestions (Step 7).
 
-Build a `tokens` array for the fixture:
+Build a token list for the validation run:
 ```json
 [{"chain_id": 1, "address": "0x...", "symbol": "USDC", "decimals": 6, "name": "USD Coin"}]
 ```
 
-### Step 5 — Run through library + write fixtures
-
-#### 5a. Validate (transient)
+### Step 5 — Run through library (validate)
 
 For each matched transaction, fetch full calldata via Etherscan proxy API:
 ```
@@ -161,21 +148,6 @@ Capture whether each call succeeds or fails. If it succeeds, capture the
 `DisplayModel` output (intent, interpolated intent, entries, warnings).
 
 Delete the temporary test file after collecting results.
-
-#### 5b. Write regression fixture (persistent)
-
-1. Pick exactly **1 successful transaction per function selector** (prefer mainnet chain,
-   first successful match across chains).
-2. Create directory `crates/erc7730/tests/fixtures/{name}/` (overwrite if exists).
-3. Write `tests.json` with:
-   - `"descriptor": "../{name}.json"` (relative path to descriptor)
-   - `"tokens": [...]` from Step 4 resolution
-   - `"tests": [...]` with one entry per function, `"expected": null` (capture mode)
-   - Test `"name"` derived from function name in snake_case (strip parens and params,
-     e.g., `swapExactAmountIn(...)` → `swap_exact_amount_in`)
-4. Run `cargo test -p erc7730 --test fixture_tests -- --nocapture` to trigger capture mode.
-   This populates the `expected` fields in `tests.json` with actual `DisplayModel` output.
-5. The resulting `tests.json` with populated expected values is ready to commit.
 
 ### Step 6 — Report results
 
@@ -202,44 +174,24 @@ Present a structured report:
 ### Uncovered Selectors (not in descriptor)
 - 0x28530a47 setUserEMode(uint8) — 3 txs
 - 0x2dad97d4 repayWithATokens(address,uint256,uint256) — 3 txs
-
-### Fixtures: crates/erc7730/tests/fixtures/{name}/tests.json
-- {N} regression test cases (1 per function)
-- Expected values captured via cargo test
-- Tokens resolved: {list}
-- Missing tokens: {list or "none"}
 ```
 
-### Step 7 — Update contract registry
+#### Optional: Scaffold integration test
 
-If `crates/erc7730/tests/.test-contracts.json` exists:
-- Find or create the entry for this descriptor
-- Update `last_validated` to today's date
-- Update `chains` with the chains that were successfully queried
+If the user asks, print a scaffold of an integration test to stdout (following
+the pattern in `tests/morpho_blue_integration.rs` or `tests/aave_integration.rs`)
+that they can copy-paste and customize with explicit assertions. This is a
+convenience feature — the skill does not write test files.
 
-If it does not exist, create it with the first entry:
-```json
-[
-  {
-    "name": "{name}",
-    "descriptor_url": "{url_if_provided}",
-    "local_fixture": "{name}.json",
-    "chains": [1],
-    "last_validated": "2026-03-24"
-  }
-]
-```
-
-### Step 8 — Self-diagnostics + improvement suggestions
+### Step 7 — Self-diagnostics + improvement suggestions
 
 After the run completes, review all issues encountered during execution and suggest
-concrete, actionable fixes to the skill itself or the project:
+concrete, actionable fixes:
 
 - API call returned unexpected format → suggest updating REFERENCE.md with correct schema
 - Chain returned error / not supported → suggest adding to premium-only list in chain table
 - Token resolution failed → suggest adding token to `crates/erc7730/src/assets/tokens.json`
 - Alchemy subdomain returned error → suggest updating subdomain mapping
-- Fixture `tests.json` schema didn't match `fixture_tests.rs` expectations → suggest schema fix
 - Etherscan rate-limited → suggest reducing batch size or adding delay between calls
 - Selector computation failed → suggest updating fallback method
 - New uncovered patterns (e.g., new `DisplayField` variant needed) → suggest engine improvement
@@ -265,7 +217,6 @@ If no issues were encountered, omit this section.
 - **No transactions found**: report per-chain, still show coverage gaps
 - **Library formatting error**: report as FAIL with error message, continue
 - **Missing token metadata**: report as warning, include in improvement suggestions
-- **Overwrite existing fixtures**: no confirmation needed, just overwrite and note in report
 
 ## Scope
 

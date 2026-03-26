@@ -157,14 +157,13 @@ Endpoint pattern: `https://{subdomain}.g.alchemy.com/v2/{key}`
 
 ## Transaction Selection Heuristics
 
-When selecting transactions for test cases:
+When selecting transactions for validation:
 
 1. **Filter**: `isError == "0"` and `to` matches deployment address (case-insensitive)
 2. **Match**: first 10 chars of `input` (`0x` + 8 hex) equal a known selector
 3. **Diversity**: prefer transactions with different `from` addresses and `value` amounts
 4. **Limit**: up to 3 transactions per selector per chain for validation
-5. **Fixture**: exactly 1 transaction per selector (prefer mainnet, first successful match)
-6. **Uncovered**: track selectors NOT in the descriptor — report as coverage gaps
+5. **Uncovered**: track selectors NOT in the descriptor — report as coverage gaps
 
 ---
 
@@ -192,8 +191,8 @@ value_wei = int(tx["value"])
 value_hex = "0x0" if value_wei == 0 else hex(value_wei)
 ```
 
-The test code converts hex values to the 32-byte big-endian format expected by
-`format_calldata()`.
+The integration test code converts hex values to the 32-byte big-endian format
+expected by `format_calldata()`.
 
 ---
 
@@ -207,80 +206,27 @@ github.com/{owner}/{repo}/blob/{branch}/path
 
 ---
 
-## Contract Registry
+## Integration Test Pattern
 
-File: `crates/erc7730/tests/.test-contracts.json` (gitignored)
+When scaffolding integration tests from validated transactions, follow the pattern
+established in `crates/erc7730/tests/morpho_blue_integration.rs`:
 
-Tracks which descriptors have been validated and when. The skill reads this when invoked
-without a specific descriptor, and updates `last_validated` after successful runs.
+```rust
+fn load_descriptor(fixture: &str) -> Descriptor { ... }
+fn wrap_rd(descriptor, chain_id, address) -> Vec<ResolvedDescriptor> { ... }
+fn decode_hex(hex_str: &str) -> Vec<u8> { ... }
+fn get_entry_value(model: &DisplayModel, label: &str) -> String { ... }
 
-Format:
-```json
-[
-  {
-    "name": "aave-v3",
-    "descriptor_url": "https://github.com/llbartekll/7730-v2-registry/blob/main/registry/aave/calldata-Pool-v3.json",
-    "local_fixture": "aave-lpv3.json",
-    "chains": [1, 10, 137, 42161, 43114, 8453],
-    "last_validated": "2026-03-24"
-  }
-]
-```
-
-Fields:
-- `name`: human-readable identifier
-- `descriptor_url`: GitHub URL for the descriptor (used to re-fetch if needed)
-- `local_fixture`: filename in `tests/fixtures/` (the descriptor JSON)
-- `chains`: chain IDs to test against (free-tier only)
-- `last_validated`: ISO date of last successful run
-
----
-
-## Fixture Output Format
-
-Generated fixture files are auto-discovered by `fixture_tests.rs` at
-`crates/erc7730/tests/fixtures/*/tests.json`.
-
-Directory structure:
-```
-crates/erc7730/tests/fixtures/
-├── aave-lpv3.json              (descriptor JSON)
-├── aave-lpv3/
-│   └── tests.json              (generated regression fixture)
-├── paraswap-v6.2.json
-├── paraswap-v6.2/
-│   └── tests.json
-```
-
-`tests.json` schema (matches `FixtureSuite` in `fixture_tests.rs`):
-```json
-{
-  "descriptor": "../aave-lpv3.json",
-  "tokens": [
-    {
-      "chain_id": 1,
-      "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-      "symbol": "USDC",
-      "decimals": 6,
-      "name": "USD Coin"
-    }
-  ],
-  "tests": [
-    {
-      "name": "supply",
-      "tx_hash": "0xabc123...",
-      "chain_id": 1,
-      "to": "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2",
-      "calldata": "0x617ba037...",
-      "value": "0x0",
-      "from": "0xsender...",
-      "expected": null
-    }
-  ]
+#[tokio::test]
+async fn test_function_name() {
+    let descriptor = load_descriptor("descriptor-name.json");
+    let descriptors = wrap_rd(descriptor, chain_id, "0xcontract");
+    let calldata = decode_hex("0x...");
+    let tx = TransactionContext { chain_id, to, calldata: &calldata, value: None, from: Some("0x..."), implementation_address: None };
+    let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
+    assert_eq!(result.intent, "Expected Intent");
+    assert_eq!(get_entry_value(&result, "Label"), "expected value");
 }
 ```
 
-- `expected: null` triggers capture mode — `fixture_tests.rs` runs the test, populates
-  expected output, and rewrites `tests.json`
-- `expected: { ... }` enables regression mode — actual output is compared against stored snapshot
-- Test names are derived from function names in snake_case (e.g., `supply`, `swap_exact_amount_in`)
+Key: use explicit assertions on intent and specific field values, not snapshot comparison.

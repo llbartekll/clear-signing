@@ -14,7 +14,7 @@ UniFFI bindings (Kotlin + Swift) are implemented in the same crate via a statele
 
 ```sh
 cargo build          # Build
-cargo test           # Run default tests (32 unit + 33 integration)
+cargo test           # Run default tests (49 unit + 101 integration)
 cargo clippy         # Lint
 cargo fmt --check    # Format check
 ```
@@ -23,7 +23,7 @@ UniFFI checks and binding generation:
 
 ```sh
 cargo check -p erc7730 --features uniffi,github-registry
-cargo test -p erc7730 --features uniffi,github-registry     # 39 unit tests + 33 integration
+cargo test -p erc7730 --features uniffi,github-registry     # 49 unit tests + 101 integration
 cargo clippy -p erc7730 --all-targets --features uniffi,github-registry -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
