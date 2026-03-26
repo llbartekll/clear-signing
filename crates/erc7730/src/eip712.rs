@@ -95,8 +95,13 @@ where
 
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
             let trimmed = v.trim();
-            if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
-                u64::from_str_radix(hex, 16).map(Some).map_err(de::Error::custom)
+            if let Some(hex) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
+                u64::from_str_radix(hex, 16)
+                    .map(Some)
+                    .map_err(de::Error::custom)
             } else {
                 trimmed.parse::<u64>().map(Some).map_err(de::Error::custom)
             }
@@ -116,6 +121,7 @@ pub async fn format_typed_data(
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
     let chain_id = data.domain.chain_id.unwrap_or(1);
+    let verifying_contract = data.domain.verifying_contract.as_deref();
 
     // Find format by primary type name (exact match first, then signature prefix match)
     let format = descriptor
@@ -142,6 +148,7 @@ pub async fn format_typed_data(
     let entries = render_typed_fields(
         descriptor,
         &data.message,
+        verifying_contract,
         &format.fields,
         chain_id,
         data_provider,
@@ -157,10 +164,15 @@ pub async fn format_typed_data(
             .as_ref()
             .map(crate::types::display::intent_as_string)
             .unwrap_or_else(|| data.primary_type.clone()),
-        interpolated_intent: format
-            .interpolated_intent
-            .as_ref()
-            .map(|template| interpolate_typed_intent(template, &data.message, &format.fields)),
+        interpolated_intent: format.interpolated_intent.as_ref().map(|template| {
+            interpolate_typed_intent(
+                template,
+                &data.message,
+                verifying_contract,
+                &format.fields,
+                chain_id,
+            )
+        }),
         entries,
         warnings,
         owner: descriptor.metadata.owner.clone(),
@@ -174,6 +186,7 @@ pub async fn format_typed_data(
 fn render_typed_fields<'a>(
     descriptor: &'a Descriptor,
     message: &'a serde_json::Value,
+    verifying_contract: Option<&'a str>,
     fields: &[DisplayField],
     chain_id: u64,
     data_provider: &'a dyn DataProvider,
@@ -208,6 +221,7 @@ fn render_typed_fields<'a>(
                         let mut sub = render_typed_fields(
                             descriptor,
                             message,
+                            verifying_contract,
                             &merged_slice,
                             chain_id,
                             data_provider,
@@ -225,6 +239,7 @@ fn render_typed_fields<'a>(
                     if let Some(entry) = render_typed_field_group(
                         descriptor,
                         message,
+                        verifying_contract,
                         field_group,
                         chain_id,
                         data_provider,
@@ -249,6 +264,7 @@ fn render_typed_fields<'a>(
                     let mut sub = render_typed_fields(
                         descriptor,
                         message,
+                        verifying_contract,
                         &expanded,
                         chain_id,
                         data_provider,
@@ -283,13 +299,13 @@ fn render_typed_fields<'a>(
                     // Check for .[] array iteration — expand into one entry per element
                     if let Some((base, rest)) = crate::engine::split_array_iter_path(path_str) {
                         if let Some(serde_json::Value::Array(items)) =
-                            resolve_typed_path(message, base)
+                            resolve_typed_path(message, base, chain_id, verifying_contract)
                         {
                             for item in &items {
                                 let val = if rest.is_empty() {
                                     Some(item.clone())
                                 } else {
-                                    resolve_typed_path(item, rest)
+                                    resolve_typed_path(item, rest, chain_id, verifying_contract)
                                 };
                                 let formatted = format_typed_value(
                                     descriptor,
@@ -297,6 +313,7 @@ fn render_typed_fields<'a>(
                                     format.as_ref(),
                                     params.as_ref(),
                                     chain_id,
+                                    verifying_contract,
                                     message,
                                     data_provider,
                                     warnings,
@@ -311,7 +328,7 @@ fn render_typed_fields<'a>(
                         }
                     }
 
-                    let value = resolve_typed_path(message, path_str);
+                    let value = resolve_typed_path(message, path_str, chain_id, verifying_contract);
 
                     // Check visibility
                     if !check_typed_visibility(visible, &value) {
@@ -323,6 +340,7 @@ fn render_typed_fields<'a>(
                         let entry = render_typed_calldata_field(
                             descriptor,
                             message,
+                            verifying_contract,
                             &value,
                             params.as_ref(),
                             label,
@@ -342,6 +360,7 @@ fn render_typed_fields<'a>(
                         format.as_ref(),
                         params.as_ref(),
                         chain_id,
+                        verifying_contract,
                         message,
                         data_provider,
                         warnings,
@@ -364,6 +383,7 @@ fn render_typed_fields<'a>(
 async fn render_typed_field_group<'a>(
     descriptor: &'a Descriptor,
     message: &'a serde_json::Value,
+    verifying_contract: Option<&'a str>,
     group: &FieldGroup,
     chain_id: u64,
     data_provider: &'a dyn DataProvider,
@@ -374,6 +394,7 @@ async fn render_typed_field_group<'a>(
     let sub = render_typed_fields(
         descriptor,
         message,
+        verifying_contract,
         &group.fields,
         chain_id,
         data_provider,
@@ -420,6 +441,7 @@ async fn render_typed_field_group<'a>(
 async fn render_typed_calldata_field(
     _descriptor: &Descriptor,
     message: &serde_json::Value,
+    verifying_contract: Option<&str>,
     val: &Option<serde_json::Value>,
     params: Option<&FormatParams>,
     label: &str,
@@ -501,9 +523,9 @@ async fn render_typed_calldata_field(
             .and_then(|p| p.callee_path.as_ref())
             .and_then(|path| {
                 let resolved = if let Some(rest) = path.strip_prefix("#.") {
-                    resolve_typed_path(message, rest)
+                    resolve_typed_message_path(message, rest)
                 } else {
-                    resolve_typed_path(message, path)
+                    resolve_typed_path(message, path, chain_id, verifying_contract)
                 };
                 resolved.and_then(|v| match v {
                     serde_json::Value::String(s) => Some(s),
@@ -524,9 +546,9 @@ async fn render_typed_calldata_field(
             .and_then(|p| p.amount_path.as_ref())
             .and_then(|path| {
                 let resolved = if let Some(rest) = path.strip_prefix("#.") {
-                    resolve_typed_path(message, rest)
+                    resolve_typed_message_path(message, rest)
                 } else {
-                    resolve_typed_path(message, path)
+                    resolve_typed_path(message, path, chain_id, verifying_contract)
                 };
                 resolved.and_then(|v| {
                     let s = json_value_to_string(&v);
@@ -544,9 +566,9 @@ async fn render_typed_calldata_field(
             .and_then(|p| p.spender_path.as_ref())
             .and_then(|path| {
                 let resolved = if let Some(rest) = path.strip_prefix("#.") {
-                    resolve_typed_path(message, rest)
+                    resolve_typed_message_path(message, rest)
                 } else {
-                    resolve_typed_path(message, path)
+                    resolve_typed_path(message, path, chain_id, verifying_contract)
                 };
                 resolved.and_then(|v| match v {
                     serde_json::Value::String(s) => Some(s),
@@ -650,8 +672,10 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
 /// Resolve a path in EIP-712 message JSON (e.g., "recipient" or "details.amount").
 ///
 /// Supports `[index]` and `[start:end]` slice notation.
-pub(crate) fn resolve_typed_path(message: &serde_json::Value, path: &str) -> Option<serde_json::Value> {
-    let path = path.strip_prefix("@.").unwrap_or(path);
+fn resolve_typed_message_path(
+    message: &serde_json::Value,
+    path: &str,
+) -> Option<serde_json::Value> {
     let mut current = message.clone();
 
     for segment in path.split('.') {
@@ -673,6 +697,26 @@ pub(crate) fn resolve_typed_path(message: &serde_json::Value, path: &str) -> Opt
     Some(current)
 }
 
+pub(crate) fn resolve_typed_path(
+    message: &serde_json::Value,
+    path: &str,
+    chain_id: u64,
+    verifying_contract: Option<&str>,
+) -> Option<serde_json::Value> {
+    if let Some(message_path) = path.strip_prefix("#.") {
+        return resolve_typed_message_path(message, message_path);
+    }
+
+    match path {
+        "@.to" => verifying_contract.map(|addr| serde_json::Value::String(addr.to_string())),
+        "@.chainId" => Some(serde_json::Value::from(chain_id)),
+        "@.value" => Some(serde_json::Value::from(0u64)),
+        "@.from" => None,
+        _ if path.starts_with("@.") => None,
+        _ => resolve_typed_message_path(message, path),
+    }
+}
+
 fn apply_typed_access(current: &serde_json::Value, segment: &str) -> Option<serde_json::Value> {
     match current {
         serde_json::Value::Array(items) => match apply_collection_access(items, segment)? {
@@ -680,17 +724,16 @@ fn apply_typed_access(current: &serde_json::Value, segment: &str) -> Option<serd
             CollectionSelection::Slice(slice) => Some(serde_json::Value::Array(slice)),
         },
         serde_json::Value::String(s) => {
-            let hex_str = s
-                .strip_prefix("0x")
-                .or_else(|| s.strip_prefix("0X"))?;
+            let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
             let bytes = hex::decode(hex_str).ok()?;
             match apply_collection_access(&bytes, segment)? {
                 CollectionSelection::Item(byte) => {
                     Some(serde_json::Value::String(format!("0x{:02x}", byte)))
                 }
-                CollectionSelection::Slice(slice) => {
-                    Some(serde_json::Value::String(format!("0x{}", hex::encode(slice))))
-                }
+                CollectionSelection::Slice(slice) => Some(serde_json::Value::String(format!(
+                    "0x{}",
+                    hex::encode(slice)
+                ))),
             }
         }
         _ => None,
@@ -734,9 +777,7 @@ fn coerce_typed_numeric_string(val: &serde_json::Value) -> Option<String> {
 fn coerce_typed_address_string(val: &serde_json::Value) -> Option<String> {
     match val {
         serde_json::Value::String(s) => {
-            let hex_str = s
-                .strip_prefix("0x")
-                .or_else(|| s.strip_prefix("0X"))?;
+            let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
             let bytes = hex::decode(hex_str).ok()?;
             let addr = crate::engine::address_bytes_from_raw_bytes(&bytes)?;
             if bytes.len() == 20 && hex_str.len() == 40 {
@@ -757,6 +798,7 @@ async fn format_typed_value(
     format: Option<&FieldFormat>,
     params: Option<&FormatParams>,
     chain_id: u64,
+    verifying_contract: Option<&str>,
     message: &serde_json::Value,
     data_provider: &dyn DataProvider,
     warnings: &mut Vec<String>,
@@ -791,11 +833,12 @@ async fn format_typed_value(
     };
 
     match fmt {
-        FieldFormat::Address => Ok(
-            coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val))
-        ),
+        FieldFormat::Address => {
+            Ok(coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val)))
+        }
         FieldFormat::AddressName | FieldFormat::InteroperableAddressName => {
-            let addr = coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
+            let addr =
+                coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
 
             // Check senderAddress
             if let Some(params) = params {
@@ -807,15 +850,17 @@ async fn format_typed_value(
                         }
                     };
                     for sender_ref in &sender_addrs {
-                        let resolved =
-                            if sender_ref.starts_with("@.") || sender_ref.starts_with('#') {
-                                resolve_typed_path(message, sender_ref).and_then(|v| match v {
+                        let resolved = if sender_ref.starts_with("@.")
+                            || sender_ref.starts_with('#')
+                        {
+                            resolve_typed_path(message, sender_ref, chain_id, verifying_contract)
+                                .and_then(|v| match v {
                                     serde_json::Value::String(s) => Some(s),
                                     _ => None,
                                 })
-                            } else {
-                                Some(sender_ref.to_string())
-                            };
+                        } else {
+                            Some(sender_ref.to_string())
+                        };
                         if let Some(resolved_addr) = resolved {
                             if resolved_addr.to_lowercase() == addr.to_lowercase() {
                                 return Ok("Sender".to_string());
@@ -858,11 +903,13 @@ async fn format_typed_value(
                 .parse()
                 .unwrap_or_else(|_| num_bigint::BigUint::from(0u64));
 
-            let lookup_chain = resolve_typed_chain_id(params, chain_id, message);
+            let lookup_chain =
+                resolve_typed_chain_id(params, chain_id, verifying_contract, message);
 
             let token_meta = if let Some(params) = params {
                 if let Some(ref token_path) = params.token_path {
-                    let token_addr = resolve_typed_path(message, token_path);
+                    let token_addr =
+                        resolve_typed_path(message, token_path, chain_id, verifying_contract);
                     let addr_str = token_addr.as_ref().and_then(coerce_typed_address_string);
                     if let Some(addr) = addr_str {
                         data_provider.resolve_token(lookup_chain, &addr).await
@@ -927,8 +974,10 @@ async fn format_typed_value(
         }
         FieldFormat::Number => Ok(json_value_to_string(val)),
         FieldFormat::TokenTicker => {
-            let lookup_chain = resolve_typed_chain_id(params, chain_id, message);
-            let addr = coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
+            let lookup_chain =
+                resolve_typed_chain_id(params, chain_id, verifying_contract, message);
+            let addr =
+                coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
             if let Some(meta) = data_provider.resolve_token(lookup_chain, &addr).await {
                 Ok(meta.symbol)
             } else {
@@ -979,7 +1028,7 @@ async fn format_typed_value(
             let token_id = json_value_to_string(val);
             let collection_addr = params.and_then(|p| {
                 if let Some(ref cpath) = p.collection_path {
-                    let resolved = resolve_typed_path(message, cpath);
+                    let resolved = resolve_typed_path(message, cpath, chain_id, verifying_contract);
                     if let Some(serde_json::Value::String(addr)) = resolved {
                         return Some(addr);
                     }
@@ -1007,6 +1056,7 @@ async fn format_typed_value(
 fn resolve_typed_chain_id(
     params: Option<&FormatParams>,
     default_chain: u64,
+    verifying_contract: Option<&str>,
     message: &serde_json::Value,
 ) -> u64 {
     if let Some(params) = params {
@@ -1014,7 +1064,8 @@ fn resolve_typed_chain_id(
             return cid;
         }
         if let Some(ref path) = params.chain_id_path {
-            if let Some(val) = resolve_typed_path(message, path) {
+            if let Some(val) = resolve_typed_path(message, path, default_chain, verifying_contract)
+            {
                 if let Some(n) = val.as_u64() {
                     return n;
                 }
@@ -1077,7 +1128,9 @@ fn json_value_to_string(val: &serde_json::Value) -> String {
 fn interpolate_typed_intent(
     template: &str,
     message: &serde_json::Value,
+    verifying_contract: Option<&str>,
     fields: &[DisplayField],
+    chain_id: u64,
 ) -> String {
     // Pre-process: replace {{ and }} with sentinels
     const OPEN_SENTINEL: &str = "\x00OPEN_BRACE\x00";
@@ -1093,7 +1146,13 @@ fn interpolate_typed_intent(
             None => break,
         };
         let path = &result[start + 2..end];
-        let replacement = resolve_and_format_typed_interpolation(message, fields, path);
+        let replacement = resolve_and_format_typed_interpolation(
+            message,
+            verifying_contract,
+            fields,
+            path,
+            chain_id,
+        );
         result.replace_range(start..=end, &replacement);
     }
 
@@ -1111,7 +1170,13 @@ fn interpolate_typed_intent(
                 None => break,
             };
             let path = result[start + 1..end].to_string();
-            let replacement = resolve_and_format_typed_interpolation(message, fields, &path);
+            let replacement = resolve_and_format_typed_interpolation(
+                message,
+                verifying_contract,
+                fields,
+                &path,
+                chain_id,
+            );
             result.replace_range(start..=end, &replacement);
             pos = start + replacement.len();
         } else {
@@ -1127,10 +1192,12 @@ fn interpolate_typed_intent(
 
 fn resolve_and_format_typed_interpolation(
     message: &serde_json::Value,
+    verifying_contract: Option<&str>,
     fields: &[DisplayField],
     path: &str,
+    chain_id: u64,
 ) -> String {
-    resolve_typed_path(message, path)
+    resolve_typed_path(message, path, chain_id, verifying_contract)
         .map(|v| {
             let field_format = fields.iter().find_map(|f| {
                 if let DisplayField::Simple {
@@ -1186,14 +1253,14 @@ mod tests {
         });
 
         assert_eq!(
-            resolve_typed_path(&message, "recipient"),
+            resolve_typed_message_path(&message, "recipient"),
             Some(serde_json::json!("0xabc"))
         );
         assert_eq!(
-            resolve_typed_path(&message, "details.amount"),
+            resolve_typed_message_path(&message, "details.amount"),
             Some(serde_json::json!("1000"))
         );
-        assert_eq!(resolve_typed_path(&message, "nonexistent"), None);
+        assert_eq!(resolve_typed_message_path(&message, "nonexistent"), None);
     }
 
     #[test]
@@ -1204,16 +1271,86 @@ mod tests {
         });
 
         assert_eq!(
-            resolve_typed_path(&message, "hookData.[32:52]"),
-            Some(serde_json::json!("0xf0a063a21be62b709937ca2a808594b662fe41e6"))
+            resolve_typed_message_path(&message, "hookData.[32:52]"),
+            Some(serde_json::json!(
+                "0xf0a063a21be62b709937ca2a808594b662fe41e6"
+            ))
         );
         assert_eq!(
-            resolve_typed_path(&message, "hookData.[52:53]"),
+            resolve_typed_message_path(&message, "hookData.[52:53]"),
             Some(serde_json::json!("0x00"))
         );
         assert_eq!(
-            resolve_typed_path(&message, "packed.[-20:]"),
-            Some(serde_json::json!("0xb21d281dedb17ae5b501f6aa8256fe38c4e45757"))
+            resolve_typed_message_path(&message, "packed.[-20:]"),
+            Some(serde_json::json!(
+                "0xb21d281dedb17ae5b501f6aa8256fe38c4e45757"
+            ))
+        );
+    }
+
+    #[test]
+    fn test_resolve_typed_path_container_values() {
+        let message = serde_json::json!({
+            "to": "0xa95d9c1f655341597c94393fddc30cf3c08e4fce"
+        });
+
+        assert_eq!(
+            resolve_typed_path(
+                &message,
+                "to",
+                42161,
+                Some("0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+            ),
+            Some(serde_json::json!(
+                "0xa95d9c1f655341597c94393fddc30cf3c08e4fce"
+            ))
+        );
+        assert_eq!(
+            resolve_typed_path(
+                &message,
+                "@.to",
+                42161,
+                Some("0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+            ),
+            Some(serde_json::json!(
+                "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
+            ))
+        );
+        assert_eq!(
+            resolve_typed_path(
+                &message,
+                "@.chainId",
+                42161,
+                Some("0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+            ),
+            Some(serde_json::json!(42161))
+        );
+        assert_eq!(
+            resolve_typed_path(
+                &message,
+                "@.value",
+                42161,
+                Some("0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+            ),
+            Some(serde_json::json!(0))
+        );
+        assert_eq!(
+            resolve_typed_path(
+                &message,
+                "@.from",
+                42161,
+                Some("0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_typed_path(
+                &message,
+                "@.verifyingContract",
+                42161,
+                Some("0xaf88d065e77c8cc2239327c5edb3a432268e5831"),
+            ),
+            None
         );
     }
 
@@ -1301,6 +1438,186 @@ mod tests {
         }
         match &result.entries[2] {
             DisplayEntry::Item(item) => assert_eq!(item.value, "1.5 USDC"),
+            _ => panic!("expected Item"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_receive_with_authorization_token_amount_uses_container_to() {
+        let descriptor_json = r#"{
+            "$schema": "../../specs/erc7730-v1.schema.json",
+            "context": {
+                "eip712": {
+                    "domain": { "name": "USD Coin", "version": "2" },
+                    "deployments": [
+                        { "chainId": 42161, "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" }
+                    ],
+                    "schemas": [
+                        {
+                            "primaryType": "ReceiveWithAuthorization",
+                            "types": {
+                                "EIP712Domain": [
+                                    { "name": "name", "type": "string" },
+                                    { "name": "version", "type": "string" },
+                                    { "name": "chainId", "type": "uint256" },
+                                    { "name": "verifyingContract", "type": "address" }
+                                ],
+                                "ReceiveWithAuthorization": [
+                                    { "name": "from", "type": "address" },
+                                    { "name": "to", "type": "address" },
+                                    { "name": "value", "type": "uint256" },
+                                    { "name": "validAfter", "type": "uint256" },
+                                    { "name": "validBefore", "type": "uint256" },
+                                    { "name": "nonce", "type": "bytes32" }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            },
+            "metadata": {
+                "owner": "Circle",
+                "info": { "legalName": "Circle Internet Financial", "url": "https://www.circle.com/" },
+                "enums": {},
+                "constants": {},
+                "maps": {}
+            },
+            "display": {
+                "formats": {
+                    "ReceiveWithAuthorization": {
+                        "intent": "Authorize USDC transfer",
+                        "interpolatedIntent": "Authorize on {@.chainId}",
+                        "fields": [
+                            { "path": "from", "label": "From", "format": "addressName", "params": { "types": ["wallet"], "sources": ["local", "ens"] } },
+                            { "path": "to", "label": "To", "format": "addressName", "params": { "types": ["eoa", "contract"], "sources": ["local", "ens"] } },
+                            { "path": "value", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "@.to" } },
+                            { "path": "validAfter", "label": "Valid after", "format": "date", "params": { "encoding": "timestamp" } },
+                            { "path": "validBefore", "label": "Valid before", "format": "date", "params": { "encoding": "timestamp" } }
+                        ],
+                        "required": ["from", "to", "value"],
+                        "excluded": ["nonce"]
+                    }
+                }
+            }
+        }"#;
+
+        let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+            "domain": {
+                "name": "USD Coin",
+                "version": "2",
+                "chainId": 42161,
+                "verifyingContract": "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
+            },
+            "message": {
+                "from": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+                "to": "0xa95d9c1f655341597c94393fddc30cf3c08e4fce",
+                "value": "6050000",
+                "validAfter": 1774534342,
+                "validBefore": 1774538002,
+                "nonce": "0x9048fcc0671336730dda26a2a19a8ccdb2a6b7da00eeae556dd7f10c8a8d3a16"
+            },
+            "primaryType": "ReceiveWithAuthorization",
+            "types": {
+                "EIP712Domain": [
+                    { "name": "name", "type": "string" },
+                    { "name": "version", "type": "string" },
+                    { "name": "chainId", "type": "uint256" },
+                    { "name": "verifyingContract", "type": "address" }
+                ],
+                "ReceiveWithAuthorization": [
+                    { "name": "from", "type": "address" },
+                    { "name": "to", "type": "address" },
+                    { "name": "value", "type": "uint256" },
+                    { "name": "validAfter", "type": "uint256" },
+                    { "name": "validBefore", "type": "uint256" },
+                    { "name": "nonce", "type": "bytes32" }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let descriptor = Descriptor::from_json(descriptor_json).unwrap();
+        let mut tokens = StaticTokenSource::new();
+        tokens.insert(
+            42161,
+            "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+            TokenMeta {
+                symbol: "USDC".to_string(),
+                decimals: 6,
+                name: "USD Coin".to_string(),
+            },
+        );
+
+        let result = format_typed_data(&descriptor, &typed_data, &tokens, &[])
+            .await
+            .unwrap();
+
+        assert_eq!(result.intent, "Authorize USDC transfer");
+        assert_eq!(
+            result.interpolated_intent.as_deref(),
+            Some("Authorize on 42161")
+        );
+        match &result.entries[2] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "6.05 USDC"),
+            _ => panic!("expected Item"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_receive_with_authorization_token_amount_graceful_degrades_without_metadata() {
+        let descriptor_json = r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [
+                        { "chainId": 42161, "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" }
+                    ]
+                }
+            },
+            "metadata": {
+                "owner": "Circle",
+                "enums": {},
+                "constants": {},
+                "maps": {}
+            },
+            "display": {
+                "formats": {
+                    "ReceiveWithAuthorization": {
+                        "intent": "Authorize USDC transfer",
+                        "fields": [
+                            { "path": "value", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "@.to" } }
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+            "domain": {
+                "chainId": 42161,
+                "verifyingContract": "0xaf88d065e77c8cc2239327c5edb3a432268e5831"
+            },
+            "message": {
+                "value": "6050000"
+            },
+            "primaryType": "ReceiveWithAuthorization",
+            "types": {
+                "EIP712Domain": [],
+                "ReceiveWithAuthorization": [
+                    { "name": "value", "type": "uint256" }
+                ]
+            }
+        }))
+        .unwrap();
+
+        let descriptor = Descriptor::from_json(descriptor_json).unwrap();
+        let provider = crate::provider::EmptyDataProvider;
+
+        let result = format_typed_data(&descriptor, &typed_data, &provider, &[])
+            .await
+            .unwrap();
+
+        match &result.entries[0] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "6050000"),
             _ => panic!("expected Item"),
         }
     }

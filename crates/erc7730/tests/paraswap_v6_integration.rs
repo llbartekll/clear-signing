@@ -275,10 +275,17 @@ async fn test_paraswap_v6_balancer_byte_slice_paths() {
     let descriptors = wrap_rd(descriptor, 1, "0x6a000f20005980200259b80c5102003040001068");
     let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
 
-    assert!(result.warnings.is_empty(), "unexpected warnings: {:?}", result.warnings);
+    assert!(
+        result.warnings.is_empty(),
+        "unexpected warnings: {:?}",
+        result.warnings
+    );
     assert_eq!(get_entry_value(&result.entries, "Swap type"), "Single swap");
     assert_eq!(get_entry_value(&result.entries, "Amount to Send"), "1 USDC");
-    assert_eq!(get_entry_value(&result.entries, "Minimum to Receive"), "2 USDT");
+    assert_eq!(
+        get_entry_value(&result.entries, "Minimum to Receive"),
+        "2 USDT"
+    );
     assert_eq!(
         get_entry_value(&result.entries, "Beneficiary"),
         "0x1111111111111111111111111111111111111111"

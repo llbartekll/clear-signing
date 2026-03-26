@@ -57,7 +57,11 @@ fn normalize_index(expr: &str, len: usize) -> Option<usize> {
     let raw: isize = expr.parse().ok()?;
     if raw >= 0 {
         let index = usize::try_from(raw).ok()?;
-        if index < len { Some(index) } else { None }
+        if index < len {
+            Some(index)
+        } else {
+            None
+        }
     } else {
         let n = raw.unsigned_abs();
         if n == 0 || n > len {
@@ -76,7 +80,11 @@ fn parse_slice_bound(expr: &str, len: usize, is_start: bool) -> Option<usize> {
     let raw: isize = expr.parse().ok()?;
     if raw >= 0 {
         let bound = usize::try_from(raw).ok()?;
-        if bound <= len { Some(bound) } else { None }
+        if bound <= len {
+            Some(bound)
+        } else {
+            None
+        }
     } else {
         let n = raw.unsigned_abs();
         if n > len {
@@ -89,7 +97,9 @@ fn parse_slice_bound(expr: &str, len: usize, is_start: bool) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_collection_access, parse_collection_access, CollectionAccess, CollectionSelection};
+    use super::{
+        apply_collection_access, parse_collection_access, CollectionAccess, CollectionSelection,
+    };
 
     #[test]
     fn parses_indices_and_slices() {

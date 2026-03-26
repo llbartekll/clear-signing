@@ -40,24 +40,73 @@ const MORPHO_ADDR: &str = "0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb";
 fn morpho_token_source() -> CompositeDataProvider {
     let mut custom = StaticTokenSource::new();
     let tokens = [
-        ("0x3b855aa8cc56a3cbd5dbb5456f5a13ce86aa0fe8", "stakedao-FrxMsUSD", 18, "Stake DAO frxUSD/msUSD"),
-        ("0x80e1048ede66ec4c364b4f22c8768fc657ff6a42", "upUSDC", 6, "Upshift USDC"),
-        ("0xbf5495efe5db9ce00f80364c8b423567e58d2110", "EZETH", 18, "Renzo Restaked ETH"),
-        ("0xc26a6fa2c37b38e549a4a1807543801db684f99c", "AA_FalconXUSDC", 18, "Pareto AA Tranche - FalconXUSDC"),
-        ("0xcacd6fd266af91b8aed52accc382b4e165586e29", "frxUSD", 18, "Frax USD"),
-        ("0xdc035d45d973e3ec169d2276ddab16f1e407384f", "USDS", 18, "USDS"),
-        ("0xe0f63a424a4439cbe457d80e4f4b51ad25b2c56c", "SPX", 8, "SPX6900"),
+        (
+            "0x3b855aa8cc56a3cbd5dbb5456f5a13ce86aa0fe8",
+            "stakedao-FrxMsUSD",
+            18,
+            "Stake DAO frxUSD/msUSD",
+        ),
+        (
+            "0x80e1048ede66ec4c364b4f22c8768fc657ff6a42",
+            "upUSDC",
+            6,
+            "Upshift USDC",
+        ),
+        (
+            "0xbf5495efe5db9ce00f80364c8b423567e58d2110",
+            "EZETH",
+            18,
+            "Renzo Restaked ETH",
+        ),
+        (
+            "0xc26a6fa2c37b38e549a4a1807543801db684f99c",
+            "AA_FalconXUSDC",
+            18,
+            "Pareto AA Tranche - FalconXUSDC",
+        ),
+        (
+            "0xcacd6fd266af91b8aed52accc382b4e165586e29",
+            "frxUSD",
+            18,
+            "Frax USD",
+        ),
+        (
+            "0xdc035d45d973e3ec169d2276ddab16f1e407384f",
+            "USDS",
+            18,
+            "USDS",
+        ),
+        (
+            "0xe0f63a424a4439cbe457d80e4f4b51ad25b2c56c",
+            "SPX",
+            8,
+            "SPX6900",
+        ),
         // USDC needed for supply test
-        ("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "USDC", 6, "USD Coin"),
+        (
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "USDC",
+            6,
+            "USD Coin",
+        ),
         // WETH needed for withdraw_collateral test
-        ("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", "WETH", 18, "Wrapped Ether"),
+        (
+            "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+            "WETH",
+            18,
+            "Wrapped Ether",
+        ),
     ];
     for (addr, symbol, decimals, name) in tokens {
-        custom.insert(1, addr, TokenMeta {
-            symbol: symbol.to_string(),
-            decimals,
-            name: name.to_string(),
-        });
+        custom.insert(
+            1,
+            addr,
+            TokenMeta {
+                symbol: symbol.to_string(),
+                decimals,
+                name: name.to_string(),
+            },
+        );
     }
     CompositeDataProvider::new(vec![
         Box::new(custom),
@@ -90,10 +139,22 @@ async fn morpho_borrow() {
 
     assert_eq!(result.intent, "Borrow from Morpho Market");
     assert_eq!(result.owner.as_deref(), Some("Morpho DAO"));
-    assert_eq!(get_entry_value(&result, "Loan Token"), "0xdC035D45d973E3EC169d2276DDab16f1e407384F");
-    assert_eq!(get_entry_value(&result, "Collateral Token"), "0xE0f63A424a4439cBE457D80E4f4b51aD25b2c56C");
-    assert_eq!(get_entry_value(&result, "On Behalf"), "0xf11Cc888d8Da84D3bF735b7b357814fD071e8B1A");
-    assert_eq!(get_entry_value(&result, "Receiver"), "0xf11Cc888d8Da84D3bF735b7b357814fD071e8B1A");
+    assert_eq!(
+        get_entry_value(&result, "Loan Token"),
+        "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Collateral Token"),
+        "0xE0f63A424a4439cBE457D80E4f4b51aD25b2c56C"
+    );
+    assert_eq!(
+        get_entry_value(&result, "On Behalf"),
+        "0xf11Cc888d8Da84D3bF735b7b357814fD071e8B1A"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Receiver"),
+        "0xf11Cc888d8Da84D3bF735b7b357814fD071e8B1A"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -106,8 +167,14 @@ async fn morpho_repay() {
 
     assert_eq!(result.intent, "Repay on Morpho Market");
     assert_eq!(result.owner.as_deref(), Some("Morpho DAO"));
-    assert_eq!(get_entry_value(&result, "Loan Token"), "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29");
-    assert_eq!(get_entry_value(&result, "Collateral Token"), "0x3B855AA8CC56a3cBd5dBb5456F5A13Ce86AA0fe8");
+    assert_eq!(
+        get_entry_value(&result, "Loan Token"),
+        "0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Collateral Token"),
+        "0x3B855AA8CC56a3cBd5dBb5456F5A13Ce86AA0fe8"
+    );
     assert_eq!(get_entry_value(&result, "Data"), "0x");
     assert!(result.warnings.is_empty());
 }
@@ -122,7 +189,10 @@ async fn morpho_supply() {
     assert_eq!(result.intent, "Supply on Morpho Market");
     assert_eq!(result.owner.as_deref(), Some("Morpho DAO"));
     assert_eq!(get_entry_value(&result, "Assets"), "1000000000000");
-    assert_eq!(get_entry_value(&result, "On Behalf"), "0x84D1b180d67Ba40A4Cb7AEb78AF6a8BF80fC5C63");
+    assert_eq!(
+        get_entry_value(&result, "On Behalf"),
+        "0x84D1b180d67Ba40A4Cb7AEb78AF6a8BF80fC5C63"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -135,7 +205,10 @@ async fn morpho_supply_collateral() {
 
     assert_eq!(result.intent, "Supply Collateral on Morpho Market");
     assert_eq!(result.owner.as_deref(), Some("Morpho DAO"));
-    assert_eq!(get_entry_value(&result, "Loan Token"), "0xdC035D45d973E3EC169d2276DDab16f1e407384F");
+    assert_eq!(
+        get_entry_value(&result, "Loan Token"),
+        "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
+    );
     assert_eq!(get_entry_value(&result, "Assets"), "20390899943");
     assert!(result.warnings.is_empty());
 }
@@ -150,8 +223,14 @@ async fn morpho_withdraw() {
     assert_eq!(result.intent, "Withdraw from Morpho Market");
     assert_eq!(result.owner.as_deref(), Some("Morpho DAO"));
     assert_eq!(get_entry_value(&result, "Assets"), "2400000000");
-    assert_eq!(get_entry_value(&result, "On Behalf"), "0x8fee409f8F772667ADD2a2ccfB8C5182a7349cE9");
-    assert_eq!(get_entry_value(&result, "Receiver"), "0x8fee409f8F772667ADD2a2ccfB8C5182a7349cE9");
+    assert_eq!(
+        get_entry_value(&result, "On Behalf"),
+        "0x8fee409f8F772667ADD2a2ccfB8C5182a7349cE9"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Receiver"),
+        "0x8fee409f8F772667ADD2a2ccfB8C5182a7349cE9"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -164,8 +243,14 @@ async fn morpho_withdraw_collateral() {
 
     assert_eq!(result.intent, "Withdraw Collateral from Morpho Market");
     assert_eq!(result.owner.as_deref(), Some("Morpho DAO"));
-    assert_eq!(get_entry_value(&result, "Loan Token"), "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
-    assert_eq!(get_entry_value(&result, "Collateral Token"), "0xbf5495Efe5DB9ce00f80364C8B423567e58d2110");
+    assert_eq!(
+        get_entry_value(&result, "Loan Token"),
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Collateral Token"),
+        "0xbf5495Efe5DB9ce00f80364C8B423567e58d2110"
+    );
     assert_eq!(get_entry_value(&result, "Assets"), "823264954256555005");
     assert!(result.warnings.is_empty());
 }

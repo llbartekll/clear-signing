@@ -30,7 +30,11 @@ fn value_bytes(hex_str: &str) -> Option<Vec<u8>> {
     if s == "0" || s.is_empty() {
         return None;
     }
-    let even = if s.len() % 2 != 0 { format!("0{s}") } else { s.to_string() };
+    let even = if s.len() % 2 != 0 {
+        format!("0{s}")
+    } else {
+        s.to_string()
+    };
     let raw = hex::decode(&even).unwrap_or_else(|e| panic!("invalid value hex '{hex_str}': {e}"));
     if raw.is_empty() || raw.iter().all(|&b| b == 0) {
         return None;
@@ -66,9 +70,15 @@ fn lifi_token_source() -> CompositeDataProvider {
         ("0xc497bfc3ef5104272a9b4ccfff6acc51e62dcb9c", "$SILVER", 2),
     ];
     for (addr, symbol, decimals) in tokens {
-        custom.insert(1, addr, TokenMeta {
-            symbol: symbol.to_string(), decimals: *decimals, name: symbol.to_string(),
-        });
+        custom.insert(
+            1,
+            addr,
+            TokenMeta {
+                symbol: symbol.to_string(),
+                decimals: *decimals,
+                name: symbol.to_string(),
+            },
+        );
     }
     CompositeDataProvider::new(vec![
         Box::new(custom),
@@ -85,7 +95,9 @@ async fn lifi_swap_tokens_single_v3_erc20_to_erc20() {
     let provider = lifi_token_source();
     let val = value_bytes("0x0");
     let tx = TransactionContext {
-        chain_id: 1, to: LIFI_ADDR, calldata: &calldata,
+        chain_id: 1,
+        to: LIFI_ADDR,
+        calldata: &calldata,
         value: val.as_deref(),
         from: Some("0x9915b072b257abc17fd95b49c23d8a64fe42a682"),
         implementation_address: None,
@@ -94,9 +106,18 @@ async fn lifi_swap_tokens_single_v3_erc20_to_erc20() {
 
     assert_eq!(result.intent, "Swap");
     assert_eq!(result.owner.as_deref(), Some("LI.FI"));
-    assert_eq!(get_entry_value(&result, "Amount to Send"), "26.159677464094076708 WFRAX");
-    assert_eq!(get_entry_value(&result, "Minimum to Receive"), "11.700536 USDC");
-    assert_eq!(get_entry_value(&result, "Recipient"), "0x9915B072B257Abc17fd95b49c23D8A64fe42a682");
+    assert_eq!(
+        get_entry_value(&result, "Amount to Send"),
+        "26.159677464094076708 WFRAX"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Minimum to Receive"),
+        "11.700536 USDC"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Recipient"),
+        "0x9915B072B257Abc17fd95b49c23D8A64fe42a682"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -108,7 +129,10 @@ async fn lifi_swap_tokens_multiple_v3_erc20_to_erc20() {
     let calldata = decode_hex("0x5fd9ae2eea6e009cbe4d162068f4c2b655c2cbc09d9dca69d43e8b81f5f65d7484fcc88600000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000100000000000000000000000000619bdea84b29d317b701014be8092fca7c9da3ef0000000000000000000000000000000000000000000000000269f242e0f0f7b8000000000000000000000000000000000000000000000000000000000000016000000000000000000000000000000000000000000000000000000000000000066b75636f696e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002a307830303030303030303030303030303030303030303030303030303030303030303030303030303030000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001e00000000000000000000000003ef238c36035880efbdfa239d218186b79ad1d6f0000000000000000000000003ef238c36035880efbdfa239d218186b79ad1d6f000000000000000000000000c497bfc3ef5104272a9b4ccfff6acc51e62dcb9c000000000000000000000000c497bfc3ef5104272a9b4ccfff6acc51e62dcb9c00000000000000000000000000000000000000000000000000110d9316ec000000000000000000000000000000000000000000000000000000000000000000e000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000084eedd56e1000000000000000000000000c497bfc3ef5104272a9b4ccfff6acc51e62dcb9c00000000000000000000000000000000000000000000000000000d18c2e28000000000000000000000000000000000000000000000000000000008bb2c9700000000000000000000000000006795458378538ebe0a12d9e2e5ec1c32f0af1fbb00000000000000000000000000000000000000000000000000000000000000000000000000000000ac4c6e212a361c968f1725b4d055b47e63f80b75000000000000000000000000ac4c6e212a361c968f1725b4d055b47e63f80b75000000000000000000000000c497bfc3ef5104272a9b4ccfff6acc51e62dcb9c00000000000000000000000007ff10404d5ef21c2fc7518b90dc22abedaff6800000000000000000000000000000000000000000000000000010f7bf2772800000000000000000000000000000000000000000000000000000000000000000e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000444d33721a5000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000e000000000000000000000000000000000000000000000000000000000000001600000000000000000000000000000000000000000000000000000000000000001000000000000000000000000c497bfc3ef5104272a9b4ccfff6acc51e62dcb9c0000000000000000000000000000000000000000000000000010f7bf27728000000000000000000000000000f27c6cd5d275a39669aaf257ebbfa66d4e024c63000000000000000000000000000000000000000000000000000000000000000100000000000000000000000007ff10404d5ef21c2fc7518b90dc22abedaff6800000000000000000000000001231deb6f5749ef6ce6943a275a1d3e7486f4eae0000000000000000000000000000000000000000000000000269541125d61a4a00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000c10ee9031f2a0b84766a86b55a8d90f357910fb4000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000204ba3f2165000000000000000000000000de7259893af7cdbc9fd806c6ba61d22d581d566700000000000000000000000000000000000000000000000000009e31bb1add6e000000000000000000000000c497bfc3ef5104272a9b4ccfff6acc51e62dcb9c0000000000000000000000000000000000000000000000000010f7bf2772800000000000000000000000000007ff10404d5ef21c2fc7518b90dc22abedaff680000000000000000000000000000000000000000000000000026d0d35106219200000000000000000000000001231deb6f5749ef6ce6943a275a1d3e7486f4eae000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000009b019d214dcb9d000201c497bfc3ef5104272a9b4ccfff6acc51e62dcb9c01ffff00f27c6cd5d275a39669aaf257ebbfa66d4e024c63000b86092bc53404a789d5af3f0a2995e2d54d40d9000bb887be258b302204c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000b86092bc53404a789d5af3f0a2995e2d54d40d900c10ee9031f2a0b84766a86b55a8d90f357910fb4000bb88b30229b432a000000000000000000000000000000000000000000000000000000000000000000");
     let provider = lifi_token_source();
     let tx = TransactionContext {
-        chain_id: 1, to: LIFI_ADDR, calldata: &calldata, value: None,
+        chain_id: 1,
+        to: LIFI_ADDR,
+        calldata: &calldata,
+        value: None,
         from: Some("0x619bdea84b29d317b701014be8092fca7c9da3ef"),
         implementation_address: None,
     };
@@ -116,11 +140,23 @@ async fn lifi_swap_tokens_multiple_v3_erc20_to_erc20() {
 
     assert_eq!(result.intent, "Swap");
     assert_eq!(result.owner.as_deref(), Some("LI.FI"));
-    assert_eq!(get_entry_value(&result, "Amount to Send"), "48000000000000 $SILVER");
-    assert_eq!(get_entry_value(&result, "Minimum to Receive"), "1739364296861265.2 DOGEINU");
-    assert_eq!(get_entry_value(&result, "Recipient"), "0x619bDeA84b29D317B701014bE8092fCA7c9da3ef");
+    assert_eq!(
+        get_entry_value(&result, "Amount to Send"),
+        "48000000000000 $SILVER"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Minimum to Receive"),
+        "1739364296861265.2 DOGEINU"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Recipient"),
+        "0x619bDeA84b29D317B701014bE8092fCA7c9da3ef"
+    );
     // Multi-leg swap has swap data entries (call data, call to, approve to, requires deposit)
-    assert!(result.entries.len() >= 5, "multi-leg swap should have swap data entries");
+    assert!(
+        result.entries.len() >= 5,
+        "multi-leg swap should have swap data entries"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -133,7 +169,9 @@ async fn lifi_swap_tokens_multiple_v3_native_to_erc20() {
     let provider = lifi_token_source();
     let val = value_bytes("0x694cc207c21f0d0");
     let tx = TransactionContext {
-        chain_id: 1, to: LIFI_ADDR, calldata: &calldata,
+        chain_id: 1,
+        to: LIFI_ADDR,
+        calldata: &calldata,
         value: val.as_deref(),
         from: Some("0x2dbb7ba0806b2cf8cc32f8cac5cc49b8db29673f"),
         implementation_address: None,
@@ -142,8 +180,17 @@ async fn lifi_swap_tokens_multiple_v3_native_to_erc20() {
 
     assert_eq!(result.intent, "Swap");
     assert_eq!(result.owner.as_deref(), Some("LI.FI"));
-    assert_eq!(get_entry_value(&result, "Amount to send"), "0.4742283006743636 ETH");
-    assert_eq!(get_entry_value(&result, "Minimum to Receive"), "1684622.86351874 HEX");
-    assert_eq!(get_entry_value(&result, "Recipient"), "0x2dbb7ba0806b2Cf8CC32F8CAc5cc49b8db29673f");
+    assert_eq!(
+        get_entry_value(&result, "Amount to send"),
+        "0.4742283006743636 ETH"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Minimum to Receive"),
+        "1684622.86351874 HEX"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Recipient"),
+        "0x2dbb7ba0806b2Cf8CC32F8CAc5cc49b8db29673f"
+    );
     assert!(result.warnings.is_empty());
 }

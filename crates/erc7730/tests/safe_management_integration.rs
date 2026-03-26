@@ -50,8 +50,12 @@ async fn run_safe_test(to: &str, calldata_hex: &str, from: &str) -> DisplayModel
     let calldata = decode_hex(calldata_hex);
     let provider = safe_provider();
     let tx = TransactionContext {
-        chain_id: 1, to, calldata: &calldata, value: None,
-        from: Some(from), implementation_address: None,
+        chain_id: 1,
+        to,
+        calldata: &calldata,
+        value: None,
+        from: Some(from),
+        implementation_address: None,
     };
     format_calldata(&descriptors, &tx, &provider).await.unwrap()
 }
@@ -66,7 +70,10 @@ async fn safe_add_owner_with_threshold() {
 
     assert_eq!(result.intent, "Add signer");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
-    assert_eq!(get_entry_value(&result, "Signer"), "0xd0FCe815Af184CC758567a64Ade6c49A1c2379F1");
+    assert_eq!(
+        get_entry_value(&result, "Signer"),
+        "0xd0FCe815Af184CC758567a64Ade6c49A1c2379F1"
+    );
     assert_eq!(get_entry_value(&result, "New threshold"), "2");
     assert!(result.warnings.is_empty());
 }
@@ -81,7 +88,10 @@ async fn safe_remove_owner() {
 
     assert_eq!(result.intent, "Remove signer");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
-    assert_eq!(get_entry_value(&result, "Signer"), "0x0f6A14d90C44B8731ea1f17b6e479a772171718c");
+    assert_eq!(
+        get_entry_value(&result, "Signer"),
+        "0x0f6A14d90C44B8731ea1f17b6e479a772171718c"
+    );
     assert_eq!(get_entry_value(&result, "New threshold"), "1");
     assert!(result.warnings.is_empty());
 }
@@ -96,8 +106,14 @@ async fn safe_swap_owner() {
 
     assert_eq!(result.intent, "Swap signer");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
-    assert_eq!(get_entry_value(&result, "Old signer"), "0x2A3530417Ef2eE48e0Eb98Cb4C097c87F853a66C");
-    assert_eq!(get_entry_value(&result, "New signer"), "0xb15115A15d5992A756D003AE74C0b832918fAb75");
+    assert_eq!(
+        get_entry_value(&result, "Old signer"),
+        "0x2A3530417Ef2eE48e0Eb98Cb4C097c87F853a66C"
+    );
+    assert_eq!(
+        get_entry_value(&result, "New signer"),
+        "0xb15115A15d5992A756D003AE74C0b832918fAb75"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -107,7 +123,8 @@ async fn safe_change_threshold() {
         "0xf9ea578233334bf9a6be61161f5c98820f7059fc",
         "0x694e80c30000000000000000000000000000000000000000000000000000000000000002",
         "0xc6f80492d1a505b8da84a3c85d7a0ee1551e076e",
-    ).await;
+    )
+    .await;
 
     assert_eq!(result.intent, "Modify threshold");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
@@ -122,11 +139,15 @@ async fn safe_approve_hash() {
         "0x849d52316331967b6ff1198e5e32a0eb168d039d",
         "0xd4d9bdcd8607b66e978423f17da142ffbf683741b7033cbe1b4334414fe505a72c22280c",
         "0xe9eb7da58f6b5ce5b0a6cfd778a2fa726203aad5",
-    ).await;
+    )
+    .await;
 
     assert_eq!(result.intent, "Approve Safe hash");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
-    assert_eq!(get_entry_value(&result, "Hash to approve"), "0x8607b66e978423f17da142ffbf683741b7033cbe1b4334414fe505a72c22280c");
+    assert_eq!(
+        get_entry_value(&result, "Hash to approve"),
+        "0x8607b66e978423f17da142ffbf683741b7033cbe1b4334414fe505a72c22280c"
+    );
     assert_eq!(result.entries.len(), 1);
     assert!(result.warnings.is_empty());
 }
@@ -141,13 +162,22 @@ async fn safe_setup() {
 
     assert_eq!(result.intent, "Setup Safe");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
-    assert_eq!(get_entry_value(&result, "Signer"), "0x5f5cd726d6210E80924C08D5Cd114999f187c099");
+    assert_eq!(
+        get_entry_value(&result, "Signer"),
+        "0x5f5cd726d6210E80924C08D5Cd114999f187c099"
+    );
     assert_eq!(get_entry_value(&result, "Threshold"), "1");
-    assert_eq!(get_entry_value(&result, "Fallback handler"), "0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99");
+    assert_eq!(
+        get_entry_value(&result, "Fallback handler"),
+        "0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99"
+    );
     assert_eq!(get_entry_value(&result, "Payment"), "0.0 ETH");
 
     // Verify nested module entry exists
-    let has_nested = result.entries.iter().any(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Module"));
+    let has_nested = result
+        .entries
+        .iter()
+        .any(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Module"));
     assert!(has_nested, "setup should have a nested Module entry");
     assert!(result.warnings.is_empty());
 }

@@ -30,7 +30,11 @@ fn value_bytes(hex_str: &str) -> Option<Vec<u8>> {
     if s == "0" || s.is_empty() {
         return None;
     }
-    let even = if s.len() % 2 != 0 { format!("0{s}") } else { s.to_string() };
+    let even = if s.len() % 2 != 0 {
+        format!("0{s}")
+    } else {
+        s.to_string()
+    };
     let raw = hex::decode(&even).unwrap_or_else(|e| panic!("invalid value hex '{hex_str}': {e}"));
     if raw.is_empty() || raw.iter().all(|&b| b == 0) {
         return None;
@@ -56,27 +60,113 @@ const QUICKSWAP_ADDR: &str = "0xa5E0829CaCEd8fFDD4De3c43696c57F7D7A678ff";
 fn quickswap_token_source() -> CompositeDataProvider {
     let mut custom = StaticTokenSource::new();
     let tokens: &[(&str, &str, u8, &str)] = &[
-        ("0x2791bca1f2de4661ed88a30c99a7a9449aa84174", "USDC.e", 6, "USD Coin (PoS)"),
-        ("0x7ceb23fd6bc0add59e62ac25578270cff1b9f619", "WETH", 18, "Wrapped Ether"),
-        ("0xc2132d05d31c914a87c6611c10748aeb04b58e8f", "USDT", 6, "Tether USD"),
-        ("0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270", "WPOL", 18, "Wrapped Polygon Ecosystem Token"),
-        ("0x013e90c6ea4ea50625c3ff1288dbd154f8c2479b", "IWT", 18, "Intero Web3 Token"),
-        ("0x0c9c7712c83b3c70e7c5e11100d33d9401bdf9dd", "WOMBAT", 18, "Wombat"),
-        ("0x146e58d34eab0bff7e0a63cfe9332908d680c667", "PDDOLLAR", 18, "pddollar"),
-        ("0x173f9c8492f19ebe9987e8ea6507e17d40f23328", "TDOX", 9, "TDOX"),
-        ("0x282d8efce846a88b159800bd4130ad77443fa1a1", "mOCEAN", 18, "Ocean Token (PoS)"),
-        ("0x2ed945dc703d85c80225d95abde41cdee14e1992", "SAGE", 18, "PolySage"),
-        ("0x431d5dff03120afa4bdf332c61a6e1766ef37bdb", "JPYC", 18, "JPY Coin"),
-        ("0x56f4d3019680b992e2e18533385293710b44010d", "CD", 18, "Credit DAO Token"),
-        ("0x692597b009d13c4049a947cab2239b7d6517875f", "UST", 18, "Wrapped UST Token (PoS)"),
-        ("0xb5c064f955d8e7f38fe0460c556a72987494ee17", "QUICK", 18, "QuickSwap"),
-        ("0xf1428850f92b87e629c6f3a3b75bffbc496f7ba6", "GEO$", 18, "GEOPOLY"),
-        ("0xffb9f1907f827709b0ed09b37956cd3c7462abdb", "DUCKIES", 2, "Yellow Duckies"),
+        (
+            "0x2791bca1f2de4661ed88a30c99a7a9449aa84174",
+            "USDC.e",
+            6,
+            "USD Coin (PoS)",
+        ),
+        (
+            "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
+            "WETH",
+            18,
+            "Wrapped Ether",
+        ),
+        (
+            "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
+            "USDT",
+            6,
+            "Tether USD",
+        ),
+        (
+            "0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270",
+            "WPOL",
+            18,
+            "Wrapped Polygon Ecosystem Token",
+        ),
+        (
+            "0x013e90c6ea4ea50625c3ff1288dbd154f8c2479b",
+            "IWT",
+            18,
+            "Intero Web3 Token",
+        ),
+        (
+            "0x0c9c7712c83b3c70e7c5e11100d33d9401bdf9dd",
+            "WOMBAT",
+            18,
+            "Wombat",
+        ),
+        (
+            "0x146e58d34eab0bff7e0a63cfe9332908d680c667",
+            "PDDOLLAR",
+            18,
+            "pddollar",
+        ),
+        (
+            "0x173f9c8492f19ebe9987e8ea6507e17d40f23328",
+            "TDOX",
+            9,
+            "TDOX",
+        ),
+        (
+            "0x282d8efce846a88b159800bd4130ad77443fa1a1",
+            "mOCEAN",
+            18,
+            "Ocean Token (PoS)",
+        ),
+        (
+            "0x2ed945dc703d85c80225d95abde41cdee14e1992",
+            "SAGE",
+            18,
+            "PolySage",
+        ),
+        (
+            "0x431d5dff03120afa4bdf332c61a6e1766ef37bdb",
+            "JPYC",
+            18,
+            "JPY Coin",
+        ),
+        (
+            "0x56f4d3019680b992e2e18533385293710b44010d",
+            "CD",
+            18,
+            "Credit DAO Token",
+        ),
+        (
+            "0x692597b009d13c4049a947cab2239b7d6517875f",
+            "UST",
+            18,
+            "Wrapped UST Token (PoS)",
+        ),
+        (
+            "0xb5c064f955d8e7f38fe0460c556a72987494ee17",
+            "QUICK",
+            18,
+            "QuickSwap",
+        ),
+        (
+            "0xf1428850f92b87e629c6f3a3b75bffbc496f7ba6",
+            "GEO$",
+            18,
+            "GEOPOLY",
+        ),
+        (
+            "0xffb9f1907f827709b0ed09b37956cd3c7462abdb",
+            "DUCKIES",
+            2,
+            "Yellow Duckies",
+        ),
     ];
     for (addr, symbol, decimals, name) in tokens {
-        custom.insert(137, addr, TokenMeta {
-            symbol: symbol.to_string(), decimals: *decimals, name: name.to_string(),
-        });
+        custom.insert(
+            137,
+            addr,
+            TokenMeta {
+                symbol: symbol.to_string(),
+                decimals: *decimals,
+                name: name.to_string(),
+            },
+        );
     }
     CompositeDataProvider::new(vec![
         Box::new(custom),
@@ -91,8 +181,12 @@ async fn run_quickswap_test(calldata_hex: &str, value_hex: &str, from: &str) -> 
     let val = value_bytes(value_hex);
     let provider = quickswap_token_source();
     let tx = TransactionContext {
-        chain_id: 137, to: QUICKSWAP_ADDR, calldata: &calldata,
-        value: val.as_deref(), from: Some(from), implementation_address: None,
+        chain_id: 137,
+        to: QUICKSWAP_ADDR,
+        calldata: &calldata,
+        value: val.as_deref(),
+        from: Some(from),
+        implementation_address: None,
     };
     format_calldata(&descriptors, &tx, &provider).await.unwrap()
 }
@@ -109,8 +203,14 @@ async fn quickswap_swap_exact_tokens_for_tokens() {
     assert_eq!(result.intent, "Swap");
     assert_eq!(result.owner.as_deref(), Some("QuickSwap"));
     assert_eq!(get_entry_value(&result, "Amount to Send"), "10 mOCEAN");
-    assert_eq!(get_entry_value(&result, "Minimum to Receive"), "3.980165 USDC.e");
-    assert_eq!(get_entry_value(&result, "Beneficiary"), "0xa7112994F478DbF1e8829622b46604AC324bB58B");
+    assert_eq!(
+        get_entry_value(&result, "Minimum to Receive"),
+        "3.980165 USDC.e"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Beneficiary"),
+        "0xa7112994F478DbF1e8829622b46604AC324bB58B"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -125,7 +225,10 @@ async fn quickswap_swap_exact_eth_for_tokens() {
 
     assert_eq!(result.intent, "Swap");
     assert_eq!(get_entry_value(&result, "Amount to Send"), "108 MATIC");
-    assert_eq!(get_entry_value(&result, "Minimum to Receive"), "122.270929 USDT");
+    assert_eq!(
+        get_entry_value(&result, "Minimum to Receive"),
+        "122.270929 USDT"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -139,8 +242,14 @@ async fn quickswap_swap_tokens_for_exact_tokens() {
     ).await;
 
     assert_eq!(result.intent, "Swap");
-    assert_eq!(get_entry_value(&result, "Amount to Receive"), "94521.04693528035065856 GEO$");
-    assert_eq!(get_entry_value(&result, "Maximum to Send"), "72.552614 USDT");
+    assert_eq!(
+        get_entry_value(&result, "Amount to Receive"),
+        "94521.04693528035065856 GEO$"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Maximum to Send"),
+        "72.552614 USDT"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -154,8 +263,14 @@ async fn quickswap_swap_exact_tokens_for_tokens_supporting_fee() {
     ).await;
 
     assert_eq!(result.intent, "Swap");
-    assert_eq!(get_entry_value(&result, "Amount to Send"), "0.529605195473251029 CD");
-    assert_eq!(get_entry_value(&result, "Minimum to Receive"), "0.803683 USDT");
+    assert_eq!(
+        get_entry_value(&result, "Amount to Send"),
+        "0.529605195473251029 CD"
+    );
+    assert_eq!(
+        get_entry_value(&result, "Minimum to Receive"),
+        "0.803683 USDT"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -171,10 +286,18 @@ async fn quickswap_add_liquidity() {
     assert_eq!(result.intent, "Add Liquidity");
     assert_eq!(result.owner.as_deref(), Some("QuickSwap"));
     // Check both token amounts
-    let desired_entries: Vec<_> = result.entries.iter().filter_map(|e| {
-        if let DisplayEntry::Item(item) = e { if item.label == "Desired amount" { return Some(item.value.clone()); } }
-        None
-    }).collect();
+    let desired_entries: Vec<_> = result
+        .entries
+        .iter()
+        .filter_map(|e| {
+            if let DisplayEntry::Item(item) = e {
+                if item.label == "Desired amount" {
+                    return Some(item.value.clone());
+                }
+            }
+            None
+        })
+        .collect();
     assert_eq!(desired_entries.len(), 2);
     assert!(desired_entries.contains(&"1014.420568073331773313 WOMBAT".to_string()));
     assert!(desired_entries.contains(&"2.932705 USDC.e".to_string()));
@@ -193,13 +316,24 @@ async fn quickswap_remove_liquidity_eth_with_permit() {
     assert_eq!(result.intent, "Remove Liquidity");
     assert_eq!(result.owner.as_deref(), Some("QuickSwap"));
     // Verify minimum amount for token we can resolve
-    let min_entries: Vec<_> = result.entries.iter().filter_map(|e| {
-        if let DisplayEntry::Item(item) = e { if item.label == "Minimum amount" { return Some(item.value.clone()); } }
-        None
-    }).collect();
+    let min_entries: Vec<_> = result
+        .entries
+        .iter()
+        .filter_map(|e| {
+            if let DisplayEntry::Item(item) = e {
+                if item.label == "Minimum amount" {
+                    return Some(item.value.clone());
+                }
+            }
+            None
+        })
+        .collect();
     assert_eq!(min_entries.len(), 2);
     assert!(min_entries.contains(&"0.008009514692057469 SAGE".to_string()));
-    assert_eq!(get_entry_value(&result, "Beneficiary"), "0x3272D5C631096d013fc40925E9AcB6A7faF70866");
+    assert_eq!(
+        get_entry_value(&result, "Beneficiary"),
+        "0x3272D5C631096d013fc40925E9AcB6A7faF70866"
+    );
     assert!(result.warnings.is_empty());
 }
 
@@ -214,10 +348,18 @@ async fn quickswap_add_liquidity_eth() {
 
     assert_eq!(result.intent, "Add Liquidity");
     assert_eq!(result.owner.as_deref(), Some("QuickSwap"));
-    let desired_entries: Vec<_> = result.entries.iter().filter_map(|e| {
-        if let DisplayEntry::Item(item) = e { if item.label == "Desired amount" { return Some(item.value.clone()); } }
-        None
-    }).collect();
+    let desired_entries: Vec<_> = result
+        .entries
+        .iter()
+        .filter_map(|e| {
+            if let DisplayEntry::Item(item) = e {
+                if item.label == "Desired amount" {
+                    return Some(item.value.clone());
+                }
+            }
+            None
+        })
+        .collect();
     assert!(desired_entries.contains(&"26733098897834.742680118057451818 PDDOLLAR".to_string()));
     assert!(result.warnings.is_empty());
 }

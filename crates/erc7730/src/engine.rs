@@ -253,9 +253,7 @@ fn render_fields<'a>(
 
                     // Check for .[] array iteration — expand into one entry per element
                     if let Some((base, rest)) = split_array_iter_path(path_str) {
-                        if let Some(ArgumentValue::Array(items)) =
-                            resolve_path(ctx.decoded, base)
-                        {
+                        if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
                             for item in &items {
                                 let val = if rest.is_empty() {
                                     Some(item.clone())
@@ -2089,13 +2087,19 @@ mod tests {
         }
         match resolve_path(&decoded, "packed.[-20:]") {
             Some(ArgumentValue::Bytes(bytes)) => {
-                assert_eq!(hex::encode(bytes), "b21d281dedb17ae5b501f6aa8256fe38c4e45757")
+                assert_eq!(
+                    hex::encode(bytes),
+                    "b21d281dedb17ae5b501f6aa8256fe38c4e45757"
+                )
             }
             other => panic!("unexpected packed slice: {other:?}"),
         }
         match resolve_path(&decoded, "packed_addr.[-20:]") {
             Some(ArgumentValue::Bytes(bytes)) => {
-                assert_eq!(hex::encode(bytes), "1111111111111111111111111111111111111111")
+                assert_eq!(
+                    hex::encode(bytes),
+                    "1111111111111111111111111111111111111111"
+                )
             }
             other => panic!("unexpected packed uint slice: {other:?}"),
         }

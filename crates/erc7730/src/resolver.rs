@@ -222,8 +222,16 @@ impl GitHubRegistrySource {
             })
             .collect();
 
-        let eip712_count = index.values().filter(|paths: &&Vec<String>| paths.iter().any(|p| p.contains("eip712"))).count();
-        println!("[erc7730] from_registry: loaded {} index entries ({} with eip712 paths) from {}", index.len(), eip712_count, index_url);
+        let eip712_count = index
+            .values()
+            .filter(|paths: &&Vec<String>| paths.iter().any(|p| p.contains("eip712")))
+            .count();
+        println!(
+            "[erc7730] from_registry: loaded {} index entries ({} with eip712 paths) from {}",
+            index.len(),
+            eip712_count,
+            index_url
+        );
 
         Ok(Self {
             base_url: base.to_string(),
@@ -276,7 +284,10 @@ impl GitHubRegistrySource {
                     crate::types::context::DescriptorContext::Contract(_) => "contract",
                 };
                 let format_keys: Vec<&String> = desc.display.formats.keys().collect();
-                println!("[erc7730] fetch_descriptor: OK context={}, format_keys={:?}", ctx_type, format_keys);
+                println!(
+                    "[erc7730] fetch_descriptor: OK context={}, format_keys={:?}",
+                    ctx_type, format_keys
+                );
             }
             Err(e) => println!("[erc7730] fetch_descriptor: PARSE ERROR: {}", e),
         }
@@ -312,10 +323,14 @@ impl GitHubRegistrySource {
 
                 // Resolve relative URL against the including file's directory
                 let resolved_path = resolve_relative_path(rel_path, &includes_path);
-                let included_value =
-                    self.fetch_and_merge_value(&resolved_path, depth - 1).await?;
+                let included_value = self
+                    .fetch_and_merge_value(&resolved_path, depth - 1)
+                    .await?;
 
-                Ok(crate::merge::merge_descriptor_values(&value, &included_value))
+                Ok(crate::merge::merge_descriptor_values(
+                    &value,
+                    &included_value,
+                ))
             } else {
                 Ok(value)
             }
@@ -339,7 +354,10 @@ impl GitHubRegistrySource {
     ) -> Result<ResolvedDescriptor, ResolveError> {
         let address_owned = address.to_lowercase();
         let key = Self::make_key(chain_id, &address_owned);
-        println!("[erc7730] resolve_by_context: key={}, prefer_eip712={}, primary_type={:?}", key, prefer_eip712, primary_type);
+        println!(
+            "[erc7730] resolve_by_context: key={}, prefer_eip712={}, primary_type={:?}",
+            key, prefer_eip712, primary_type
+        );
 
         let paths = self
             .index
@@ -352,7 +370,11 @@ impl GitHubRegistrySource {
                 }
             })?
             .clone();
-        println!("[erc7730] resolve_by_context: found {} paths: {:?}", paths.len(), paths);
+        println!(
+            "[erc7730] resolve_by_context: found {} paths: {:?}",
+            paths.len(),
+            paths
+        );
 
         // Helper: check if a descriptor's format keys match the primary_type filter.
         let format_keys_match = |desc: &Descriptor, pt: &str| -> bool {
@@ -403,7 +425,9 @@ impl GitHubRegistrySource {
             // If all paths are cached but none matched primary_type, use context fallback
             if paths.iter().all(|p| cache.contains_key(p.as_str())) {
                 if let Some(desc) = context_fallback.or(any_fallback) {
-                    println!("[erc7730] resolve_by_context: cache fallback (no primary_type match)");
+                    println!(
+                        "[erc7730] resolve_by_context: cache fallback (no primary_type match)"
+                    );
                     return Ok(ResolvedDescriptor {
                         descriptor: desc,
                         chain_id,
@@ -438,7 +462,10 @@ impl GitHubRegistrySource {
             if context_matches {
                 if let Some(pt) = primary_type {
                     if format_keys_match(&descriptor, pt) {
-                        println!("[erc7730] resolve_by_context: fetched with primary_type match: {}", path);
+                        println!(
+                            "[erc7730] resolve_by_context: fetched with primary_type match: {}",
+                            path
+                        );
                         return Ok(ResolvedDescriptor {
                             descriptor,
                             chain_id,
@@ -831,11 +858,16 @@ pub async fn resolve_descriptors_for_typed_data(
 
         // Strip `#.` prefix (message-relative) same as render_typed_calldata_field does
         let callee_key = callee_path.strip_prefix("#.").unwrap_or(callee_path);
-        let callee_addr = crate::eip712::resolve_typed_path(message, callee_key)
-            .and_then(|v| match v {
-                serde_json::Value::String(s) => Some(s),
-                _ => None,
-            });
+        let callee_addr = crate::eip712::resolve_typed_path(
+            message,
+            callee_key,
+            chain_id,
+            Some(verifying_contract),
+        )
+        .and_then(|v| match v {
+            serde_json::Value::String(s) => Some(s),
+            _ => None,
+        });
 
         let callee_addr = match callee_addr {
             Some(addr) => addr,
@@ -848,7 +880,7 @@ pub async fn resolve_descriptors_for_typed_data(
             .as_ref()
             .and_then(|p| {
                 let path = p.strip_prefix("#.").unwrap_or(p);
-                crate::eip712::resolve_typed_path(message, path)
+                crate::eip712::resolve_typed_path(message, path, chain_id, Some(verifying_contract))
             })
             .and_then(|v| match v {
                 serde_json::Value::Number(n) => n.as_u64(),
@@ -860,8 +892,9 @@ pub async fn resolve_descriptors_for_typed_data(
         // Try to get inner calldata bytes for deeper nesting via resolve_recursive
         if let Some(data_path) = &field.data_path {
             let path = data_path.strip_prefix("#.").unwrap_or(data_path);
-            if let Some(inner_hex) = crate::eip712::resolve_typed_path(message, path)
-                .and_then(|v| v.as_str().map(String::from))
+            if let Some(inner_hex) =
+                crate::eip712::resolve_typed_path(message, path, chain_id, Some(verifying_contract))
+                    .and_then(|v| v.as_str().map(String::from))
             {
                 let hex_str = inner_hex
                     .strip_prefix("0x")
