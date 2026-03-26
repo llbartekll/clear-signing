@@ -132,26 +132,79 @@ GET https://api.etherscan.io/v2/api?chainid={chainId}&module=proxy&action=eth_ge
 Or use `cast tx {hash} --rpc-url {rpc} input` if available.
 
 Write a temporary Rust test file using the existing integration test pattern
-(see `tests/aave_integration.rs`):
+(see `tests/aave_integration.rs`). The test must print full `DisplayModel`
+output via `eprintln!` so it is captured in the `--nocapture` output.
+
+**Test function template** (one per matched transaction):
 ```rust
-let tx = TransactionContext { chain_id, to, calldata: &calldata, value, from, implementation_address: None };
-let descriptors = vec![ResolvedDescriptor { descriptor, chain_id, address: to.to_lowercase() }];
-let result = format_calldata(&descriptors, &tx, &provider).await;
+#[tokio::test]
+async fn smoke_{contract}_{function}() {
+    let descriptor = load_descriptor("{descriptor_fixture}.json");
+    let descriptors = wrap_rd(descriptor, {chain_id}, "{address}");
+    let calldata = decode_hex("{calldata_hex}");
+    let val = value_bytes("{value_hex}");
+    let provider = /* token source with relevant tokens */;
+    let tx = TransactionContext {
+        chain_id: {chain_id}, to: "{address}",
+        calldata: &calldata, value: val.as_deref(),
+        from: Some("{from}"), implementation_address: None,
+    };
+    let result = format_calldata(&descriptors, &tx, &provider).await;
+    match &result {
+        Ok(model) => {
+            eprintln!("PASS {contract}/{function}");
+            eprintln!("  intent: {:?}", model.intent);
+            eprintln!("  interpolated_intent: {:?}", model.interpolated_intent);
+            eprintln!("  owner: {:?}", model.owner);
+            for entry in &model.entries {
+                match entry {
+                    DisplayEntry::Item(item) => {
+                        eprintln!("  [field] {}: {}", item.label, item.value);
+                    }
+                    DisplayEntry::Group { label, entries, .. } => {
+                        eprintln!("  [group] {label}:");
+                        for sub in entries {
+                            eprintln!("    {:?}", sub);
+                        }
+                    }
+                    DisplayEntry::Nested { label, intent, entries, warnings } => {
+                        eprintln!("  [nested] {label} (intent: {intent:?}):");
+                        for sub in entries {
+                            eprintln!("    {:?}", sub);
+                        }
+                        if !warnings.is_empty() {
+                            eprintln!("    nested warnings: {warnings:?}");
+                        }
+                    }
+                }
+            }
+            if !model.warnings.is_empty() {
+                eprintln!("  warnings: {:?}", model.warnings);
+            }
+        }
+        Err(e) => eprintln!("FAIL {contract}/{function}: {e}"),
+    }
+    assert!(result.is_ok(), "{contract}/{function} failed: {:?}", result.err());
+}
 ```
+
+**Important**: Do NOT truncate or abbreviate the output. Print every field label
+and value in full so the user can inspect the complete formatted result.
 
 Run via:
 ```bash
-cargo test -p erc7730 --test {temp_test_name} -- --nocapture
+cargo test -p erc7730 --test {temp_test_name} -- --nocapture 2>&1
 ```
 
-Capture whether each call succeeds or fails. If it succeeds, capture the
-`DisplayModel` output (intent, interpolated intent, entries, warnings).
+Capture the full stderr output (where `eprintln!` goes). Parse it to extract
+the structured results for the report.
 
 Delete the temporary test file after collecting results.
 
 ### Step 6 — Report results
 
-Present a structured report:
+Present a structured report with **full field-level detail** for every test case.
+Do NOT truncate field values or addresses — show every character.
 
 ```markdown
 ## Descriptor: {filename} — Real Transaction Validation
@@ -161,19 +214,50 @@ Present a structured report:
 
 ### Results
 
-| # | Function | Chain | Tx | Status | Intent |
-|---|----------|-------|----|--------|--------|
-| 1 | supply(...) | 1 | 0x1234...abcd | PASS | Supply |
-| 2 | withdraw(...) | 1 | 0x5678...ef01 | PASS | Withdraw |
-| 3 | repay(...) | 10 | 0x9abc...2345 | FAIL: missing token | Repay loan |
+For each tested function, show:
+1. Status (PASS/FAIL)
+2. Intent string
+3. Every field label and its full formatted value
+4. Any warnings
+
+Example:
+
+#### 1. supply(...) — PASS
+- **Tx**: `0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef`
+- **Intent**: "Supply"
+- **Owner**: "Protocol Name"
+- Fields:
+  - **Asset**: `0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48`
+  - **Amount**: `1000.50 USDC`
+  - **On Behalf Of**: `0x1234567890AbCdEf1234567890aBcDeF12345678`
+
+#### 2. withdraw(...) — FAIL
+- **Tx**: `0xabcdef...`
+- **Error**: `no matching format key for selector 0x12345678`
 
 ### Coverage
-- 7/8 format keys have matching on-chain transactions
-- repayWithPermit — no matching txs in last 100
+- {matched}/{total} format keys have matching on-chain transactions
+- {uncovered function names} — no matching txs in last 100
 
 ### Uncovered Selectors (not in descriptor)
-- 0x28530a47 setUserEMode(uint8) — 3 txs
-- 0x2dad97d4 repayWithATokens(address,uint256,uint256) — 3 txs
+- 0x28530a47 — 3 txs (use `cast 4byte 0x28530a47` to identify)
+
+### Analysis
+
+After presenting results, analyze the formatting output for issues:
+- **Intent consistency**: Are intent strings consistently cased? (e.g., "claim withdrawal" vs "Claim Withdrawal")
+- **Token resolution**: Were all token amounts formatted with symbols and decimals, or are any showing raw wei values?
+- **Address display**: Are addresses showing checksummed (EIP-55) format?
+- **Missing labels**: Are any fields showing generic labels like "Param 0" instead of descriptive names?
+- **Warnings**: Flag any warnings emitted by the library (e.g., "token metadata not found")
+- **Value formatting**: Are large numbers human-readable? Are decimals reasonable?
+- **Nested calldata**: If any functions have nested calls, are they rendered with proper inner intent?
+
+Present issues as a checklist:
+- [ ] Issue description — which function, which field, what's wrong
+- [ ] ...
+
+If no issues found, state: "No formatting issues detected."
 ```
 
 #### Optional: Scaffold integration test
