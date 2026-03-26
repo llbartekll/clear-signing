@@ -250,6 +250,38 @@ fn render_fields<'a>(
 
                     let path_str = path.as_deref().unwrap_or("");
 
+                    // Check for .[] array iteration — expand into one entry per element
+                    if let Some((base, rest)) = split_array_iter_path(path_str) {
+                        if let Some(ArgumentValue::Array(items)) =
+                            resolve_path(ctx.decoded, base)
+                        {
+                            for item in &items {
+                                let val = if rest.is_empty() {
+                                    Some(item.clone())
+                                } else {
+                                    let rest_segments: Vec<&str> = rest.split('.').collect();
+                                    navigate_value(item, &rest_segments)
+                                };
+                                let formatted = format_value(
+                                    ctx,
+                                    &val,
+                                    format.as_ref(),
+                                    params.as_ref(),
+                                    path_str,
+                                    label,
+                                    separator.as_deref(),
+                                    warnings,
+                                )
+                                .await?;
+                                entries.push(DisplayEntry::Item(DisplayItem {
+                                    label: label.clone(),
+                                    value: formatted,
+                                }));
+                            }
+                            continue;
+                        }
+                    }
+
                     // Resolve the value from decoded arguments
                     let value = resolve_path(ctx.decoded, path_str);
 
@@ -685,6 +717,22 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
         }
         _ => None,
     }
+}
+
+/// Split a path at `.[]` into (base_path, remaining_path).
+///
+/// `"_owners.[]"` → `Some(("_owners", ""))`
+/// `"orders.[].order.expiry"` → `Some(("orders", "order.expiry"))`
+/// `"_swapData.[].callData"` → `Some(("_swapData", "callData"))`
+/// `"no_brackets"` → `None`
+pub(crate) fn split_array_iter_path(path: &str) -> Option<(&str, &str)> {
+    let marker = ".[]";
+    let pos = path.find(marker)?;
+    let base = &path[..pos];
+    let rest = &path[pos + marker.len()..];
+    // Strip leading dot from remaining path
+    let rest = rest.strip_prefix('.').unwrap_or(rest);
+    Some((base, rest))
 }
 
 /// Parse an array index that may be negative.
@@ -1247,23 +1295,28 @@ async fn format_token_amount(
     // Try to resolve token metadata
     let token_meta = if let Some(params) = params {
         if let Some(ref token_path) = params.token_path {
-            // Resolve token address from calldata
+            // Resolve token address from calldata (supports address and uint256-packed addresses)
             let token_addr = resolve_path(ctx.decoded, token_path);
-            if let Some(ArgumentValue::Address(addr)) = token_addr {
-                let addr_hex = format!("0x{}", hex::encode(addr));
-
+            let addr_hex = match token_addr {
+                Some(ArgumentValue::Address(addr)) => {
+                    Some(format!("0x{}", hex::encode(addr)))
+                }
+                Some(ArgumentValue::Uint(ref bytes)) => address_from_uint_bytes(bytes),
+                _ => None,
+            };
+            if let Some(ref addr_hex) = addr_hex {
                 // Check for native currency
                 if let Some(ref native) = params.native_currency_address {
-                    if native.matches(&addr_hex, &ctx.descriptor.metadata.constants) {
+                    if native.matches(addr_hex, &ctx.descriptor.metadata.constants) {
                         Some(native_token_meta(lookup_chain_id))
                     } else {
                         ctx.data_provider
-                            .resolve_token(lookup_chain_id, &addr_hex)
+                            .resolve_token(lookup_chain_id, addr_hex)
                             .await
                     }
                 } else {
                     ctx.data_provider
-                        .resolve_token(lookup_chain_id, &addr_hex)
+                        .resolve_token(lookup_chain_id, addr_hex)
                         .await
                 }
             } else {
@@ -1316,6 +1369,20 @@ async fn format_token_amount(
         ));
         Ok(raw_amount.to_string())
     }
+}
+
+/// Extract a 20-byte address from uint256 bytes (low 20 bytes).
+///
+/// Handles gas-optimized contracts that store addresses as uint256.
+pub(crate) fn address_from_uint_bytes(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 20 {
+        return None;
+    }
+    let addr_bytes = &bytes[bytes.len() - 20..];
+    if addr_bytes.iter().all(|&b| b == 0) {
+        return None;
+    }
+    Some(format!("0x{}", hex::encode(addr_bytes)))
 }
 
 /// Resolve a `$.metadata.constants.xxx` reference to its string value, or return the input as-is.

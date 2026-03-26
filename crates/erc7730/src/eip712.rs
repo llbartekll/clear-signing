@@ -232,6 +232,38 @@ fn render_typed_fields<'a>(
                     }
 
                     let path_str = path.as_deref().unwrap_or("");
+
+                    // Check for .[] array iteration — expand into one entry per element
+                    if let Some((base, rest)) = crate::engine::split_array_iter_path(path_str) {
+                        if let Some(serde_json::Value::Array(items)) =
+                            resolve_typed_path(message, base)
+                        {
+                            for item in &items {
+                                let val = if rest.is_empty() {
+                                    Some(item.clone())
+                                } else {
+                                    resolve_typed_path(item, rest)
+                                };
+                                let formatted = format_typed_value(
+                                    descriptor,
+                                    &val,
+                                    format.as_ref(),
+                                    params.as_ref(),
+                                    chain_id,
+                                    message,
+                                    data_provider,
+                                    warnings,
+                                )
+                                .await?;
+                                entries.push(DisplayEntry::Item(DisplayItem {
+                                    label: label.clone(),
+                                    value: formatted,
+                                }));
+                            }
+                            continue;
+                        }
+                    }
+
                     let value = resolve_typed_path(message, path_str);
 
                     // Check visibility
@@ -731,7 +763,15 @@ async fn format_typed_value(
             let token_meta = if let Some(params) = params {
                 if let Some(ref token_path) = params.token_path {
                     let token_addr = resolve_typed_path(message, token_path);
-                    if let Some(serde_json::Value::String(addr)) = token_addr {
+                    // Support both string addresses and uint256-packed addresses
+                    let addr_str = match token_addr {
+                        Some(serde_json::Value::String(addr)) => Some(addr),
+                        Some(serde_json::Value::Number(ref n)) => {
+                            n.as_u64().map(|v| format!("0x{:040x}", v))
+                        }
+                        _ => None,
+                    };
+                    if let Some(addr) = addr_str {
                         data_provider.resolve_token(lookup_chain, &addr).await
                     } else {
                         None

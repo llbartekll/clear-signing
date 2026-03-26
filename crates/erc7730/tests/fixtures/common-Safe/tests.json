@@ -218,7 +218,7 @@
           {
             "Item": {
               "label": "Signer",
-              "value": "<unresolved>"
+              "value": "0x5f5cd726d6210E80924C08D5Cd114999f187c099"
             }
           },
           {
@@ -266,9 +266,7 @@
         "intent": "Setup Safe",
         "interpolated_intent": null,
         "owner": "Safe{Wallet}",
-        "warnings": [
-          "could not resolve path: _owners.[] for field 'Signer'"
-        ]
+        "warnings": []
       }
     }
   ]

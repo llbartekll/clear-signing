@@ -144,10 +144,12 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
 
     private func lookupToken(chainId: UInt64, address: String) -> TokenMetadata? {
         guard let resolvedAddress = normalizedAddress(address) else {
+            print("[metadata] lookupToken: invalid address \(address)")
             return nil
         }
 
         if resolvedAddress == Self.nativeTokenSentinel {
+            print("[metadata] lookupToken: native gas token for chain \(chainId)")
             return Self.nativeGasTokens[chainId]
         }
 
@@ -156,23 +158,28 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
 
         switch memoryCache.lookup(cacheKey, as: TokenMetadata.self, now: date) {
         case .value(let token):
+            print("[metadata] lookupToken: memory cache HIT for \(chainId):\(resolvedAddress) → \(token.symbol)")
             return token
         case .negative:
+            print("[metadata] lookupToken: memory cache NEGATIVE for \(chainId):\(resolvedAddress)")
             return nil
         case .missing:
             break
         }
 
         if let seedToken = seedTokenStore.token(chainId: chainId, address: resolvedAddress) {
+            print("[metadata] lookupToken: seed store HIT for \(chainId):\(resolvedAddress) → \(seedToken.symbol)")
             memoryCache.store(seedToken, key: cacheKey, ttl: TTL.token, now: date)
             return seedToken
         }
 
         switch persistentCache.lookup(cacheKey, as: TokenMetadata.self, now: date) {
         case .value(let token):
+            print("[metadata] lookupToken: persistent cache HIT for \(chainId):\(resolvedAddress) → \(token.symbol)")
             memoryCache.store(token, key: cacheKey, ttl: TTL.token, now: date)
             return token
         case .negative:
+            print("[metadata] lookupToken: persistent cache NEGATIVE for \(chainId):\(resolvedAddress)")
             memoryCache.store(nil as TokenMetadata?, key: cacheKey, ttl: TTL.negative, now: date)
             return nil
         case .missing:
@@ -180,21 +187,27 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         }
 
         if !canPerformLiveLookup(on: chainId) {
+            print("[metadata] lookupToken: canPerformLiveLookup=false for chain \(chainId) (isMainThread=\(isMainThread()), supported=\(Self.supportedChainIds.contains(chainId)), alchemy=\(alchemyClient != nil))")
             return nil
         }
 
         guard let alchemyClient else {
+            print("[metadata] lookupToken: no alchemy client")
             return nil
         }
 
+        print("[metadata] lookupToken: calling Alchemy for \(chainId):\(resolvedAddress)")
         switch alchemyClient.fetchTokenMetadata(chainId: chainId, address: resolvedAddress) {
         case .value(let token):
+            print("[metadata] lookupToken: Alchemy OK → \(token.symbol) (\(token.decimals) decimals)")
             store(token, key: cacheKey, ttl: TTL.token, now: date)
             return token
         case .notFound:
+            print("[metadata] lookupToken: Alchemy NOT FOUND for \(chainId):\(resolvedAddress)")
             store(nil as TokenMetadata?, key: cacheKey, ttl: TTL.negative, now: date)
             return nil
         case .unavailable:
+            print("[metadata] lookupToken: Alchemy UNAVAILABLE for \(chainId):\(resolvedAddress)")
             return nil
         }
     }
