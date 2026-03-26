@@ -52,11 +52,57 @@ pub struct TypedDataDomain {
 
     #[serde(rename = "chainId")]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "deserialize_chain_id")]
     pub chain_id: Option<u64>,
 
     #[serde(rename = "verifyingContract")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verifying_contract: Option<String>,
+}
+
+/// Deserialize chainId that may be a number or a hex string (e.g. "0xa" for 10).
+fn deserialize_chain_id<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct ChainIdVisitor;
+
+    impl<'de> de::Visitor<'de> for ChainIdVisitor {
+        type Value = Option<u64>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a number or hex string for chainId")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            Ok(Some(v as u64))
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            let trimmed = v.trim();
+            if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16).map(Some).map_err(de::Error::custom)
+            } else {
+                trimmed.parse::<u64>().map(Some).map_err(de::Error::custom)
+            }
+        }
+    }
+
+    deserializer.deserialize_any(ChainIdVisitor)
 }
 
 /// Format EIP-712 typed data into a display model.
