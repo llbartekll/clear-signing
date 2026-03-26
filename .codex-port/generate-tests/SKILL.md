@@ -147,6 +147,31 @@ Report:
 
 If the user wants permanent coverage, promote the strongest cases into explicit integration tests in `crates/erc7730/tests/` with concrete assertions on intent and key rendered fields.
 
+### 8. Diagnose whether the issue is in the engine
+
+After every run, do a short root-cause pass on any failures, warnings, or `<unresolved>` fields.
+
+Classify each issue as one of:
+
+- Descriptor issue
+- Data-provider or metadata issue
+- Engine limitation or bug
+
+Treat it as an engine issue when the descriptor intent and core decoding succeed but fields fail because the library cannot navigate or format the requested value shape. Common examples:
+
+- path syntax accepted by the descriptor but unsupported in the current resolver
+- byte or tuple slicing that the engine does not currently handle
+- values that resolve, but cannot be coerced into the formatter's expected type
+
+When you conclude it is likely an engine issue:
+
+- say so explicitly in the final report
+- cite the relevant Rust file and function
+- explain the mismatch between descriptor expectation and current engine behavior
+- distinguish "engine limitation" from "descriptor typo" if the path looks internally consistent
+
+Do not stop at saying a field is `<unresolved>`; explain why it became unresolved when the code makes that diagnosable.
+
 ## Guardrails
 
 - Prefer existing repo helpers and test patterns over inventing a new harness
