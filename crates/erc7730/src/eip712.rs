@@ -5,7 +5,9 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
+use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
+use tiny_keccak::{Hasher, Keccak};
 
 use crate::engine::{
     resolve_metadata_constant_str, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
@@ -32,7 +34,16 @@ pub struct TypedData {
 
     pub domain: TypedDataDomain,
 
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container: Option<TypedDataContainer>,
+
     pub message: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TypedDataContainer {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +70,23 @@ pub struct TypedDataDomain {
     #[serde(rename = "verifyingContract")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verifying_contract: Option<String>,
+}
+
+#[derive(Clone, Copy)]
+struct TypedContainerContext<'a> {
+    chain_id: Option<u64>,
+    verifying_contract: Option<&'a str>,
+    from: Option<&'a str>,
+}
+
+impl<'a> TypedContainerContext<'a> {
+    fn from_typed_data(data: &'a TypedData) -> Self {
+        Self {
+            chain_id: data.domain.chain_id,
+            verifying_contract: data.domain.verifying_contract.as_deref(),
+            from: data.container.as_ref().and_then(|container| container.from.as_deref()),
+        }
+    }
 }
 
 /// Deserialize chainId that may be a number or a hex string (e.g. "0xa" for 10).
@@ -120,37 +148,17 @@ pub async fn format_typed_data(
     data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
-    let chain_id = data.domain.chain_id.unwrap_or(1);
-    let verifying_contract = data.domain.verifying_contract.as_deref();
-
-    // Find format by primary type name (exact match first, then signature prefix match)
-    let format = descriptor
-        .display
-        .formats
-        .get(&data.primary_type)
-        .or_else(|| {
-            // Try matching by type name prefix: "Order(address owner,...)" matches primaryType "Order"
-            let prefix = format!("{}(", data.primary_type);
-            descriptor
-                .display
-                .formats
-                .iter()
-                .find(|(key, _)| key.starts_with(&prefix))
-                .map(|(_, v)| v)
-        });
-
-    // Graceful fallback: if no format matches, show raw message fields
-    let Some(format) = format else {
-        return Ok(build_typed_raw_fallback(data));
-    };
+    let container = TypedContainerContext::from_typed_data(data);
+    let format = find_typed_format(descriptor, data)?;
 
     let mut warnings = Vec::new();
+    let expanded_fields =
+        crate::engine::expand_display_fields(descriptor, &format.fields, &mut warnings);
     let entries = render_typed_fields(
         descriptor,
         &data.message,
-        verifying_contract,
-        &format.fields,
-        chain_id,
+        &expanded_fields,
+        container,
         data_provider,
         &mut warnings,
         descriptors,
@@ -164,15 +172,19 @@ pub async fn format_typed_data(
             .as_ref()
             .map(crate::types::display::intent_as_string)
             .unwrap_or_else(|| data.primary_type.clone()),
-        interpolated_intent: format.interpolated_intent.as_ref().map(|template| {
-            interpolate_typed_intent(
+        interpolated_intent: match format.interpolated_intent.as_ref() {
+            Some(template) => Some(interpolate_typed_intent(
                 template,
+                descriptor,
                 &data.message,
-                verifying_contract,
-                &format.fields,
-                chain_id,
+                container,
+                &expanded_fields,
+                &format.excluded,
+                data_provider,
             )
-        }),
+            .await?),
+            None => None,
+        },
         entries,
         warnings,
         owner: descriptor.metadata.owner.clone(),
@@ -186,9 +198,8 @@ pub async fn format_typed_data(
 fn render_typed_fields<'a>(
     descriptor: &'a Descriptor,
     message: &'a serde_json::Value,
-    verifying_contract: Option<&'a str>,
     fields: &[DisplayField],
-    chain_id: u64,
+    container: TypedContainerContext<'a>,
     data_provider: &'a dyn DataProvider,
     warnings: &'a mut Vec<String>,
     descriptors: &'a [ResolvedDescriptor],
@@ -200,48 +211,12 @@ fn render_typed_fields<'a>(
 
         for field in &fields {
             match field {
-                DisplayField::Reference {
-                    reference,
-                    path,
-                    params: ref_params,
-                    visible,
-                } => {
-                    let key = reference
-                        .strip_prefix("$.display.definitions.")
-                        .or_else(|| reference.strip_prefix("#/definitions/"))
-                        .unwrap_or(reference);
-                    if let Some(resolved) = descriptor.display.definitions.get(key) {
-                        let merged = crate::engine::merge_ref_with_definition(
-                            resolved.clone(),
-                            path,
-                            ref_params,
-                            visible,
-                        );
-                        let merged_slice = vec![merged];
-                        let mut sub = render_typed_fields(
-                            descriptor,
-                            message,
-                            verifying_contract,
-                            &merged_slice,
-                            chain_id,
-                            data_provider,
-                            warnings,
-                            descriptors,
-                            depth,
-                        )
-                        .await?;
-                        entries.append(&mut sub);
-                    } else {
-                        warnings.push(format!("unresolved reference: {reference}"));
-                    }
-                }
                 DisplayField::Group { field_group } => {
                     if let Some(entry) = render_typed_field_group(
                         descriptor,
                         message,
-                        verifying_contract,
                         field_group,
-                        chain_id,
+                        container,
                         data_provider,
                         warnings,
                         descriptors,
@@ -251,29 +226,6 @@ fn render_typed_fields<'a>(
                     {
                         entries.push(entry);
                     }
-                }
-                DisplayField::Scope {
-                    path: scope_path,
-                    fields: children,
-                } => {
-                    // Inline scope: prepend scope path to child paths, then render
-                    let expanded: Vec<DisplayField> = children
-                        .iter()
-                        .map(|child| crate::engine::prepend_scope_path(child, scope_path))
-                        .collect();
-                    let mut sub = render_typed_fields(
-                        descriptor,
-                        message,
-                        verifying_contract,
-                        &expanded,
-                        chain_id,
-                        data_provider,
-                        warnings,
-                        descriptors,
-                        depth,
-                    )
-                    .await?;
-                    entries.append(&mut sub);
                 }
                 DisplayField::Simple {
                     path,
@@ -299,21 +251,20 @@ fn render_typed_fields<'a>(
                     // Check for .[] array iteration — expand into one entry per element
                     if let Some((base, rest)) = crate::engine::split_array_iter_path(path_str) {
                         if let Some(serde_json::Value::Array(items)) =
-                            resolve_typed_path(message, base, chain_id, verifying_contract)
+                            resolve_typed_path_in_context(message, base, container)?
                         {
                             for item in &items {
                                 let val = if rest.is_empty() {
                                     Some(item.clone())
                                 } else {
-                                    resolve_typed_path(item, rest, chain_id, verifying_contract)
+                                    resolve_typed_path_in_context(item, rest, container)?
                                 };
                                 let formatted = format_typed_value(
                                     descriptor,
                                     &val,
                                     format.as_ref(),
                                     params.as_ref(),
-                                    chain_id,
-                                    verifying_contract,
+                                    container,
                                     message,
                                     data_provider,
                                     warnings,
@@ -328,7 +279,7 @@ fn render_typed_fields<'a>(
                         }
                     }
 
-                    let value = resolve_typed_path(message, path_str, chain_id, verifying_contract);
+                    let value = resolve_typed_path_in_context(message, path_str, container)?;
 
                     // Check visibility
                     if !check_typed_visibility(visible, &value) {
@@ -340,11 +291,10 @@ fn render_typed_fields<'a>(
                         let entry = render_typed_calldata_field(
                             descriptor,
                             message,
-                            verifying_contract,
                             &value,
                             params.as_ref(),
                             label,
-                            chain_id,
+                            container,
                             data_provider,
                             descriptors,
                             depth,
@@ -359,8 +309,7 @@ fn render_typed_fields<'a>(
                         &value,
                         format.as_ref(),
                         params.as_ref(),
-                        chain_id,
-                        verifying_contract,
+                        container,
                         message,
                         data_provider,
                         warnings,
@@ -371,6 +320,11 @@ fn render_typed_fields<'a>(
                         label: label.clone(),
                         value: formatted,
                     }));
+                }
+                DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
+                    warnings.push(
+                        "unexpanded display field reached typed renderer; skipping".to_string(),
+                    );
                 }
             }
         }
@@ -383,9 +337,8 @@ fn render_typed_fields<'a>(
 async fn render_typed_field_group<'a>(
     descriptor: &'a Descriptor,
     message: &'a serde_json::Value,
-    verifying_contract: Option<&'a str>,
     group: &FieldGroup,
-    chain_id: u64,
+    container: TypedContainerContext<'a>,
     data_provider: &'a dyn DataProvider,
     warnings: &'a mut Vec<String>,
     descriptors: &'a [ResolvedDescriptor],
@@ -394,9 +347,8 @@ async fn render_typed_field_group<'a>(
     let sub = render_typed_fields(
         descriptor,
         message,
-        verifying_contract,
         &group.fields,
-        chain_id,
+        container,
         data_provider,
         warnings,
         descriptors,
@@ -441,11 +393,10 @@ async fn render_typed_field_group<'a>(
 async fn render_typed_calldata_field(
     _descriptor: &Descriptor,
     message: &serde_json::Value,
-    verifying_contract: Option<&str>,
     val: &Option<serde_json::Value>,
     params: Option<&FormatParams>,
     label: &str,
-    chain_id: u64,
+    container: TypedContainerContext<'_>,
     data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
     depth: u8,
@@ -518,20 +469,16 @@ async fn render_typed_calldata_field(
     }
 
     // Resolve callee address — supports `#.` prefix for message field reference
-    let callee_addr: Option<String> =
-        params
-            .and_then(|p| p.callee_path.as_ref())
-            .and_then(|path| {
-                let resolved = if let Some(rest) = path.strip_prefix("#.") {
-                    resolve_typed_message_path(message, rest)
-                } else {
-                    resolve_typed_path(message, path, chain_id, verifying_contract)
-                };
-                resolved.and_then(|v| match v {
-                    serde_json::Value::String(s) => Some(s),
-                    _ => None,
-                })
-            });
+    let callee_addr: Option<String> = match params.and_then(|p| p.callee_path.as_ref()) {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?.and_then(|v| {
+            if let serde_json::Value::String(s) = v {
+                Some(s)
+            } else {
+                None
+            }
+        }),
+        None => None,
+    };
 
     let callee = match callee_addr {
         Some(addr) => addr,
@@ -541,42 +488,36 @@ async fn render_typed_calldata_field(
     };
 
     // Resolve amount (for @.value injection)
-    let amount_bytes: Option<Vec<u8>> =
-        params
-            .and_then(|p| p.amount_path.as_ref())
-            .and_then(|path| {
-                let resolved = if let Some(rest) = path.strip_prefix("#.") {
-                    resolve_typed_message_path(message, rest)
-                } else {
-                    resolve_typed_path(message, path, chain_id, verifying_contract)
-                };
-                resolved.and_then(|v| {
-                    let s = json_value_to_string(&v);
-                    let n: num_bigint::BigUint = s.parse().ok()?;
-                    let bytes = n.to_bytes_be();
-                    let mut padded = vec![0u8; 32usize.saturating_sub(bytes.len())];
-                    padded.extend_from_slice(&bytes);
-                    Some(padded)
-                })
-            });
+    let amount_bytes: Option<Vec<u8>> = match params.and_then(|p| p.amount_path.as_ref()) {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?.and_then(|v| {
+            let s = json_value_to_string(&v);
+            let n: BigUint = s.parse().ok()?;
+            let bytes = n.to_bytes_be();
+            let mut padded = vec![0u8; 32usize.saturating_sub(bytes.len())];
+            padded.extend_from_slice(&bytes);
+            Some(padded)
+        }),
+        None => None,
+    };
 
     // Resolve spender/from
-    let spender_addr: Option<String> =
-        params
-            .and_then(|p| p.spender_path.as_ref())
-            .and_then(|path| {
-                let resolved = if let Some(rest) = path.strip_prefix("#.") {
-                    resolve_typed_message_path(message, rest)
-                } else {
-                    resolve_typed_path(message, path, chain_id, verifying_contract)
-                };
-                resolved.and_then(|v| match v {
-                    serde_json::Value::String(s) => Some(s),
-                    _ => None,
-                })
-            });
+    let spender_addr: Option<String> = match params.and_then(|p| p.spender_path.as_ref()) {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?.and_then(|v| {
+            if let serde_json::Value::String(s) = v {
+                Some(s)
+            } else {
+                None
+            }
+        }),
+        None => None,
+    };
 
     // Find matching inner descriptor
+    let chain_id = container.chain_id.ok_or_else(|| {
+        Error::Descriptor(
+            "EIP-712 container value @.chainId is required for nested calldata".to_string(),
+        )
+    })?;
     let inner_descriptor = descriptors.iter().find(|rd| {
         rd.descriptor.context.deployments().iter().any(|dep| {
             dep.chain_id == chain_id && dep.address.to_lowercase() == callee.to_lowercase()
@@ -669,6 +610,111 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
     }
 }
 
+fn find_typed_format<'a>(
+    descriptor: &'a Descriptor,
+    data: &TypedData,
+) -> Result<&'a crate::types::display::DisplayFormat, Error> {
+    let encode_type = encode_type_for_primary_type(data)?;
+    let expected_hash = keccak256(encode_type.as_bytes());
+    let mut matches = Vec::new();
+
+    for (key, format) in &descriptor.display.formats {
+        if keccak256(key.as_bytes()) == expected_hash {
+            matches.push((key, format));
+        }
+    }
+
+    match matches.len() {
+        1 => Ok(matches[0].1),
+        0 => Err(Error::Descriptor(format!(
+            "no EIP-712 display format found for primaryType '{}' (expected encodeType '{}')",
+            data.primary_type, encode_type
+        ))),
+        _ => {
+            let keys: Vec<&str> = matches.iter().map(|(key, _)| key.as_str()).collect();
+            Err(Error::Descriptor(format!(
+                "multiple EIP-712 display formats match primaryType '{}': {}",
+                data.primary_type,
+                keys.join(", ")
+            )))
+        }
+    }
+}
+
+fn encode_type_for_primary_type(data: &TypedData) -> Result<String, Error> {
+    let primary_fields = data.types.get(&data.primary_type).ok_or_else(|| {
+        Error::Descriptor(format!(
+            "missing EIP-712 type definition for primaryType '{}'",
+            data.primary_type
+        ))
+    })?;
+
+    let mut dependencies = std::collections::BTreeSet::new();
+    collect_type_dependencies(&data.primary_type, &data.types, &mut dependencies)?;
+    dependencies.remove(&data.primary_type);
+
+    let mut encoded = encode_type_segment(&data.primary_type, primary_fields);
+    for dependency in dependencies {
+        let fields = data.types.get(&dependency).ok_or_else(|| {
+            Error::Descriptor(format!(
+                "missing EIP-712 type definition for dependency '{}'",
+                dependency
+            ))
+        })?;
+        encoded.push_str(&encode_type_segment(&dependency, fields));
+    }
+
+    Ok(encoded)
+}
+
+fn collect_type_dependencies(
+    type_name: &str,
+    types: &HashMap<String, Vec<TypedDataField>>,
+    dependencies: &mut std::collections::BTreeSet<String>,
+) -> Result<(), Error> {
+    let fields = types.get(type_name).ok_or_else(|| {
+        Error::Descriptor(format!("missing EIP-712 type definition '{}'", type_name))
+    })?;
+
+    for field in fields {
+        let base_type = base_type_name(&field.field_type);
+        if types.contains_key(base_type) && dependencies.insert(base_type.to_string()) {
+            collect_type_dependencies(base_type, types, dependencies)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn encode_type_segment(type_name: &str, fields: &[TypedDataField]) -> String {
+    let fields = fields
+        .iter()
+        .map(|field| format!("{} {}", field.field_type, field.name))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{type_name}({fields})")
+}
+
+fn base_type_name(field_type: &str) -> &str {
+    let mut base_type = field_type;
+    while let Some(stripped) = base_type.strip_suffix(']') {
+        if let Some(array_start) = stripped.rfind('[') {
+            base_type = &stripped[..array_start];
+        } else {
+            break;
+        }
+    }
+    base_type
+}
+
+fn keccak256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Keccak::v256();
+    hasher.update(bytes);
+    let mut output = [0u8; 32];
+    hasher.finalize(&mut output);
+    output
+}
+
 /// Resolve a path in EIP-712 message JSON (e.g., "recipient" or "details.amount").
 ///
 /// Supports `[index]` and `[start:end]` slice notation.
@@ -714,6 +760,52 @@ pub(crate) fn resolve_typed_path(
         "@.from" => None,
         _ if path.starts_with("@.") => None,
         _ => resolve_typed_message_path(message, path),
+    }
+}
+
+fn resolve_typed_path_in_context(
+    message: &serde_json::Value,
+    path: &str,
+    container: TypedContainerContext<'_>,
+) -> Result<Option<serde_json::Value>, Error> {
+    if let Some(message_path) = path.strip_prefix("#.") {
+        return Ok(resolve_typed_message_path(message, message_path));
+    }
+
+    match path {
+        "@.to" => container
+            .verifying_contract
+            .map(|addr| serde_json::Value::String(addr.to_string()))
+            .map(Some)
+            .ok_or_else(|| {
+                Error::Descriptor(
+                    "EIP-712 container value @.to is required but unavailable".to_string(),
+                )
+            }),
+        "@.chainId" => container
+            .chain_id
+            .map(serde_json::Value::from)
+            .map(Some)
+            .ok_or_else(|| {
+                Error::Descriptor(
+                    "EIP-712 container value @.chainId is required but unavailable".to_string(),
+                )
+            }),
+        "@.value" => Ok(Some(serde_json::Value::from(0u64))),
+        "@.from" => container
+            .from
+            .map(|addr| serde_json::Value::String(addr.to_string()))
+            .map(Some)
+            .ok_or_else(|| {
+                Error::Descriptor(
+                    "EIP-712 container value @.from is required but unavailable".to_string(),
+                )
+            }),
+        _ if path.starts_with("@.") => Err(Error::Descriptor(format!(
+            "unsupported EIP-712 container path '{}'",
+            path
+        ))),
+        _ => Ok(resolve_typed_message_path(message, path)),
     }
 }
 
@@ -797,8 +889,7 @@ async fn format_typed_value(
     value: &Option<serde_json::Value>,
     format: Option<&FieldFormat>,
     params: Option<&FormatParams>,
-    chain_id: u64,
-    verifying_contract: Option<&str>,
+    container: TypedContainerContext<'_>,
     message: &serde_json::Value,
     data_provider: &dyn DataProvider,
     warnings: &mut Vec<String>,
@@ -853,7 +944,7 @@ async fn format_typed_value(
                         let resolved = if sender_ref.starts_with("@.")
                             || sender_ref.starts_with('#')
                         {
-                            resolve_typed_path(message, sender_ref, chain_id, verifying_contract)
+                            resolve_typed_path_in_context(message, sender_ref, container)?
                                 .and_then(|v| match v {
                                     serde_json::Value::String(s) => Some(s),
                                     _ => None,
@@ -878,6 +969,11 @@ async fn format_typed_value(
             let ens_allowed = sources
                 .map(|s| s.iter().any(|src| src == "ens"))
                 .unwrap_or(true);
+            let chain_id = container.chain_id.ok_or_else(|| {
+                Error::Descriptor(
+                    "EIP-712 container value @.chainId is required for addressName".to_string(),
+                )
+            })?;
 
             if local_allowed {
                 if let Some(name) = data_provider
@@ -903,13 +999,11 @@ async fn format_typed_value(
                 .parse()
                 .unwrap_or_else(|_| num_bigint::BigUint::from(0u64));
 
-            let lookup_chain =
-                resolve_typed_chain_id(params, chain_id, verifying_contract, message);
+            let lookup_chain = resolve_typed_chain_id(params, container, message)?;
 
             let token_meta = if let Some(params) = params {
                 if let Some(ref token_path) = params.token_path {
-                    let token_addr =
-                        resolve_typed_path(message, token_path, chain_id, verifying_contract);
+                    let token_addr = resolve_typed_path_in_context(message, token_path, container)?;
                     let addr_str = token_addr.as_ref().and_then(coerce_typed_address_string);
                     if let Some(addr) = addr_str {
                         data_provider.resolve_token(lookup_chain, &addr).await
@@ -974,8 +1068,7 @@ async fn format_typed_value(
         }
         FieldFormat::Number => Ok(json_value_to_string(val)),
         FieldFormat::TokenTicker => {
-            let lookup_chain =
-                resolve_typed_chain_id(params, chain_id, verifying_contract, message);
+            let lookup_chain = resolve_typed_chain_id(params, container, message)?;
             let addr =
                 coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
             if let Some(meta) = data_provider.resolve_token(lookup_chain, &addr).await {
@@ -1026,16 +1119,25 @@ async fn format_typed_value(
         }
         FieldFormat::NftName => {
             let token_id = json_value_to_string(val);
-            let collection_addr = params.and_then(|p| {
-                if let Some(ref cpath) = p.collection_path {
-                    let resolved = resolve_typed_path(message, cpath, chain_id, verifying_contract);
-                    if let Some(serde_json::Value::String(addr)) = resolved {
-                        return Some(addr);
+            let collection_addr = match params {
+                Some(p) => {
+                    if let Some(ref cpath) = p.collection_path {
+                        match resolve_typed_path_in_context(message, cpath, container)? {
+                            Some(serde_json::Value::String(addr)) => Some(addr),
+                            _ => p.collection.clone(),
+                        }
+                    } else {
+                        p.collection.clone()
                     }
                 }
-                p.collection.clone()
-            });
+                None => None,
+            };
             if let Some(ref addr) = collection_addr {
+                let chain_id = container.chain_id.ok_or_else(|| {
+                    Error::Descriptor(
+                        "EIP-712 container value @.chainId is required for nftName".to_string(),
+                    )
+                })?;
                 if let Some(name) = data_provider
                     .resolve_nft_collection_name(addr, chain_id)
                     .await
@@ -1055,24 +1157,24 @@ async fn format_typed_value(
 
 fn resolve_typed_chain_id(
     params: Option<&FormatParams>,
-    default_chain: u64,
-    verifying_contract: Option<&str>,
+    container: TypedContainerContext<'_>,
     message: &serde_json::Value,
-) -> u64 {
+) -> Result<u64, Error> {
     if let Some(params) = params {
         if let Some(cid) = params.chain_id {
-            return cid;
+            return Ok(cid);
         }
         if let Some(ref path) = params.chain_id_path {
-            if let Some(val) = resolve_typed_path(message, path, default_chain, verifying_contract)
-            {
+            if let Some(val) = resolve_typed_path_in_context(message, path, container)? {
                 if let Some(n) = val.as_u64() {
-                    return n;
+                    return Ok(n);
                 }
             }
         }
     }
-    default_chain
+    container.chain_id.ok_or_else(|| {
+        Error::Descriptor("EIP-712 container value @.chainId is required but unavailable".to_string())
+    })
 }
 
 fn format_typed_duration(secs: u64) -> String {
@@ -1125,13 +1227,15 @@ fn json_value_to_string(val: &serde_json::Value) -> String {
     }
 }
 
-fn interpolate_typed_intent(
+async fn interpolate_typed_intent(
     template: &str,
+    descriptor: &Descriptor,
     message: &serde_json::Value,
-    verifying_contract: Option<&str>,
+    container: TypedContainerContext<'_>,
     fields: &[DisplayField],
-    chain_id: u64,
-) -> String {
+    excluded: &[String],
+    data_provider: &dyn DataProvider,
+) -> Result<String, Error> {
     // Pre-process: replace {{ and }} with sentinels
     const OPEN_SENTINEL: &str = "\x00OPEN_BRACE\x00";
     const CLOSE_SENTINEL: &str = "\x00CLOSE_BRACE\x00";
@@ -1147,12 +1251,15 @@ fn interpolate_typed_intent(
         };
         let path = &result[start + 2..end];
         let replacement = resolve_and_format_typed_interpolation(
+            descriptor,
             message,
-            verifying_contract,
+            container,
             fields,
             path,
-            chain_id,
-        );
+            excluded,
+            data_provider,
+        )
+        .await?;
         result.replace_range(start..=end, &replacement);
     }
 
@@ -1171,12 +1278,15 @@ fn interpolate_typed_intent(
             };
             let path = result[start + 1..end].to_string();
             let replacement = resolve_and_format_typed_interpolation(
+                descriptor,
                 message,
-                verifying_contract,
+                container,
                 fields,
                 &path,
-                chain_id,
-            );
+                excluded,
+                data_provider,
+            )
+            .await?;
             result.replace_range(start..=end, &replacement);
             pos = start + replacement.len();
         } else {
@@ -1185,56 +1295,62 @@ fn interpolate_typed_intent(
     }
 
     // Post-process: restore escaped braces
-    result
+    let result = result
         .replace(OPEN_SENTINEL, "{")
-        .replace(CLOSE_SENTINEL, "}")
+        .replace(CLOSE_SENTINEL, "}");
+
+    Ok(result)
 }
 
-fn resolve_and_format_typed_interpolation(
+async fn resolve_and_format_typed_interpolation(
+    descriptor: &Descriptor,
     message: &serde_json::Value,
-    verifying_contract: Option<&str>,
+    container: TypedContainerContext<'_>,
     fields: &[DisplayField],
     path: &str,
-    chain_id: u64,
-) -> String {
-    resolve_typed_path(message, path, chain_id, verifying_contract)
-        .map(|v| {
-            let field_format = fields.iter().find_map(|f| {
-                if let DisplayField::Simple {
-                    path: fp, format, ..
-                } = f
-                {
-                    if fp.as_deref() == Some(path) {
-                        format.as_ref()
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            });
-            match field_format {
-                Some(FieldFormat::Date) => {
-                    let ts: i64 = match &v {
-                        serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
-                        serde_json::Value::String(s) => s.parse().unwrap_or(0),
-                        _ => 0,
-                    };
-                    if let Ok(dt) = time::OffsetDateTime::from_unix_timestamp(ts) {
-                        if let Ok(fmt) = time::format_description::parse(
-                            "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
-                        ) {
-                            if let Ok(s) = dt.format(&fmt) {
-                                return s;
-                            }
-                        }
-                    }
-                    json_value_to_string(&v)
-                }
-                _ => json_value_to_string(&v),
-            }
-        })
-        .unwrap_or_else(|| "<?>".to_string())
+    excluded: &[String],
+    data_provider: &dyn DataProvider,
+) -> Result<String, Error> {
+    if excluded.iter().any(|excluded_path| excluded_path == path) {
+        return Err(Error::Descriptor(format!(
+            "interpolatedIntent path '{}' refers to an excluded field",
+            path
+        )));
+    }
+
+    let field = crate::engine::find_interpolation_field(fields, path).ok_or_else(|| {
+        Error::Descriptor(format!(
+            "interpolatedIntent path '{}' does not match any display field",
+            path
+        ))
+    })?;
+
+    if matches!(field.format, Some(FieldFormat::Calldata)) {
+        return Err(Error::Descriptor(format!(
+            "interpolatedIntent path '{}' refers to non-stringable calldata field",
+            path
+        )));
+    }
+
+    let value = resolve_typed_path_in_context(message, field.path, container)?.ok_or_else(|| {
+        Error::Descriptor(format!(
+            "interpolatedIntent path '{}' could not be resolved from typed data",
+            path
+        ))
+    })?;
+
+    let mut warnings = Vec::new();
+    format_typed_value(
+        descriptor,
+        &Some(value),
+        field.format,
+        field.params,
+        container,
+        message,
+        data_provider,
+        &mut warnings,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -1378,7 +1494,7 @@ mod tests {
             "display": {
                 "definitions": {},
                 "formats": {
-                    "SliceTest": {
+                    "SliceTest(bytes hookData,bytes32 tokenWord,uint256 amount)": {
                         "intent": "Slice test",
                         "fields": [
                             {"path": "hookData.[32:52]", "label": "Recipient", "format": "addressName"},
@@ -1484,13 +1600,14 @@ mod tests {
             },
             "display": {
                 "formats": {
-                    "ReceiveWithAuthorization": {
+                    "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)": {
                         "intent": "Authorize USDC transfer",
                         "interpolatedIntent": "Authorize on {@.chainId}",
                         "fields": [
                             { "path": "from", "label": "From", "format": "addressName", "params": { "types": ["wallet"], "sources": ["local", "ens"] } },
                             { "path": "to", "label": "To", "format": "addressName", "params": { "types": ["eoa", "contract"], "sources": ["local", "ens"] } },
                             { "path": "value", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "@.to" } },
+                            { "path": "@.chainId", "label": "Chain ID", "visible": "never" },
                             { "path": "validAfter", "label": "Valid after", "format": "date", "params": { "encoding": "timestamp" } },
                             { "path": "validBefore", "label": "Valid before", "format": "date", "params": { "encoding": "timestamp" } }
                         ],
@@ -1565,32 +1682,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_receive_with_authorization_token_amount_graceful_degrades_without_metadata() {
-        let descriptor_json = r#"{
-            "context": {
-                "eip712": {
-                    "deployments": [
-                        { "chainId": 42161, "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" }
-                    ]
-                }
-            },
-            "metadata": {
-                "owner": "Circle",
-                "enums": {},
-                "constants": {},
-                "maps": {}
-            },
-            "display": {
-                "formats": {
-                    "ReceiveWithAuthorization": {
-                        "intent": "Authorize USDC transfer",
-                        "fields": [
-                            { "path": "value", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "@.to" } }
-                        ]
-                    }
-                }
-            }
-        }"#;
-
         let typed_data: TypedData = serde_json::from_value(serde_json::json!({
             "domain": {
                 "chainId": 42161,
@@ -1609,10 +1700,8 @@ mod tests {
         }))
         .unwrap();
 
-        let descriptor = Descriptor::from_json(descriptor_json).unwrap();
         let provider = crate::provider::EmptyDataProvider;
-
-        let result = format_typed_data(&descriptor, &typed_data, &provider, &[])
+        let result = crate::format_typed_data(&[], &typed_data, &provider)
             .await
             .unwrap();
 
@@ -1659,31 +1748,9 @@ mod tests {
 
         let typed_data: TypedData = serde_json::from_str(typed_data_json).unwrap();
 
-        // Empty descriptor — no formats at all
-        let descriptor_json = r#"{
-            "context": {
-                "eip712": {
-                    "deployments": [
-                        {"chainId": 1, "address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"}
-                    ]
-                }
-            },
-            "metadata": {
-                "owner": "test",
-                "enums": {},
-                "constants": {},
-                "maps": {}
-            },
-            "display": {
-                "definitions": {},
-                "formats": {}
-            }
-        }"#;
-
-        let descriptor = Descriptor::from_json(descriptor_json).unwrap();
         let provider = crate::provider::EmptyDataProvider;
 
-        let result = format_typed_data(&descriptor, &typed_data, &provider, &[])
+        let result = crate::format_typed_data(&[], &typed_data, &provider)
             .await
             .unwrap();
 

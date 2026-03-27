@@ -226,12 +226,21 @@ pub async fn format_typed_data(
     data: &eip712::TypedData,
     data_provider: &dyn DataProvider,
 ) -> Result<DisplayModel, Error> {
-    let chain_id = data.domain.chain_id.unwrap_or(1);
-    let verifying_contract = data
-        .domain
-        .verifying_contract
-        .as_deref()
-        .unwrap_or("0x0000000000000000000000000000000000000000");
+    if descriptors.is_empty() {
+        return Ok(eip712::build_typed_raw_fallback(data));
+    }
+
+    let chain_id = data.domain.chain_id.ok_or_else(|| {
+        Error::Descriptor(
+            "EIP-712 domain.chainId is required when formatting with descriptors".to_string(),
+        )
+    })?;
+    let verifying_contract = data.domain.verifying_contract.as_deref().ok_or_else(|| {
+        Error::Descriptor(
+            "EIP-712 domain.verifyingContract is required when formatting with descriptors"
+                .to_string(),
+        )
+    })?;
 
     // Find the outer descriptor matching chain_id + verifying_contract
     let outer_idx = descriptors.iter().position(|rd| {
@@ -241,16 +250,12 @@ pub async fn format_typed_data(
         })
     });
 
-    let outer_idx = match outer_idx {
-        Some(idx) => idx,
-        None => {
-            if descriptors.is_empty() {
-                return Ok(eip712::build_typed_raw_fallback(data));
-            }
-            // Fallback to first descriptor
-            0
-        }
-    };
+    let outer_idx = outer_idx.ok_or_else(|| {
+        Error::Descriptor(format!(
+            "no EIP-712 descriptor found for chain_id={} verifying_contract={}",
+            chain_id, verifying_contract
+        ))
+    })?;
 
     let outer_descriptor = &descriptors[outer_idx].descriptor;
     eip712::format_typed_data(outer_descriptor, data, data_provider, descriptors).await
@@ -795,7 +800,7 @@ mod tests {
             "display": {
                 "definitions": {},
                 "formats": {
-                    "Permit": {
+                    "Permit(address spender,uint256 value)": {
                         "intent": "Permit token spending",
                         "fields": [
                             {
@@ -816,7 +821,19 @@ mod tests {
 
         let descriptor = Descriptor::from_json(json).unwrap();
         let typed_data = eip712::TypedData {
-            types: std::collections::HashMap::new(),
+            types: std::collections::HashMap::from([(
+                "Permit".to_string(),
+                vec![
+                    eip712::TypedDataField {
+                        name: "spender".to_string(),
+                        field_type: "address".to_string(),
+                    },
+                    eip712::TypedDataField {
+                        name: "value".to_string(),
+                        field_type: "uint256".to_string(),
+                    },
+                ],
+            )]),
             primary_type: "Permit".to_string(),
             domain: eip712::TypedDataDomain {
                 name: Some("USDT".to_string()),
@@ -824,6 +841,7 @@ mod tests {
                 chain_id: Some(1),
                 verifying_contract: Some("0xabc".to_string()),
             },
+            container: None,
             message: serde_json::json!({
                 "spender": "0x1234567890123456789012345678901234567890",
                 "value": "1000000"

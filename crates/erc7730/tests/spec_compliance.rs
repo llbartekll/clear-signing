@@ -5,6 +5,7 @@ use erc7730::eip712::TypedData;
 use erc7730::engine::DisplayEntry;
 use erc7730::merge::merge_descriptor_values;
 use erc7730::provider::EmptyDataProvider;
+use erc7730::token::{StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{
     format_calldata, format_typed_data, merge_descriptors, ResolvedDescriptor, TransactionContext,
@@ -110,7 +111,7 @@ async fn test_eip712_duration_format() {
         "display": {
             "definitions": {},
             "formats": {
-                "Lock": {
+                "Lock(uint256 duration)": {
                     "intent": "Lock tokens",
                     "fields": [
                         {"path": "duration", "label": "Duration", "format": "duration"}
@@ -154,7 +155,7 @@ async fn test_eip712_unit_format() {
         "display": {
             "definitions": {},
             "formats": {
-                "SetRate": {
+                "SetRate(uint256 rate)": {
                     "intent": "Set rate",
                     "fields": [
                         {"path": "rate", "label": "Rate", "format": "unit", "params": {"base": "%", "decimals": 2}}
@@ -198,7 +199,7 @@ async fn test_eip712_nft_name_format() {
         "display": {
             "definitions": {},
             "formats": {
-                "Transfer": {
+                "Transfer(uint256 tokenId)": {
                     "intent": "Transfer NFT",
                     "fields": [
                         {"path": "tokenId", "label": "Token", "format": "nftName", "params": {"collection": "0xdef"}}
@@ -817,7 +818,7 @@ async fn test_eip712_address_name_sender() {
         "display": {
             "definitions": {},
             "formats": {
-                "Transfer": {
+                "Transfer(address to)": {
                     "intent": "Transfer",
                     "fields": [
                         {
@@ -891,7 +892,7 @@ async fn test_eip712_literal_value_field() {
         "display": {
             "definitions": {},
             "formats": {
-                "Permit": {
+                "Permit(address spender)": {
                     "intent": "Permit",
                     "fields": [
                         {"value": "Token Approval", "label": "Action"},
@@ -1440,4 +1441,550 @@ async fn test_eip712_encode_type_format_key() {
     } else {
         panic!("expected Item for Expiration time");
     }
+}
+
+#[tokio::test]
+async fn test_eip712_bare_primary_type_key_rejected() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("expected encodeType 'Permit(address spender)'"));
+}
+
+#[tokio::test]
+async fn test_eip712_prefix_only_format_key_rejected() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender,uint256 extra)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no EIP-712 display format found"));
+}
+
+#[tokio::test]
+async fn test_eip712_missing_chain_id_rejected_with_descriptors() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": { "verifyingContract": "0xabc" },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("domain.chainId is required"));
+}
+
+#[tokio::test]
+async fn test_eip712_missing_verifying_contract_rejected_with_descriptors() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": { "chainId": 1 },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("domain.verifyingContract is required"));
+}
+
+#[tokio::test]
+async fn test_eip712_outer_descriptor_match_is_required() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xdef"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xdef"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("no EIP-712 descriptor found"));
+}
+
+#[tokio::test]
+async fn test_eip712_sender_address_uses_container_from() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Transfer(address to)": {
+                        "intent": "Transfer",
+                        "fields": [{
+                            "path": "to",
+                            "label": "Recipient",
+                            "format": "addressName",
+                            "params": { "senderAddress": "@.from" }
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Transfer": [{ "name": "to", "type": "address" }] },
+        "primaryType": "Transfer",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "container": { "from": "0x1234567890123456789012345678901234567890" },
+        "message": { "to": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let result =
+        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.value, "Sender"),
+        _ => panic!("expected Item"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_sender_address_missing_container_from_errors() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Transfer(address to)": {
+                        "intent": "Transfer",
+                        "fields": [{
+                            "path": "to",
+                            "label": "Recipient",
+                            "format": "addressName",
+                            "params": { "senderAddress": "@.from" }
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Transfer": [{ "name": "to", "type": "address" }] },
+        "primaryType": "Transfer",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "to": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("@.from is required"));
+}
+
+#[tokio::test]
+async fn test_calldata_interpolation_placeholder_without_field_spec_errors() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "foo(uint256)": {
+                        "intent": "Foo",
+                        "interpolatedIntent": "Missing {missing}",
+                        "fields": [{ "path": "@.0", "label": "Value", "format": "number" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let calldata = build_calldata("foo(uint256)", &[uint_word(42)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let err = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not match any display field"));
+}
+
+#[tokio::test]
+async fn test_eip712_interpolation_placeholder_for_calldata_field_errors() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Relay(address to,bytes data)": {
+                        "intent": "Relay",
+                        "interpolatedIntent": "Relay {data}",
+                        "fields": [
+                            { "path": "to", "label": "To", "visible": "never" },
+                            { "path": "data", "label": "Call", "format": "calldata", "params": { "calleePath": "to" } }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Relay": [
+                { "name": "to", "type": "address" },
+                { "name": "data", "type": "bytes" }
+            ]
+        },
+        "primaryType": "Relay",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "to": "0x1234567890123456789012345678901234567890",
+            "data": "0x12345678"
+        }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("non-stringable calldata field"));
+}
+
+#[tokio::test]
+async fn test_eip712_group_only_interpolation_path_errors() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Quote(Details details)Details(uint256 amount)": {
+                        "intent": "Quote",
+                        "interpolatedIntent": "Quote {details}",
+                        "fields": [{
+                            "path": "details",
+                            "fields": [
+                                { "path": "amount", "label": "Amount", "format": "number" }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Quote": [{ "name": "details", "type": "Details" }],
+            "Details": [{ "name": "amount", "type": "uint256" }]
+        },
+        "primaryType": "Quote",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "details": { "amount": 1250 } }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("does not match any display field"));
+}
+
+#[tokio::test]
+async fn test_eip712_scoped_field_interpolation_matches_rendering() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Quote(Details details)Details(uint256 amount)": {
+                        "intent": "Quote",
+                        "interpolatedIntent": "Quote {details.amount}",
+                        "fields": [{
+                            "path": "details",
+                            "fields": [
+                                { "path": "amount", "label": "Amount", "format": "unit", "params": { "base": "%", "decimals": 2 } }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Quote": [{ "name": "details", "type": "Details" }],
+            "Details": [{ "name": "amount", "type": "uint256" }]
+        },
+        "primaryType": "Quote",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "details": { "amount": 1250 } }
+    }))
+    .unwrap();
+
+    let result =
+        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.value, "12.5 %"),
+        _ => panic!("expected Item"),
+    }
+    assert_eq!(result.interpolated_intent.as_deref(), Some("Quote 12.5 %"));
+}
+
+#[tokio::test]
+async fn test_eip712_ref_field_interpolation_matches_rendering() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {
+                    "rateField": {
+                        "label": "Rate",
+                        "format": "unit",
+                        "params": { "base": "%", "decimals": 2 }
+                    }
+                },
+                "formats": {
+                    "SetRate(uint256 rate)": {
+                        "intent": "Set rate",
+                        "interpolatedIntent": "Rate {rate}",
+                        "fields": [
+                            { "$ref": "$.display.definitions.rateField", "path": "rate" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "SetRate": [{ "name": "rate", "type": "uint256" }] },
+        "primaryType": "SetRate",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "rate": 1250 }
+    }))
+    .unwrap();
+
+    let result =
+        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.value, "12.5 %"),
+        _ => panic!("expected Item"),
+    }
+    assert_eq!(result.interpolated_intent.as_deref(), Some("Rate 12.5 %"));
+}
+
+#[tokio::test]
+async fn test_eip712_interpolation_uses_same_formatting_as_fields() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": {
+                "owner": "test",
+                "enums": { "kind": { "2": "Variable" } },
+                "constants": {},
+                "maps": {}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Order(address to,uint256 amount,uint256 deadline,uint8 kind)": {
+                        "intent": "Order",
+                        "interpolatedIntent": "Send {amount} to {to} as {kind} before {deadline}",
+                        "fields": [
+                            { "path": "to", "label": "To", "format": "addressName", "params": { "senderAddress": "0x1234567890123456789012345678901234567890" } },
+                            { "path": "amount", "label": "Amount", "format": "tokenAmount", "params": { "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" } },
+                            { "path": "kind", "label": "Kind", "format": "enum", "params": { "enumPath": "kind" } },
+                            { "path": "deadline", "label": "Deadline", "format": "date", "params": { "encoding": "timestamp" } }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Order": [
+                { "name": "to", "type": "address" },
+                { "name": "amount", "type": "uint256" },
+                { "name": "deadline", "type": "uint256" },
+                { "name": "kind", "type": "uint8" }
+            ]
+        },
+        "primaryType": "Order",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "to": "0x1234567890123456789012345678901234567890",
+            "amount": "1500000",
+            "deadline": 1700000000,
+            "kind": 2
+        }
+    }))
+    .unwrap();
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let result = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &tokens)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.interpolated_intent.as_deref(),
+        Some("Send 1.5 USDC to Sender as Variable before 2023-11-14 22:13:20 UTC")
+    );
 }

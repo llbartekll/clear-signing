@@ -121,10 +121,13 @@ pub async fn format_calldata(
     };
 
     let mut warnings = Vec::new();
-    let entries = render_fields(&ctx, &format.fields, &mut warnings).await?;
+    let expanded_fields = expand_display_fields(descriptor, &format.fields, &mut warnings);
+    let entries = render_fields(&ctx, &expanded_fields, &mut warnings).await?;
 
     let interpolated = match format.interpolated_intent.as_ref() {
-        Some(template) => Some(interpolate_intent(template, &ctx, &format.fields).await),
+        Some(template) => Some(
+            interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await?,
+        ),
         None => None,
     };
 
@@ -198,37 +201,10 @@ fn render_fields<'a>(
 
         for field in &fields {
             match field {
-                DisplayField::Reference {
-                    reference,
-                    path,
-                    params: ref_params,
-                    visible,
-                } => {
-                    if let Some(resolved) = resolve_reference(ctx.descriptor, reference) {
-                        let merged = merge_ref_with_definition(resolved, path, ref_params, visible);
-                        let merged_slice = vec![merged];
-                        let mut sub = render_fields(ctx, &merged_slice, warnings).await?;
-                        entries.append(&mut sub);
-                    } else {
-                        warnings.push(format!("unresolved reference: {reference}"));
-                    }
-                }
                 DisplayField::Group { field_group } => {
                     if let Some(entry) = render_field_group(ctx, field_group, warnings).await? {
                         entries.push(entry);
                     }
-                }
-                DisplayField::Scope {
-                    path: scope_path,
-                    fields: children,
-                } => {
-                    // Inline scope: prepend scope path to all child paths, then render flat
-                    let expanded: Vec<DisplayField> = children
-                        .iter()
-                        .map(|child| prepend_scope_path(child, scope_path))
-                        .collect();
-                    let mut sub = render_fields(ctx, &expanded, warnings).await?;
-                    entries.append(&mut sub);
                 }
                 DisplayField::Simple {
                     path,
@@ -321,6 +297,11 @@ fn render_fields<'a>(
                         value: formatted,
                     }));
                 }
+                DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
+                    warnings.push(
+                        "unexpanded display field reached renderer; skipping".to_string(),
+                    );
+                }
             }
         }
 
@@ -379,6 +360,68 @@ fn resolve_reference(descriptor: &Descriptor, reference: &str) -> Option<Display
         .strip_prefix("$.display.definitions.")
         .or_else(|| reference.strip_prefix("#/definitions/"))?;
     descriptor.display.definitions.get(key).cloned()
+}
+
+/// Resolve references and scope prefixes into a concrete field tree before rendering.
+pub(crate) fn expand_display_fields(
+    descriptor: &Descriptor,
+    fields: &[DisplayField],
+    warnings: &mut Vec<String>,
+) -> Vec<DisplayField> {
+    let mut expanded = Vec::new();
+
+    for field in fields {
+        match field {
+            DisplayField::Reference {
+                reference,
+                path,
+                params: ref_params,
+                visible,
+            } => {
+                if let Some(resolved) = resolve_reference(descriptor, reference) {
+                    let merged =
+                        merge_ref_with_definition(resolved, path, ref_params, visible);
+                    expanded.extend(expand_display_fields(
+                        descriptor,
+                        &[merged],
+                        warnings,
+                    ));
+                } else {
+                    warnings.push(format!("unresolved reference: {reference}"));
+                }
+            }
+            DisplayField::Group { field_group } => {
+                expanded.push(DisplayField::Group {
+                    field_group: FieldGroup {
+                        label: field_group.label.clone(),
+                        iteration: field_group.iteration.clone(),
+                        fields: expand_display_fields(
+                            descriptor,
+                            &field_group.fields,
+                            warnings,
+                        ),
+                    },
+                });
+            }
+            DisplayField::Scope {
+                path: scope_path,
+                fields: children,
+            } => {
+                let scoped_children: Vec<DisplayField> = children
+                    .iter()
+                    .map(|child| prepend_scope_path(child, scope_path))
+                    .collect();
+                expanded.extend(expand_display_fields(
+                    descriptor,
+                    &scoped_children,
+                    warnings,
+                ));
+            }
+            DisplayField::Simple { .. } => expanded.push(field.clone()),
+        }
+    }
+
+    expanded
 }
 
 /// Prepend a scope path to all path fields in a `DisplayField`.
@@ -1675,7 +1718,8 @@ async fn interpolate_intent(
     template: &str,
     ctx: &RenderContext<'_>,
     fields: &[DisplayField],
-) -> String {
+    excluded: &[String],
+) -> Result<String, Error> {
     // Pre-process: replace {{ and }} with sentinels
     const OPEN_SENTINEL: &str = "\x00OPEN_BRACE\x00";
     const CLOSE_SENTINEL: &str = "\x00CLOSE_BRACE\x00";
@@ -1690,7 +1734,8 @@ async fn interpolate_intent(
             None => break,
         };
         let path = result[start + 2..end].to_string();
-        let replacement = resolve_and_format_for_interpolation(ctx, fields, &path).await;
+        let replacement =
+            resolve_and_format_for_interpolation(ctx, fields, excluded, &path).await?;
         result.replace_range(start..=end, &replacement);
     }
 
@@ -1709,7 +1754,8 @@ async fn interpolate_intent(
                 None => break,
             };
             let path = result[start + 1..end].to_string();
-            let replacement = resolve_and_format_for_interpolation(ctx, fields, &path).await;
+            let replacement =
+                resolve_and_format_for_interpolation(ctx, fields, excluded, &path).await?;
             result.replace_range(start..=end, &replacement);
             pos = start + replacement.len();
         } else {
@@ -1718,9 +1764,11 @@ async fn interpolate_intent(
     }
 
     // Post-process: restore escaped braces
-    result
+    let result = result
         .replace(OPEN_SENTINEL, "{")
-        .replace(CLOSE_SENTINEL, "}")
+        .replace(CLOSE_SENTINEL, "}");
+
+    Ok(result)
 }
 
 /// Format a duration value (seconds → human-readable).
@@ -1835,172 +1883,95 @@ fn apply_si_prefix(value_str: &str) -> String {
     format!("{}{}", trimmed, prefix)
 }
 
+pub(crate) struct InterpolationFieldSpec<'a> {
+    pub label: &'a str,
+    pub path: &'a str,
+    pub format: Option<&'a FieldFormat>,
+    pub params: Option<&'a FormatParams>,
+    pub separator: Option<&'a str>,
+}
+
+pub(crate) fn find_interpolation_field<'a>(
+    fields: &'a [DisplayField],
+    path: &str,
+) -> Option<InterpolationFieldSpec<'a>> {
+    for field in fields {
+        match field {
+            DisplayField::Simple {
+                path: Some(field_path),
+                label,
+                value: None,
+                format,
+                params,
+                separator,
+                ..
+            } if field_path == path => {
+                return Some(InterpolationFieldSpec {
+                    label,
+                    path: field_path,
+                    format: format.as_ref(),
+                    params: params.as_ref(),
+                    separator: separator.as_deref(),
+                });
+            }
+            DisplayField::Group { field_group } => {
+                if let Some(spec) = find_interpolation_field(&field_group.fields, path) {
+                    return Some(spec);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
 async fn resolve_and_format_for_interpolation(
     ctx: &RenderContext<'_>,
     fields: &[DisplayField],
+    excluded: &[String],
     path: &str,
-) -> String {
-    let Some(v) = resolve_path(ctx.decoded, path) else {
-        return "<?>".to_string();
-    };
-
-    let (field_format, field_params) = fields
-        .iter()
-        .find_map(|f| {
-            if let DisplayField::Simple {
-                path: fp,
-                format,
-                params,
-                ..
-            } = f
-            {
-                if fp.as_deref() == Some(path) {
-                    Some((format.as_ref(), params.as_ref()))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .unwrap_or((None, None));
-
-    match field_format {
-        Some(FieldFormat::Date) => format_date(&v, None).unwrap_or_else(|_| format_raw(&v)),
-        Some(FieldFormat::Number) => format_number(&v),
-        Some(FieldFormat::Address) => format_address(&v),
-        Some(FieldFormat::TokenAmount) => {
-            format_token_amount_for_interpolation(ctx, &v, field_params).await
-        }
-        Some(FieldFormat::Amount) => {
-            if path.starts_with("@.value") {
-                let meta = native_token_meta(ctx.chain_id);
-                match &v {
-                    ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
-                        let n = BigUint::from_bytes_be(bytes);
-                        let formatted = format_with_decimals(&n, meta.decimals);
-                        format!("{} {}", formatted, meta.symbol)
-                    }
-                    _ => format_raw(&v),
-                }
-            } else {
-                format_raw(&v)
-            }
-        }
-        Some(FieldFormat::Enum) => format_enum_for_interpolation(ctx, &v, field_params),
-        Some(FieldFormat::AddressName) | Some(FieldFormat::InteroperableAddressName) => {
-            format_address_name(ctx, &v, field_params)
-                .await
-                .unwrap_or_else(|_| format_raw(&v))
-        }
-        _ => format_raw(&v),
-    }
-}
-
-/// Resolve an enum value for interpolation using descriptor metadata.
-fn format_enum_for_interpolation(
-    ctx: &RenderContext<'_>,
-    val: &ArgumentValue,
-    params: Option<&FormatParams>,
-) -> String {
-    let raw = numeric_string_from_argument_value(val).unwrap_or_else(|| format_raw(val));
-    if let Some(params) = params {
-        if let Some(ref enum_path) = params.enum_path {
-            if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_path) {
-                if let Some(label) = enum_def.get(&raw) {
-                    return label.clone();
-                }
-            }
-        }
-        if let Some(ref ref_path) = params.ref_path {
-            if let Some(enum_name) = ref_path.strip_prefix("$.metadata.enums.") {
-                if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_name) {
-                    if let Some(label) = enum_def.get(&raw) {
-                        return label.clone();
-                    }
-                }
-            }
-        }
-    }
-    raw
-}
-
-/// Format a token amount for interpolation (simplified version of format_token_amount).
-async fn format_token_amount_for_interpolation(
-    ctx: &RenderContext<'_>,
-    val: &ArgumentValue,
-    params: Option<&FormatParams>,
-) -> String {
-    let raw_amount = match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
-        _ => return format_raw(val),
-    };
-
-    let lookup_chain_id = resolve_chain_id(ctx, params);
-
-    let token_meta = if let Some(p) = params {
-        if let Some(ref token_path) = p.token_path {
-            let token_addr = resolve_path(ctx.decoded, token_path);
-            if let Some(ArgumentValue::Address(addr)) = token_addr {
-                let addr_hex = format!("0x{}", hex::encode(addr));
-                if let Some(ref native) = p.native_currency_address {
-                    if native.matches(&addr_hex, &ctx.descriptor.metadata.constants) {
-                        Some(native_token_meta(lookup_chain_id))
-                    } else {
-                        ctx.data_provider
-                            .resolve_token(lookup_chain_id, &addr_hex)
-                            .await
-                    }
-                } else {
-                    ctx.data_provider
-                        .resolve_token(lookup_chain_id, &addr_hex)
-                        .await
-                }
-            } else {
-                None
-            }
-        } else if let Some(ref token_ref) = p.token {
-            let addr = resolve_metadata_constant_str(ctx.descriptor, token_ref);
-            if let Some(ref native) = p.native_currency_address {
-                if native.matches(&addr, &ctx.descriptor.metadata.constants) {
-                    Some(native_token_meta(lookup_chain_id))
-                } else {
-                    ctx.data_provider
-                        .resolve_token(lookup_chain_id, &addr)
-                        .await
-                }
-            } else {
-                ctx.data_provider
-                    .resolve_token(lookup_chain_id, &addr)
-                    .await
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // Check threshold/message
-    if let Some(p) = params {
-        if let (Some(ref threshold_ref), Some(ref message)) = (&p.threshold, &p.message) {
-            if let Some(threshold) = resolve_metadata_constant(ctx.descriptor, threshold_ref) {
-                if raw_amount >= threshold {
-                    if let Some(ref meta) = token_meta {
-                        return format!("{} {}", message, meta.symbol);
-                    }
-                    return message.clone();
-                }
-            }
-        }
+) -> Result<String, Error> {
+    if excluded.iter().any(|excluded_path| excluded_path == path) {
+        return Err(Error::Descriptor(format!(
+            "interpolatedIntent path '{}' refers to an excluded field",
+            path
+        )));
     }
 
-    if let Some(meta) = token_meta {
-        let formatted = format_with_decimals(&raw_amount, meta.decimals);
-        format!("{} {}", formatted, meta.symbol)
-    } else {
-        raw_amount.to_string()
+    let field = find_interpolation_field(fields, path).ok_or_else(|| {
+        Error::Descriptor(format!(
+            "interpolatedIntent path '{}' does not match any display field",
+            path
+        ))
+    })?;
+
+    if matches!(field.format, Some(FieldFormat::Calldata)) {
+        return Err(Error::Descriptor(format!(
+            "interpolatedIntent path '{}' refers to non-stringable calldata field",
+            path
+        )));
     }
+
+    let value = resolve_path(ctx.decoded, field.path).ok_or_else(|| {
+        Error::Descriptor(format!(
+            "interpolatedIntent path '{}' could not be resolved from calldata",
+            path
+        ))
+    })?;
+
+    let mut warnings = Vec::new();
+    format_value(
+        ctx,
+        &Some(value),
+        field.format,
+        field.params,
+        field.path,
+        field.label,
+        field.separator,
+        &mut warnings,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -2192,7 +2163,30 @@ mod tests {
             depth: 0,
         };
 
-        let result = interpolate_intent("Send ${1} to ${0}", &ctx, &[]).await;
+        let fields = vec![
+            DisplayField::Simple {
+                path: Some("0".to_string()),
+                label: "To".to_string(),
+                value: None,
+                format: Some(FieldFormat::Address),
+                params: None,
+                separator: None,
+                visible: VisibleRule::Named("never".to_string()),
+            },
+            DisplayField::Simple {
+                path: Some("1".to_string()),
+                label: "Amount".to_string(),
+                value: None,
+                format: Some(FieldFormat::Number),
+                params: None,
+                separator: None,
+                visible: VisibleRule::Named("never".to_string()),
+            },
+        ];
+
+        let result = interpolate_intent("Send ${1} to ${0}", &ctx, &fields, &[])
+            .await
+            .unwrap();
         assert_eq!(
             result,
             "Send 1000 to 0x0000000000000000000000000000000000000000"
@@ -2262,7 +2256,9 @@ mod tests {
             depth: 0,
         };
 
-        let result = interpolate_intent("Withdraw to {to}", &ctx, &fields).await;
+        let result = interpolate_intent("Withdraw to {to}", &ctx, &fields, &[])
+            .await
+            .unwrap();
         assert_eq!(result, "Withdraw to My Savings");
     }
 }

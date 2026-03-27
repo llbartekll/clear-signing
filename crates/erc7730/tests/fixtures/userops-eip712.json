@@ -24,7 +24,7 @@
   "display": {
     "definitions": {},
     "formats": {
-      "PackedUserOperation": {
+      "PackedUserOperation(address sender,uint256 nonce,bytes callData,uint256 preVerificationGas)": {
         "intent": "Sign Packed User Operation",
         "interpolatedIntent": "Authorize user operation from {sender}",
         "fields": [
