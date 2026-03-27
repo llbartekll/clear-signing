@@ -59,6 +59,16 @@ pub trait DataProvider: Send + Sync {
         let _ = (collection_address, chain_id);
         Box::pin(async { None })
     }
+
+    /// Resolve an approximate unix timestamp for a given block number.
+    fn resolve_block_timestamp(
+        &self,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        let _ = (chain_id, block_number);
+        Box::pin(async { None })
+    }
 }
 
 /// No-op data provider — all methods return `None`.

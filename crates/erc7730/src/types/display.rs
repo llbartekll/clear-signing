@@ -1,7 +1,7 @@
 //! Display configuration types: field formats, visibility rules, and layout groups.
 
 use num_bigint::BigUint;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 /// Top-level display section of a descriptor.
@@ -17,16 +17,44 @@ pub struct DescriptorDisplay {
     pub formats: HashMap<String, DisplayFormat>,
 }
 
-/// Extract an intent string from a Value (string or object with a "label" key).
+/// Extract an intent string from a validated intent value.
 pub fn intent_as_string(val: &serde_json::Value) -> String {
     match val {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Object(obj) => obj
-            .get("label")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default()
-            .to_string(),
+            .iter()
+            .map(|(label, value)| format!("{label}: {}", value.as_str().unwrap_or_default()))
+            .collect::<Vec<_>>()
+            .join(", "),
         _ => val.to_string(),
+    }
+}
+
+fn deserialize_intent<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+
+    match &value {
+        serde_json::Value::String(_) => Ok(Some(value)),
+        serde_json::Value::Object(obj) => {
+            for (key, entry) in obj {
+                if !entry.is_string() {
+                    return Err(de::Error::custom(format!(
+                        "intent object value for key '{}' must be a string",
+                        key
+                    )));
+                }
+            }
+            Ok(Some(value))
+        }
+        _ => Err(de::Error::custom(
+            "intent must be a string or a flat object of string values",
+        )),
     }
 }
 
@@ -39,6 +67,7 @@ pub struct DisplayFormat {
     pub id: Option<String>,
 
     /// Human-readable intent label (string or object per spec).
+    #[serde(deserialize_with = "deserialize_intent")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intent: Option<serde_json::Value>,
 
@@ -88,10 +117,17 @@ pub enum DisplayField {
         field_group: FieldGroup,
     },
 
-    /// Inline scope group (spec: group with optional label): `{ "path": "...", "fields": [...] }`.
-    /// Per spec, child paths concatenate with parent path.
+    /// Direct spec group object: `{ "path": "...", "label": "...", "fields": [...] }`.
     Scope {
-        path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        path: Option<String>,
+
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+
+        #[serde(default)]
+        iteration: Iteration,
+
         fields: Vec<DisplayField>,
     },
 
@@ -129,7 +165,11 @@ fn default_visible() -> VisibleRule {
 /// A field group — replaces v1's `nestedFields`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldGroup {
-    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 
     #[serde(default)]
     pub iteration: Iteration,

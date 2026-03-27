@@ -202,9 +202,7 @@ fn render_fields<'a>(
         for field in &fields {
             match field {
                 DisplayField::Group { field_group } => {
-                    if let Some(entry) = render_field_group(ctx, field_group, warnings).await? {
-                        entries.push(entry);
-                    }
+                    entries.extend(render_field_group_entries(ctx, field_group, warnings).await?);
                 }
                 DisplayField::Simple {
                     path,
@@ -315,46 +313,220 @@ fn render_fields<'a>(
     })
 }
 
+enum GroupRenderKind {
+    Scalar(Vec<DisplayItem>),
+    Bundles(Vec<Vec<DisplayItem>>),
+}
+
+pub(crate) fn flatten_display_entry(entry: DisplayEntry) -> Vec<DisplayItem> {
+    match entry {
+        DisplayEntry::Item(item) => vec![item],
+        DisplayEntry::Group { items, .. } => items,
+        DisplayEntry::Nested { intent, .. } => {
+            vec![DisplayItem {
+                label: "Nested call".to_string(),
+                value: intent,
+            }]
+        }
+    }
+}
+
+fn render_group_field_kind<'a>(
+    ctx: &'a RenderContext<'a>,
+    field: &'a DisplayField,
+    warnings: &'a mut Vec<String>,
+) -> Pin<Box<dyn Future<Output = Result<GroupRenderKind, Error>> + Send + 'a>> {
+    Box::pin(async move {
+        match field {
+        DisplayField::Group { field_group } => render_group_kind(ctx, field_group, warnings).await,
+        DisplayField::Simple {
+            path,
+            label,
+            value: literal_value,
+            format,
+            params,
+            separator,
+            visible,
+        } => {
+            if let Some(lit) = literal_value {
+                if !check_visibility(visible, &None, label, "")? {
+                    return Ok(GroupRenderKind::Scalar(Vec::new()));
+                }
+                return Ok(GroupRenderKind::Scalar(vec![DisplayItem {
+                    label: label.clone(),
+                    value: resolve_metadata_constant_str(ctx.descriptor, lit),
+                }]));
+            }
+
+            let path_str = path.as_deref().unwrap_or("");
+            if let Some((base, rest)) = split_array_iter_path(path_str) {
+                if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
+                    let mut bundles = Vec::new();
+                    for item in &items {
+                        let val = if rest.is_empty() {
+                            Some(item.clone())
+                        } else {
+                            let rest_segments: Vec<&str> = rest.split('.').collect();
+                            navigate_value(item, &rest_segments)
+                        };
+                        if !check_visibility(visible, &val, label, path_str)? {
+                            continue;
+                        }
+                        let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                            flatten_display_entry(
+                                render_calldata_field(ctx, &val, params.as_ref(), label).await?,
+                            )
+                        } else {
+                            vec![DisplayItem {
+                                label: label.clone(),
+                                value: format_value(
+                                    ctx,
+                                    &val,
+                                    format.as_ref(),
+                                    params.as_ref(),
+                                    path_str,
+                                    label,
+                                    separator.as_deref(),
+                                    warnings,
+                                )
+                                .await?,
+                            }]
+                        };
+                        bundles.push(rendered);
+                    }
+                    return Ok(GroupRenderKind::Bundles(bundles));
+                }
+            }
+
+            let value = resolve_path(ctx.decoded, path_str);
+            if !check_visibility(visible, &value, label, path_str)? {
+                return Ok(GroupRenderKind::Scalar(Vec::new()));
+            }
+
+            if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                return Ok(GroupRenderKind::Scalar(flatten_display_entry(
+                    render_calldata_field(ctx, &value, params.as_ref(), label).await?,
+                )));
+            }
+
+            Ok(GroupRenderKind::Scalar(vec![DisplayItem {
+                label: label.clone(),
+                value: format_value(
+                    ctx,
+                    &value,
+                    format.as_ref(),
+                    params.as_ref(),
+                    path_str,
+                    label,
+                    separator.as_deref(),
+                    warnings,
+                )
+                .await?,
+            }]))
+        }
+        DisplayField::Reference { .. } | DisplayField::Scope { .. } => Ok(GroupRenderKind::Scalar(
+            Vec::new(),
+        )),
+    }
+    })
+}
+
+fn render_group_kind<'a>(
+    ctx: &'a RenderContext<'a>,
+    group: &'a FieldGroup,
+    warnings: &'a mut Vec<String>,
+) -> Pin<Box<dyn Future<Output = Result<GroupRenderKind, Error>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut child_kinds = Vec::new();
+        for field in &group.fields {
+            child_kinds.push(render_group_field_kind(ctx, field, warnings).await?);
+        }
+
+        match group.iteration {
+            Iteration::Sequential => {
+                let items = child_kinds
+                    .into_iter()
+                    .flat_map(|kind| match kind {
+                        GroupRenderKind::Scalar(items) => items,
+                        GroupRenderKind::Bundles(bundles) => {
+                            bundles.into_iter().flatten().collect()
+                        }
+                    })
+                    .collect();
+                Ok(GroupRenderKind::Scalar(items))
+            }
+            Iteration::Bundled => {
+                let mut bundle_sets = Vec::new();
+                for kind in child_kinds {
+                    match kind {
+                        GroupRenderKind::Bundles(bundles) => bundle_sets.push(bundles),
+                        GroupRenderKind::Scalar(_) => {
+                            return Err(Error::Render(
+                                "bundled groups cannot mix array-expanded and scalar fields"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                if bundle_sets.is_empty() {
+                    return Ok(GroupRenderKind::Bundles(Vec::new()));
+                }
+
+                let expected_len = bundle_sets[0].len();
+                if bundle_sets.iter().any(|bundles| bundles.len() != expected_len) {
+                    return Err(Error::Render(
+                        "bundled groups require all array-expanded fields to have the same length"
+                            .to_string(),
+                    ));
+                }
+
+                let mut bundled = vec![Vec::new(); expected_len];
+                for bundles in bundle_sets {
+                    for (index, items) in bundles.into_iter().enumerate() {
+                        bundled[index].extend(items);
+                    }
+                }
+                Ok(GroupRenderKind::Bundles(bundled))
+            }
+        }
+    })
+}
+
 /// Render a field group recursively.
-async fn render_field_group<'a>(
+async fn render_field_group_entries<'a>(
     ctx: &'a RenderContext<'a>,
     group: &FieldGroup,
     warnings: &'a mut Vec<String>,
-) -> Result<Option<DisplayEntry>, Error> {
-    let mut items = Vec::new();
-
-    let sub_entries = render_fields(ctx, &group.fields, warnings).await?;
-    for entry in sub_entries {
-        match entry {
-            DisplayEntry::Item(item) => items.push(item),
-            DisplayEntry::Group {
-                items: sub_items, ..
-            } => {
-                items.extend(sub_items);
+) -> Result<Vec<DisplayEntry>, Error> {
+    let rendered = render_group_kind(ctx, group, warnings).await?;
+    match rendered {
+        GroupRenderKind::Scalar(items) => {
+            if items.is_empty() {
+                return Ok(Vec::new());
             }
-            DisplayEntry::Nested { intent, .. } => {
-                items.push(DisplayItem {
-                    label: "Nested call".to_string(),
-                    value: intent,
-                });
+            if let Some(label) = group.label.as_ref() {
+                Ok(vec![DisplayEntry::Group {
+                    label: label.clone(),
+                    iteration: GroupIteration::Sequential,
+                    items,
+                }])
+            } else {
+                Ok(items.into_iter().map(DisplayEntry::Item).collect())
             }
         }
+        GroupRenderKind::Bundles(bundles) => {
+            let items: Vec<DisplayItem> = bundles.into_iter().flatten().collect();
+            if items.is_empty() {
+                return Ok(Vec::new());
+            }
+            Ok(vec![DisplayEntry::Group {
+                label: group.label.clone().unwrap_or_default(),
+                iteration: GroupIteration::Bundled,
+                items,
+            }])
+        }
     }
-
-    if items.is_empty() {
-        return Ok(None);
-    }
-
-    let iteration = match group.iteration {
-        Iteration::Sequential => GroupIteration::Sequential,
-        Iteration::Bundled => GroupIteration::Bundled,
-    };
-
-    Ok(Some(DisplayEntry::Group {
-        label: group.label.clone(),
-        iteration,
-        items,
-    }))
 }
 
 /// Resolve a `$ref` to a definition.
@@ -397,31 +569,46 @@ pub(crate) fn expand_display_fields(
                 }
             }
             DisplayField::Group { field_group } => {
+                let scoped_children = if let Some(scope_path) = field_group.path.as_deref() {
+                    field_group
+                        .fields
+                        .iter()
+                        .map(|field| prepend_scope_path(field, scope_path))
+                        .collect()
+                } else {
+                    field_group.fields.clone()
+                };
                 expanded.push(DisplayField::Group {
                     field_group: FieldGroup {
+                        path: None,
                         label: field_group.label.clone(),
                         iteration: field_group.iteration.clone(),
-                        fields: expand_display_fields(
-                            descriptor,
-                            &field_group.fields,
-                            warnings,
-                        ),
+                        fields: expand_display_fields(descriptor, &scoped_children, warnings),
                     },
                 });
             }
             DisplayField::Scope {
                 path: scope_path,
+                label,
+                iteration,
                 fields: children,
             } => {
-                let scoped_children: Vec<DisplayField> = children
-                    .iter()
-                    .map(|child| prepend_scope_path(child, scope_path))
-                    .collect();
-                expanded.extend(expand_display_fields(
-                    descriptor,
-                    &scoped_children,
-                    warnings,
-                ));
+                let scoped_children = if let Some(scope_path) = scope_path.as_deref() {
+                    children
+                        .iter()
+                        .map(|child| prepend_scope_path(child, scope_path))
+                        .collect()
+                } else {
+                    children.clone()
+                };
+                expanded.push(DisplayField::Group {
+                    field_group: FieldGroup {
+                        path: None,
+                        label: label.clone(),
+                        iteration: iteration.clone(),
+                        fields: expand_display_fields(descriptor, &scoped_children, warnings),
+                    },
+                });
             }
             DisplayField::Simple { .. } => expanded.push(field.clone()),
         }
@@ -449,22 +636,25 @@ pub fn prepend_scope_path(field: &DisplayField, scope: &str) -> DisplayField {
         },
         DisplayField::Group { field_group } => DisplayField::Group {
             field_group: FieldGroup {
+                path: field_group
+                    .path
+                    .as_deref()
+                    .map(|path| prepend_path(scope, Some(path))),
                 label: field_group.label.clone(),
                 iteration: field_group.iteration.clone(),
-                fields: field_group
-                    .fields
-                    .iter()
-                    .map(|f| prepend_scope_path(f, scope))
-                    .collect(),
+                fields: field_group.fields.clone(),
             },
         },
         DisplayField::Scope {
             path,
+            label,
+            iteration,
             fields: children,
         } => {
-            let new_scope = format!("{scope}.{path}");
             DisplayField::Scope {
-                path: new_scope.clone(),
+                path: Some(prepend_path(scope, path.as_deref())),
+                label: label.clone(),
+                iteration: iteration.clone(),
                 fields: children.clone(),
             }
         }
@@ -1114,7 +1304,9 @@ async fn format_value(
             format_token_amount(ctx, val, params, label, path, warnings).await
         }
         FieldFormat::Amount => format_amount(ctx, val, path),
-        FieldFormat::Date => format_date(val, params.and_then(|p| p.encoding.as_deref())),
+        FieldFormat::Date => {
+            format_date(ctx, val, params.and_then(|p| p.encoding.as_deref())).await
+        }
         FieldFormat::Enum => format_enum(ctx, val, params),
         FieldFormat::Address => Ok(format_address(val)),
         FieldFormat::AddressName => format_address_name(ctx, val, params).await,
@@ -1122,8 +1314,8 @@ async fn format_value(
         FieldFormat::Raw => Ok(format_raw_with_separator(val, separator)),
         FieldFormat::TokenTicker => format_token_ticker(ctx, val, params, warnings).await,
         FieldFormat::ChainId => format_chain_id(val),
-        FieldFormat::Duration => Ok(format_duration(val)),
-        FieldFormat::Unit => Ok(format_unit(val, params)),
+        FieldFormat::Duration => Ok(format_duration(val)?),
+        FieldFormat::Unit => Ok(format_unit(val, params)?),
         FieldFormat::Calldata => {
             // Should not reach here — calldata format is intercepted in render_fields
             warnings.push(format!(
@@ -1785,28 +1977,60 @@ fn format_amount(
     }
 }
 
-fn format_date(val: &ArgumentValue, encoding: Option<&str>) -> Result<String, Error> {
-    // If encoding is "blockheight", display as block number (not convertible to date)
-    if encoding == Some("blockheight") {
-        return Ok(format!("Block {}", format_number(val)));
-    }
+pub(crate) fn format_timestamp(timestamp: i64) -> Result<String, Error> {
+    let dt = time::OffsetDateTime::from_unix_timestamp(timestamp)
+        .map_err(|e| Error::Render(format!("invalid timestamp: {e}")))?;
 
+    let format =
+        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second] UTC")
+            .map_err(|e| Error::Render(format!("format error: {e}")))?;
+
+    dt.format(&format)
+        .map_err(|e| Error::Render(format!("format error: {e}")))
+}
+
+pub(crate) async fn format_blockheight_timestamp(
+    data_provider: &dyn DataProvider,
+    chain_id: u64,
+    block_number: u64,
+) -> Result<String, Error> {
+    let timestamp = data_provider
+        .resolve_block_timestamp(chain_id, block_number)
+        .await
+        .ok_or_else(|| {
+            Error::Render(format!(
+                "could not resolve approximate timestamp for block {} on chain {}",
+                block_number, chain_id
+            ))
+        })?;
+    let timestamp = i64::try_from(timestamp)
+        .map_err(|_| Error::Render(format!("timestamp {} does not fit into i64", timestamp)))?;
+    format_timestamp(timestamp)
+}
+
+async fn format_date(
+    ctx: &RenderContext<'_>,
+    val: &ArgumentValue,
+    encoding: Option<&str>,
+) -> Result<String, Error> {
     match val {
         ArgumentValue::Uint(bytes) => {
             let n = BigUint::from_bytes_be(bytes);
-            let timestamp: i64 = i64::try_from(n).unwrap_or(0);
+            if encoding == Some("blockheight") {
+                let block_number = u64::try_from(&n).map_err(|_| {
+                    Error::Render(format!("blockheight {} does not fit into u64", n))
+                })?;
+                return format_blockheight_timestamp(
+                    ctx.data_provider,
+                    ctx.chain_id,
+                    block_number,
+                )
+                .await;
+            }
 
-            let dt = time::OffsetDateTime::from_unix_timestamp(timestamp)
-                .map_err(|e| Error::Render(format!("invalid timestamp: {e}")))?;
-
-            let format = time::format_description::parse(
-                "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
-            )
-            .map_err(|e| Error::Render(format!("format error: {e}")))?;
-
-            Ok(dt
-                .format(&format)
-                .map_err(|e| Error::Render(format!("format error: {e}")))?)
+            let timestamp = i64::try_from(&n)
+                .map_err(|_| Error::Render(format!("timestamp {} does not fit into i64", n)))?;
+            format_timestamp(timestamp)
         }
         _ => Ok(format_raw(val)),
     }
@@ -2002,87 +2226,54 @@ async fn interpolate_intent(
     Ok(result)
 }
 
-/// Format a duration value (seconds → human-readable).
-fn format_duration(val: &ArgumentValue) -> String {
+pub(crate) fn format_duration_seconds(secs: u64) -> String {
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+/// Format a duration value (seconds → `HH:MM:ss`).
+fn format_duration(val: &ArgumentValue) -> Result<String, Error> {
     let secs = match val {
         ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
             let n = BigUint::from_bytes_be(bytes);
-            u64::try_from(n).unwrap_or(0)
+            u64::try_from(&n)
+                .map_err(|_| Error::Render(format!("duration {} does not fit into u64", n)))?
         }
-        _ => return format_raw(val),
+        _ => return Ok(format_raw(val)),
     };
 
-    if secs == 0 {
-        return "0 seconds".to_string();
-    }
-
-    let days = secs / 86400;
-    let hours = (secs % 86400) / 3600;
-    let minutes = (secs % 3600) / 60;
-    let seconds = secs % 60;
-
-    let mut parts = Vec::new();
-    if days > 0 {
-        parts.push(format!(
-            "{} {}",
-            days,
-            if days == 1 { "day" } else { "days" }
-        ));
-    }
-    if hours > 0 {
-        parts.push(format!(
-            "{} {}",
-            hours,
-            if hours == 1 { "hour" } else { "hours" }
-        ));
-    }
-    if minutes > 0 {
-        parts.push(format!(
-            "{} {}",
-            minutes,
-            if minutes == 1 { "minute" } else { "minutes" }
-        ));
-    }
-    if seconds > 0 {
-        parts.push(format!(
-            "{} {}",
-            seconds,
-            if seconds == 1 { "second" } else { "seconds" }
-        ));
-    }
-    parts.join(" ")
+    Ok(format_duration_seconds(secs))
 }
 
-/// Format a unit value (e.g., percentage, bps) with optional decimals and SI prefix.
-fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> String {
-    let raw_val = match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
-        _ => return format_raw(val),
-    };
-
+pub(crate) fn format_unit_biguint(raw_val: &BigUint, params: Option<&FormatParams>) -> String {
     let base = params.and_then(|p| p.base.as_deref()).unwrap_or("");
     let decimals = params.and_then(|p| p.decimals).unwrap_or(0);
     let use_prefix = params.and_then(|p| p.prefix).unwrap_or(false);
 
     let formatted = if decimals > 0 {
-        format_with_decimals(&raw_val, decimals)
+        format_with_decimals(raw_val, decimals)
     } else {
         raw_val.to_string()
     };
 
     if use_prefix {
-        // Apply SI prefix notation (k, M, G, T, P, E)
         let si_formatted = apply_si_prefix(&formatted);
-        if base.is_empty() {
-            si_formatted
-        } else {
-            format!("{} {}", si_formatted, base)
-        }
-    } else if base.is_empty() {
-        formatted
+        format!("{si_formatted}{base}")
     } else {
-        format!("{} {}", formatted, base)
+        format!("{formatted}{base}")
     }
+}
+
+/// Format a unit value (e.g., percentage, bps) with optional decimals and SI prefix.
+fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> Result<String, Error> {
+    let raw_val = match val {
+        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
+        _ => return Ok(format_raw(val)),
+    };
+
+    Ok(format_unit_biguint(&raw_val, params))
 }
 
 /// Apply SI prefix notation to a numeric string.

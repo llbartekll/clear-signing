@@ -516,6 +516,8 @@ public protocol DataProviderFfi: AnyObject, Sendable {
     
     func resolveNftCollectionName(collectionAddress: String, chainId: UInt64)  -> String?
     
+    func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64)  -> UInt64?
+    
     /**
      * Detect proxy contract implementation address.
      *
@@ -625,6 +627,16 @@ open func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -
             self.uniffiCloneHandle(),
         FfiConverterString.lower(collectionAddress),
         FfiConverterUInt64.lower(chainId),$0
+    )
+})
+}
+    
+open func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64) -> UInt64?  {
+    return try!  FfiConverterOptionUInt64.lift(try! rustCall() {
+    uniffi_erc7730_fn_method_dataproviderffi_resolve_block_timestamp(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(chainId),
+        FfiConverterUInt64.lower(blockNumber),$0
     )
 })
 }
@@ -777,6 +789,32 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
 
             
             let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        resolveBlockTimestamp: { (
+            uniffiHandle: UInt64,
+            chainId: UInt64,
+            blockNumber: UInt64,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> UInt64? in
+                guard let uniffiObj = try? FfiConverterTypeDataProviderFfi.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.resolveBlockTimestamp(
+                     chainId: try FfiConverterUInt64.lift(chainId),
+                     blockNumber: try FfiConverterUInt64.lift(blockNumber)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionUInt64.lower($0) }
             uniffiTraitInterfaceCall(
                 callStatus: uniffiCallStatus,
                 makeCall: makeCall,
@@ -1444,6 +1482,30 @@ public func FfiConverterTypeGroupIteration_lower(_ value: GroupIteration) -> Rus
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionUInt64: FfiConverterRustBuffer {
+    typealias SwiftType = UInt64?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt64.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
     typealias SwiftType = String?
 
@@ -1847,7 +1909,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_nft_collection_name() != 61037) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_get_implementation_address() != 18616) {
+    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_block_timestamp() != 26839) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_erc7730_checksum_method_dataproviderffi_get_implementation_address() != 1230) {
         return InitializationResult.apiChecksumMismatch
     }
 

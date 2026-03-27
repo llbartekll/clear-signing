@@ -90,6 +90,7 @@ pub trait DataProviderFfi: Send + Sync {
         collection_address: String,
         chain_id: u64,
     ) -> Option<String>;
+    fn resolve_block_timestamp(&self, chain_id: u64, block_number: u64) -> Option<u64>;
     /// Detect proxy contract implementation address.
     ///
     /// Called when descriptor resolution by `tx.to` fails. Wallets should read
@@ -165,6 +166,21 @@ impl DataProvider for DataProviderFfiProxy {
         Box::pin(async move {
             let result = tokio::task::spawn_blocking(move || {
                 inner.resolve_nft_collection_name(collection_address, chain_id)
+            })
+            .await;
+            result.ok().flatten()
+        })
+    }
+
+    fn resolve_block_timestamp(
+        &self,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        let inner = Arc::clone(&self.0);
+        Box::pin(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                inner.resolve_block_timestamp(chain_id, block_number)
             })
             .await;
             result.ok().flatten()
@@ -824,6 +840,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn format_typed_blockheight_uses_data_provider_ffi() {
+        let descriptor_json = r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [
+                        { "chainId": 1, "address": "0x0000000000000000000000000000000000000001" }
+                    ]
+                }
+            },
+            "metadata": {
+                "owner": "test",
+                "enums": {},
+                "constants": {},
+                "maps": {}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Expiry(uint256 blockNumber)": {
+                        "intent": "Expiry",
+                        "fields": [
+                            {
+                                "path": "blockNumber",
+                                "label": "Expiry",
+                                "format": "date",
+                                "params": { "encoding": "blockheight" }
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        let typed_data_json = r#"{
+            "types": {
+                "EIP712Domain": [
+                    { "name": "chainId", "type": "uint256" },
+                    { "name": "verifyingContract", "type": "address" }
+                ],
+                "Expiry": [
+                    { "name": "blockNumber", "type": "uint256" }
+                ]
+            },
+            "primaryType": "Expiry",
+            "domain": {
+                "chainId": 1,
+                "verifyingContract": "0x0000000000000000000000000000000000000001"
+            },
+            "message": {
+                "blockNumber": 19500000
+            }
+        }"#;
+
+        let mock_provider: Arc<dyn DataProviderFfi> = Arc::new(MockDataProviderFfi);
+        let result = erc7730_format_typed_data(
+            vec![descriptor_json.to_string()],
+            typed_data_json.to_string(),
+            Some(mock_provider),
+        )
+        .await
+        .expect("typed blockheight formatting should succeed");
+
+        match &result.entries[0] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "2024-03-09 16:00:00 UTC"),
+            _ => panic!("expected item entry"),
+        }
+    }
+
+    #[tokio::test]
     async fn format_calldata_invalid_descriptor_json() {
         let err = erc7730_format_calldata(vec!["{".to_string()], transfer_transaction(), None)
             .await
@@ -932,6 +1017,13 @@ mod tests {
             _chain_id: u64,
         ) -> Option<String> {
             None
+        }
+        fn resolve_block_timestamp(&self, _chain_id: u64, block_number: u64) -> Option<u64> {
+            if block_number == 19_500_000 {
+                Some(1_710_000_000)
+            } else {
+                None
+            }
         }
         fn get_implementation_address(&self, _chain_id: u64, _address: String) -> Option<String> {
             None

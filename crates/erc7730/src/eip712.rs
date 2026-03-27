@@ -214,7 +214,8 @@ fn render_typed_fields<'a>(
         for field in &fields {
             match field {
                 DisplayField::Group { field_group } => {
-                    if let Some(entry) = render_typed_field_group(
+                    entries.extend(
+                        render_typed_field_group_entries(
                         descriptor,
                         message,
                         field_group,
@@ -224,10 +225,8 @@ fn render_typed_fields<'a>(
                         descriptors,
                         depth,
                     )
-                    .await?
-                    {
-                        entries.push(entry);
-                    }
+                    .await?,
+                    );
                 }
                 DisplayField::Simple {
                     path,
@@ -341,8 +340,235 @@ fn render_typed_fields<'a>(
     })
 }
 
+enum TypedGroupRenderKind {
+    Scalar(Vec<DisplayItem>),
+    Bundles(Vec<Vec<DisplayItem>>),
+}
+
+fn render_typed_group_field_kind<'a>(
+    descriptor: &'a Descriptor,
+    message: &'a serde_json::Value,
+    field: &'a DisplayField,
+    container: TypedContainerContext<'a>,
+    data_provider: &'a dyn DataProvider,
+    warnings: &'a mut Vec<String>,
+    descriptors: &'a [ResolvedDescriptor],
+    depth: u8,
+) -> Pin<Box<dyn Future<Output = Result<TypedGroupRenderKind, Error>> + Send + 'a>> {
+    Box::pin(async move {
+        match field {
+        DisplayField::Group { field_group } => {
+            render_typed_group_kind(
+                descriptor,
+                message,
+                field_group,
+                container,
+                data_provider,
+                warnings,
+                descriptors,
+                depth,
+            )
+            .await
+        }
+        DisplayField::Simple {
+            path,
+            label,
+            value: literal_value,
+            format,
+            params,
+            separator: _,
+            visible,
+        } => {
+            if let Some(lit) = literal_value {
+                if !check_typed_visibility(visible, &None, label, "")? {
+                    return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
+                }
+                return Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem {
+                    label: label.clone(),
+                    value: resolve_metadata_constant_str(descriptor, lit),
+                }]));
+            }
+
+            let path_str = path.as_deref().unwrap_or("");
+            if let Some((base, rest)) = crate::engine::split_array_iter_path(path_str) {
+                if let Some(serde_json::Value::Array(items)) =
+                    resolve_typed_path_in_context(message, base, container)?
+                {
+                    let mut bundles = Vec::new();
+                    for item in &items {
+                        let val = if rest.is_empty() {
+                            Some(item.clone())
+                        } else {
+                            resolve_typed_path_in_context(item, rest, container)?
+                        };
+                        if !check_typed_visibility(visible, &val, label, path_str)? {
+                            continue;
+                        }
+                        let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                            crate::engine::flatten_display_entry(
+                                render_typed_calldata_field(
+                                    descriptor,
+                                    message,
+                                    &val,
+                                    params.as_ref(),
+                                    label,
+                                    container,
+                                    data_provider,
+                                    descriptors,
+                                    depth,
+                                )
+                                .await?,
+                            )
+                        } else {
+                            vec![DisplayItem {
+                                label: label.clone(),
+                                value: format_typed_value(
+                                    descriptor,
+                                    &val,
+                                    format.as_ref(),
+                                    params.as_ref(),
+                                    container,
+                                    message,
+                                    data_provider,
+                                    warnings,
+                                )
+                                .await?,
+                            }]
+                        };
+                        bundles.push(rendered);
+                    }
+                    return Ok(TypedGroupRenderKind::Bundles(bundles));
+                }
+            }
+
+            let value = resolve_typed_path_in_context(message, path_str, container)?;
+            if !check_typed_visibility(visible, &value, label, path_str)? {
+                return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
+            }
+
+            if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                return Ok(TypedGroupRenderKind::Scalar(
+                    crate::engine::flatten_display_entry(
+                        render_typed_calldata_field(
+                            descriptor,
+                            message,
+                            &value,
+                            params.as_ref(),
+                            label,
+                            container,
+                            data_provider,
+                            descriptors,
+                            depth,
+                        )
+                        .await?,
+                    ),
+                ));
+            }
+
+            Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem {
+                label: label.clone(),
+                value: format_typed_value(
+                    descriptor,
+                    &value,
+                    format.as_ref(),
+                    params.as_ref(),
+                    container,
+                    message,
+                    data_provider,
+                    warnings,
+                )
+                .await?,
+            }]))
+        }
+        DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
+            Ok(TypedGroupRenderKind::Scalar(Vec::new()))
+        }
+    }
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
-async fn render_typed_field_group<'a>(
+fn render_typed_group_kind<'a>(
+    descriptor: &'a Descriptor,
+    message: &'a serde_json::Value,
+    group: &'a FieldGroup,
+    container: TypedContainerContext<'a>,
+    data_provider: &'a dyn DataProvider,
+    warnings: &'a mut Vec<String>,
+    descriptors: &'a [ResolvedDescriptor],
+    depth: u8,
+) -> Pin<Box<dyn Future<Output = Result<TypedGroupRenderKind, Error>> + Send + 'a>> {
+    Box::pin(async move {
+        let mut child_kinds = Vec::new();
+        for field in &group.fields {
+            child_kinds.push(
+                render_typed_group_field_kind(
+                    descriptor,
+                    message,
+                    field,
+                    container,
+                    data_provider,
+                    warnings,
+                    descriptors,
+                    depth,
+                )
+                .await?,
+            );
+        }
+
+        match group.iteration {
+            Iteration::Sequential => {
+                let items = child_kinds
+                    .into_iter()
+                    .flat_map(|kind| match kind {
+                        TypedGroupRenderKind::Scalar(items) => items,
+                        TypedGroupRenderKind::Bundles(bundles) => {
+                            bundles.into_iter().flatten().collect()
+                        }
+                    })
+                    .collect();
+                Ok(TypedGroupRenderKind::Scalar(items))
+            }
+            Iteration::Bundled => {
+                let mut bundle_sets = Vec::new();
+                for kind in child_kinds {
+                    match kind {
+                        TypedGroupRenderKind::Bundles(bundles) => bundle_sets.push(bundles),
+                        TypedGroupRenderKind::Scalar(_) => {
+                            return Err(Error::Render(
+                                "bundled groups cannot mix array-expanded and scalar fields"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+
+                if bundle_sets.is_empty() {
+                    return Ok(TypedGroupRenderKind::Bundles(Vec::new()));
+                }
+
+                let expected_len = bundle_sets[0].len();
+                if bundle_sets.iter().any(|bundles| bundles.len() != expected_len) {
+                    return Err(Error::Render(
+                        "bundled groups require all array-expanded fields to have the same length"
+                            .to_string(),
+                    ));
+                }
+
+                let mut bundled = vec![Vec::new(); expected_len];
+                for bundles in bundle_sets {
+                    for (index, items) in bundles.into_iter().enumerate() {
+                        bundled[index].extend(items);
+                    }
+                }
+                Ok(TypedGroupRenderKind::Bundles(bundled))
+            }
+        }
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn render_typed_field_group_entries<'a>(
     descriptor: &'a Descriptor,
     message: &'a serde_json::Value,
     group: &FieldGroup,
@@ -351,11 +577,11 @@ async fn render_typed_field_group<'a>(
     warnings: &'a mut Vec<String>,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
-) -> Result<Option<DisplayEntry>, Error> {
-    let sub = render_typed_fields(
+) -> Result<Vec<DisplayEntry>, Error> {
+    let rendered = render_typed_group_kind(
         descriptor,
         message,
-        &group.fields,
+        group,
         container,
         data_provider,
         warnings,
@@ -363,35 +589,33 @@ async fn render_typed_field_group<'a>(
         depth,
     )
     .await?;
-
-    let items: Vec<DisplayItem> = sub
-        .into_iter()
-        .flat_map(|e| match e {
-            DisplayEntry::Item(i) => vec![i],
-            DisplayEntry::Group { items, .. } => items,
-            DisplayEntry::Nested { intent, .. } => {
-                vec![DisplayItem {
-                    label: "Nested call".to_string(),
-                    value: intent,
-                }]
+    match rendered {
+        TypedGroupRenderKind::Scalar(items) => {
+            if items.is_empty() {
+                return Ok(Vec::new());
             }
-        })
-        .collect();
-
-    if items.is_empty() {
-        return Ok(None);
+            if let Some(label) = group.label.as_ref() {
+                Ok(vec![DisplayEntry::Group {
+                    label: label.clone(),
+                    iteration: GroupIteration::Sequential,
+                    items,
+                }])
+            } else {
+                Ok(items.into_iter().map(DisplayEntry::Item).collect())
+            }
+        }
+        TypedGroupRenderKind::Bundles(bundles) => {
+            let items: Vec<DisplayItem> = bundles.into_iter().flatten().collect();
+            if items.is_empty() {
+                return Ok(Vec::new());
+            }
+            Ok(vec![DisplayEntry::Group {
+                label: group.label.clone().unwrap_or_default(),
+                iteration: GroupIteration::Bundled,
+                items,
+            }])
+        }
     }
-
-    let iteration = match group.iteration {
-        Iteration::Sequential => GroupIteration::Sequential,
-        Iteration::Bundled => GroupIteration::Bundled,
-    };
-
-    Ok(Some(DisplayEntry::Group {
-        label: group.label.clone(),
-        iteration,
-        items,
-    }))
 }
 
 /// Render a nested calldata field within EIP-712 typed data.
@@ -1219,20 +1443,37 @@ async fn format_typed_value(
             }
         }
         FieldFormat::Date => {
-            let ts: i64 = match val {
-                serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
-                serde_json::Value::String(s) => s.parse().unwrap_or(0),
-                _ => 0,
-            };
-            let dt = time::OffsetDateTime::from_unix_timestamp(ts)
-                .map_err(|e| Error::Render(format!("invalid timestamp: {e}")))?;
-            let format = time::format_description::parse(
-                "[year]-[month]-[day] [hour]:[minute]:[second] UTC",
-            )
-            .map_err(|e| Error::Render(format!("format error: {e}")))?;
-            Ok(dt
-                .format(&format)
-                .map_err(|e| Error::Render(format!("format error: {e}")))?)
+            if params.and_then(|p| p.encoding.as_deref()) == Some("blockheight") {
+                let chain_id = container.chain_id.ok_or_else(|| {
+                    Error::Descriptor(
+                        "EIP-712 container value @.chainId is required for blockheight dates"
+                            .to_string(),
+                    )
+                })?;
+                let block_number = match val {
+                    serde_json::Value::Number(n) => n.as_u64(),
+                    serde_json::Value::String(s) => s.parse::<u64>().ok(),
+                    _ => None,
+                }
+                .ok_or_else(|| {
+                    Error::Render(
+                        "blockheight date value must be an unsigned integer".to_string(),
+                    )
+                })?;
+                crate::engine::format_blockheight_timestamp(
+                    data_provider,
+                    chain_id,
+                    block_number,
+                )
+                .await
+            } else {
+                let ts: i64 = match val {
+                    serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
+                    serde_json::Value::String(s) => s.parse().unwrap_or(0),
+                    _ => 0,
+                };
+                crate::engine::format_timestamp(ts)
+            }
         }
         FieldFormat::Enum => {
             let raw = coerce_typed_numeric_string(val).unwrap_or_else(|| json_value_to_string(val));
@@ -1288,25 +1529,14 @@ async fn format_typed_value(
                 serde_json::Value::String(s) => s.parse().unwrap_or(0),
                 _ => 0,
             };
-            Ok(format_typed_duration(secs))
+            Ok(crate::engine::format_duration_seconds(secs))
         }
         FieldFormat::Unit => {
             let raw = json_value_to_string(val);
-            let base = params.and_then(|p| p.base.as_deref()).unwrap_or("");
-            let decimals = params.and_then(|p| p.decimals).unwrap_or(0);
             let amount: num_bigint::BigUint = raw
                 .parse()
                 .unwrap_or_else(|_| num_bigint::BigUint::from(0u64));
-            let formatted = if decimals > 0 {
-                crate::engine::format_with_decimals(&amount, decimals)
-            } else {
-                amount.to_string()
-            };
-            if base.is_empty() {
-                Ok(formatted)
-            } else {
-                Ok(format!("{} {}", formatted, base))
-            }
+            Ok(crate::engine::format_unit_biguint(&amount, params))
         }
         FieldFormat::NftName => {
             let token_id = json_value_to_string(val);
@@ -1366,46 +1596,6 @@ fn resolve_typed_chain_id(
     container.chain_id.ok_or_else(|| {
         Error::Descriptor("EIP-712 container value @.chainId is required but unavailable".to_string())
     })
-}
-
-fn format_typed_duration(secs: u64) -> String {
-    if secs == 0 {
-        return "0 seconds".to_string();
-    }
-    let days = secs / 86400;
-    let hours = (secs % 86400) / 3600;
-    let minutes = (secs % 3600) / 60;
-    let seconds = secs % 60;
-    let mut parts = Vec::new();
-    if days > 0 {
-        parts.push(format!(
-            "{} {}",
-            days,
-            if days == 1 { "day" } else { "days" }
-        ));
-    }
-    if hours > 0 {
-        parts.push(format!(
-            "{} {}",
-            hours,
-            if hours == 1 { "hour" } else { "hours" }
-        ));
-    }
-    if minutes > 0 {
-        parts.push(format!(
-            "{} {}",
-            minutes,
-            if minutes == 1 { "minute" } else { "minutes" }
-        ));
-    }
-    if seconds > 0 {
-        parts.push(format!(
-            "{} {}",
-            seconds,
-            if seconds == 1 { "second" } else { "seconds" }
-        ));
-    }
-    parts.join(" ")
 }
 
 fn json_value_to_string(val: &serde_json::Value) -> String {

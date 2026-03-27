@@ -2,14 +2,16 @@
 
 use erc7730::decoder;
 use erc7730::eip712::TypedData;
-use erc7730::engine::DisplayEntry;
+use erc7730::engine::{DisplayEntry, GroupIteration};
 use erc7730::merge::merge_descriptor_values;
-use erc7730::provider::EmptyDataProvider;
+use erc7730::provider::{DataProvider, EmptyDataProvider};
 use erc7730::token::{StaticTokenSource, TokenMeta};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{
     format_calldata, format_typed_data, merge_descriptors, ResolvedDescriptor, TransactionContext,
 };
+use std::future::Future;
+use std::pin::Pin;
 
 fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
     vec![ResolvedDescriptor {
@@ -63,6 +65,58 @@ fn addr_word(addr_hex: &str) -> [u8; 32] {
     let mut word = [0u8; 32];
     word[12..32].copy_from_slice(&bytes);
     word
+}
+
+fn dynamic_offset_word(offset: usize) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[24..32].copy_from_slice(&(offset as u64).to_be_bytes());
+    word
+}
+
+fn encode_address_array(addrs: &[&str]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&uint_word(addrs.len() as u64));
+    for addr in addrs {
+        encoded.extend_from_slice(&addr_word(addr));
+    }
+    encoded
+}
+
+fn encode_uint_array(values: &[u64]) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&uint_word(values.len() as u64));
+    for value in values {
+        encoded.extend_from_slice(&uint_word(*value));
+    }
+    encoded
+}
+
+fn build_two_array_calldata(sig_str: &str, addrs: &[&str], values: &[u64]) -> Vec<u8> {
+    let sig = decoder::parse_signature(sig_str).unwrap();
+    let addresses_encoded = encode_address_array(addrs);
+    let values_encoded = encode_uint_array(values);
+    let addresses_offset = 64usize;
+    let values_offset = addresses_offset + addresses_encoded.len();
+
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&sig.selector);
+    calldata.extend_from_slice(&dynamic_offset_word(addresses_offset));
+    calldata.extend_from_slice(&dynamic_offset_word(values_offset));
+    calldata.extend_from_slice(&addresses_encoded);
+    calldata.extend_from_slice(&values_encoded);
+    calldata
+}
+
+struct BlockTimestampProvider(Option<u64>);
+
+impl DataProvider for BlockTimestampProvider {
+    fn resolve_block_timestamp(
+        &self,
+        _chain_id: u64,
+        _block_number: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async move { self.0 })
+    }
 }
 
 // ─── #3: Duplicate selector rejection ───
@@ -158,7 +212,7 @@ async fn test_eip712_duration_format() {
         .await
         .unwrap();
     if let DisplayEntry::Item(ref item) = result.entries[0] {
-        assert_eq!(item.value, "1 day 1 hour 1 minute 1 second");
+        assert_eq!(item.value, "25:01:01");
     } else {
         panic!("expected Item");
     }
@@ -202,7 +256,7 @@ async fn test_eip712_unit_format() {
         .await
         .unwrap();
     if let DisplayEntry::Item(ref item) = result.entries[0] {
-        assert_eq!(item.value, "12.5 %");
+        assert_eq!(item.value, "12.5%");
     } else {
         panic!("expected Item");
     }
@@ -485,14 +539,55 @@ async fn test_date_blockheight_encoding() {
         from: None,
         implementation_address: None,
     };
-    let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+    let result = format_calldata(&descriptors, &tx, &BlockTimestampProvider(Some(1_710_000_000)))
         .await
         .unwrap();
     if let DisplayEntry::Item(ref item) = result.entries[0] {
-        assert_eq!(item.value, "Block 19500000");
+        assert_eq!(item.value, "2024-03-09 16:00:00 UTC");
     } else {
         panic!("expected Item");
     }
+}
+
+#[tokio::test]
+async fn test_date_blockheight_encoding_errors_without_provider_timestamp() {
+    let json = r#"{
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xabc"}]
+            }
+        },
+        "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+        "display": {
+            "definitions": {},
+            "formats": {
+                "expireAt(uint256)": {
+                    "intent": "Expire",
+                    "fields": [
+                        {"path": "@.0", "label": "Block", "format": "date", "params": {"encoding": "blockheight"}}
+                    ]
+                }
+            }
+        }
+    }"#;
+
+    let descriptor = Descriptor::from_json(json).unwrap();
+    let calldata = build_calldata("expireAt(uint256)", &[uint_word(19500000)]);
+
+    let descriptors = wrap_rd(descriptor, 1, "0xabc");
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let err = format_calldata(&descriptors, &tx, &BlockTimestampProvider(None))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("approximate timestamp"));
 }
 
 // ─── #11: domainSeparator parsing ───
@@ -650,7 +745,7 @@ async fn test_unit_si_prefix() {
         .await
         .unwrap();
     if let DisplayEntry::Item(ref item) = result.entries[0] {
-        assert_eq!(item.value, "1.5M wei");
+        assert_eq!(item.value, "1.5Mwei");
     } else {
         panic!("expected Item");
     }
@@ -732,7 +827,7 @@ fn test_intent_as_object() {
             "definitions": {},
             "formats": {
                 "transfer(address,uint256)": {
-                    "intent": {"label": "Transfer tokens", "icon": "transfer.png"},
+                    "intent": {"Action": "Transfer tokens", "Asset": "USDC"},
                     "fields": []
                 }
             }
@@ -745,7 +840,258 @@ fn test_intent_as_object() {
         .get("transfer(address,uint256)")
         .unwrap();
     let intent_str = erc7730::types::display::intent_as_string(format.intent.as_ref().unwrap());
-    assert_eq!(intent_str, "Transfer tokens");
+    assert_eq!(intent_str, "Action: Transfer tokens, Asset: USDC");
+}
+
+#[test]
+fn test_invalid_nested_intent_object_is_rejected() {
+    let json = r#"{
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xabc"}]
+            }
+        },
+        "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+        "display": {
+            "definitions": {},
+            "formats": {
+                "transfer(address,uint256)": {
+                    "intent": {"Action": {"nested": "bad"}},
+                    "fields": []
+                }
+            }
+        }
+    }"#;
+
+    assert!(Descriptor::from_json(json).is_err());
+}
+
+#[tokio::test]
+async fn test_direct_group_without_label_flattens_into_parent_entries() {
+    let json = r#"{
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xabc"}]
+            }
+        },
+        "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+        "display": {
+            "definitions": {},
+            "formats": {
+                "foo(address,uint256)": {
+                    "intent": "Grouped",
+                    "fields": [{
+                        "fields": [
+                            {"path": "@.0", "label": "Recipient", "format": "address"},
+                            {"path": "@.1", "label": "Amount", "format": "number"}
+                        ]
+                    }]
+                }
+            }
+        }
+    }"#;
+
+    let descriptor = Descriptor::from_json(json).unwrap();
+    let calldata = build_calldata(
+        "foo(address,uint256)",
+        &[addr_word("0x0000000000000000000000000000000000000001"), uint_word(100)],
+    );
+
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    assert_eq!(result.entries.len(), 2);
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Recipient"),
+        _ => panic!("expected flattened item"),
+    }
+}
+
+#[tokio::test]
+async fn test_calldata_bundled_group_zips_array_items() {
+    let json = r#"{
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xabc"}]
+            }
+        },
+        "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+        "display": {
+            "definitions": {},
+            "formats": {
+                "batch(address[] recipients,uint256[] amounts)": {
+                    "intent": "Batch",
+                    "fields": [{
+                        "label": "Transfers",
+                        "iteration": "bundled",
+                        "fields": [
+                            {"path": "recipients.[]", "label": "Recipient", "format": "address"},
+                            {"path": "amounts.[]", "label": "Amount", "format": "number"}
+                        ]
+                    }]
+                }
+            }
+        }
+    }"#;
+
+    let descriptor = Descriptor::from_json(json).unwrap();
+    let calldata = build_two_array_calldata(
+        "batch(address[],uint256[])",
+        &[
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000002",
+        ],
+        &[100, 200],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    match &result.entries[0] {
+        DisplayEntry::Group {
+            label,
+            iteration,
+            items,
+        } => {
+            assert_eq!(label, "Transfers");
+            assert!(matches!(iteration, GroupIteration::Bundled));
+            assert_eq!(items.len(), 4);
+            assert_eq!(items[0].label, "Recipient");
+            assert_eq!(items[1].label, "Amount");
+            assert_eq!(items[2].label, "Recipient");
+            assert_eq!(items[3].label, "Amount");
+        }
+        _ => panic!("expected bundled group"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_bundled_group_zips_array_items() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Batch(address[] recipients,uint256[] amounts)": {
+                        "intent": "Batch",
+                        "fields": [{
+                            "label": "Transfers",
+                            "iteration": "bundled",
+                            "fields": [
+                                { "path": "recipients.[]", "label": "Recipient", "format": "address" },
+                                { "path": "amounts.[]", "label": "Amount", "format": "number" }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [
+                { "name": "recipients", "type": "address[]" },
+                { "name": "amounts", "type": "uint256[]" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "recipients": [
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000002"
+            ],
+            "amounts": [100, 200]
+        }
+    }))
+    .unwrap();
+
+    let result =
+        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
+    match &result.entries[0] {
+        DisplayEntry::Group { iteration, items, .. } => {
+            assert!(matches!(iteration, GroupIteration::Bundled));
+            assert_eq!(items.len(), 4);
+        }
+        _ => panic!("expected bundled group"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_bundled_group_mixed_scalar_child_errors() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Batch(address[] recipients,uint256 deadline)": {
+                        "intent": "Batch",
+                        "fields": [{
+                            "iteration": "bundled",
+                            "fields": [
+                                { "path": "recipients.[]", "label": "Recipient", "format": "address" },
+                                { "path": "deadline", "label": "Deadline", "format": "number" }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [
+                { "name": "recipients", "type": "address[]" },
+                { "name": "deadline", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "recipients": ["0x0000000000000000000000000000000000000001"],
+            "deadline": 123
+        }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("bundled groups cannot mix"));
 }
 
 // ─── #20: EIP-712 domain completeness ───
@@ -1984,10 +2330,10 @@ async fn test_eip712_scoped_field_interpolation_matches_rendering() {
             .await
             .unwrap();
     match &result.entries[0] {
-        DisplayEntry::Item(item) => assert_eq!(item.value, "12.5 %"),
+        DisplayEntry::Item(item) => assert_eq!(item.value, "12.5%"),
         _ => panic!("expected Item"),
     }
-    assert_eq!(result.interpolated_intent.as_deref(), Some("Quote 12.5 %"));
+    assert_eq!(result.interpolated_intent.as_deref(), Some("Quote 12.5%"));
 }
 
 #[tokio::test]
@@ -2031,10 +2377,10 @@ async fn test_eip712_ref_field_interpolation_matches_rendering() {
             .await
             .unwrap();
     match &result.entries[0] {
-        DisplayEntry::Item(item) => assert_eq!(item.value, "12.5 %"),
+        DisplayEntry::Item(item) => assert_eq!(item.value, "12.5%"),
         _ => panic!("expected Item"),
     }
-    assert_eq!(result.interpolated_intent.as_deref(), Some("Rate 12.5 %"));
+    assert_eq!(result.interpolated_intent.as_deref(), Some("Rate 12.5%"));
 }
 
 #[tokio::test]
