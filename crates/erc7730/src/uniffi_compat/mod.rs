@@ -481,12 +481,10 @@ pub async fn erc7730_resolve_descriptors_for_typed_data(
     let source = get_registry_source().await?;
 
     // Try direct lookup
-    let mut descriptors = crate::resolver::resolve_descriptors_for_typed_data_with_types(
-        &typed_data,
-        source,
-    )
-    .await
-    .map_err(|e| FfiError::Resolve(e.to_string()))?;
+    let mut descriptors =
+        crate::resolver::resolve_descriptors_for_typed_data_with_types(&typed_data, source)
+            .await
+            .map_err(|e| FfiError::Resolve(e.to_string()))?;
 
     println!(
         "[erc7730] resolve_descriptors_for_typed_data: direct lookup found {} descriptors",
@@ -504,12 +502,10 @@ pub async fn erc7730_resolve_descriptors_for_typed_data(
         if let Some(impl_addr) = impl_addr {
             let mut proxied = typed_data.clone();
             proxied.domain.verifying_contract = Some(impl_addr.clone());
-            descriptors = crate::resolver::resolve_descriptors_for_typed_data_with_types(
-                &proxied,
-                source,
-            )
-            .await
-            .map_err(|e| FfiError::Resolve(e.to_string()))?;
+            descriptors =
+                crate::resolver::resolve_descriptors_for_typed_data_with_types(&proxied, source)
+                    .await
+                    .map_err(|e| FfiError::Resolve(e.to_string()))?;
             println!(
                 "[erc7730] resolve_descriptors_for_typed_data: proxy retry found {} descriptors",
                 descriptors.len()

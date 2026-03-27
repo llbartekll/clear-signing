@@ -63,6 +63,17 @@ Rules when editing these files:
 3. If making a test pass requires changing behavior other tests depend on, explain the tradeoff BEFORE implementing. Do not modify spec compliance tests without explicit approval.
 4. For ambiguous spec behavior, reference https://eips.ethereum.org/EIPS/eip-7730 — flag ambiguity rather than guessing.
 
+## EIP-712 Parity And Spec Guardrails
+
+Spec conformance is the non-negotiable release gate for parity work.
+
+Rules when editing `engine.rs`, `eip712.rs`, `types/display.rs`, or shared formatting helpers:
+1. Do not weaken, bypass, or silently relax existing spec-compliance behavior. Keep current spec assertions passing unchanged unless the user explicitly approves a spec behavior change.
+2. For behavior shared by calldata and EIP-712, treat calldata as the reference only after the behavior is confirmed spec-safe by the existing spec tests or the ERC-7730 spec text.
+3. If current calldata behavior and the spec appear to disagree, stop and surface the tradeoff instead of copying the behavior into `eip712.rs`.
+4. Any change to field rendering, visibility, interpolation, token amount formatting, map lookup, or nested calldata handling must consider both calldata and typed-data effects in the same review.
+5. Add or update parity coverage in `crates/erc7730/tests/spec_compliance.rs` for shared calldata/EIP-712 behavior. Do not rewrite spec-compliance assertions just to make parity work pass without explicit approval.
+
 ## Public API
 
 Shared types in `lib.rs`:
@@ -130,7 +141,7 @@ The library supports v2 registry descriptor features:
 - **`selectorPath`/`chainIdPath`**: Cross-field selector and chain ID resolution for nested calldata
 - **`domainSeparator`**: EIP-712 context field (parsing only, validation is wallet-side)
 - **Factory context**: `factory` object with `deployEvent` and `deployments`
-- **EIP-712 format parity**: All 14 format types (including Duration, Unit, Amount, NftName, Raw) now work in EIP-712
+- **EIP-712 shared-format parity**: Shared formatting behavior is expected to match calldata semantics for all supported EIP-712 format types, and spec-compliance tests are the guardrail for that parity
 - **EIP-712 AddressName**: Full senderAddress, sources, local/ENS resolution (parity with calldata)
 - **Array slice syntax**: `[start:end]` in both calldata paths and EIP-712 paths
 - **Unit SI prefix**: `prefix: true` enables k/M/G/T notation

@@ -883,7 +883,9 @@ fn resolve_typed_nested_callee_for_resolver(
     Ok(field
         .callee_path
         .as_ref()
-        .and_then(|p| crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract)))
+        .and_then(|p| {
+            crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract))
+        })
         .as_ref()
         .and_then(crate::eip712::coerce_typed_address_string))
 }
@@ -906,7 +908,9 @@ fn resolve_typed_nested_chain_id_for_resolver(
     Ok(field
         .chain_id_path
         .as_ref()
-        .and_then(|p| crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract)))
+        .and_then(|p| {
+            crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract))
+        })
         .as_ref()
         .and_then(crate::eip712::coerce_typed_numeric_string)
         .and_then(|s| s.parse::<u64>().ok())
@@ -931,7 +935,9 @@ fn resolve_typed_nested_selector_for_resolver(
     Ok(field
         .selector_path
         .as_ref()
-        .and_then(|p| crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract)))
+        .and_then(|p| {
+            crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract))
+        })
         .as_ref()
         .and_then(crate::eip712::selector_from_typed_value))
 }
@@ -1038,9 +1044,10 @@ pub(crate) async fn resolve_descriptors_for_typed_data_with_types(
 
         match source.resolve_calldata(inner_chain, &callee_addr).await {
             Ok(r) => {
-                if !results.iter().any(|e| {
-                    e.chain_id == r.chain_id && e.address.eq_ignore_ascii_case(&r.address)
-                }) {
+                if !results
+                    .iter()
+                    .any(|e| e.chain_id == r.chain_id && e.address.eq_ignore_ascii_case(&r.address))
+                {
                     results.push(r);
                 }
             }
@@ -1137,9 +1144,13 @@ pub async fn resolve_descriptors_for_typed_data(
 
         // Try to get inner calldata bytes for deeper nesting via resolve_recursive
         if let Some(data_path) = &field.data_path {
-            if let Some(inner_hex) =
-                crate::eip712::resolve_typed_path(message, data_path, chain_id, Some(verifying_contract))
-                    .and_then(|v| v.as_str().map(String::from))
+            if let Some(inner_hex) = crate::eip712::resolve_typed_path(
+                message,
+                data_path,
+                chain_id,
+                Some(verifying_contract),
+            )
+            .and_then(|v| v.as_str().map(String::from))
             {
                 let hex_str = inner_hex
                     .strip_prefix("0x")

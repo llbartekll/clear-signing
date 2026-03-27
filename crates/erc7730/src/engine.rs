@@ -125,9 +125,9 @@ pub async fn format_calldata(
     let entries = render_fields(&ctx, &expanded_fields, &mut warnings).await?;
 
     let interpolated = match format.interpolated_intent.as_ref() {
-        Some(template) => Some(
-            interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await?,
-        ),
+        Some(template) => {
+            Some(interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await?)
+        }
         None => None,
     };
 
@@ -302,9 +302,8 @@ fn render_fields<'a>(
                     }));
                 }
                 DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
-                    warnings.push(
-                        "unexpanded display field reached renderer; skipping".to_string(),
-                    );
+                    warnings
+                        .push("unexpanded display field reached renderer; skipping".to_string());
                 }
             }
         }
@@ -338,96 +337,100 @@ fn render_group_field_kind<'a>(
 ) -> Pin<Box<dyn Future<Output = Result<GroupRenderKind, Error>> + Send + 'a>> {
     Box::pin(async move {
         match field {
-        DisplayField::Group { field_group } => render_group_kind(ctx, field_group, warnings).await,
-        DisplayField::Simple {
-            path,
-            label,
-            value: literal_value,
-            format,
-            params,
-            separator,
-            visible,
-        } => {
-            if let Some(lit) = literal_value {
-                if !check_visibility(visible, &None, label, "")? {
+            DisplayField::Group { field_group } => {
+                render_group_kind(ctx, field_group, warnings).await
+            }
+            DisplayField::Simple {
+                path,
+                label,
+                value: literal_value,
+                format,
+                params,
+                separator,
+                visible,
+            } => {
+                if let Some(lit) = literal_value {
+                    if !check_visibility(visible, &None, label, "")? {
+                        return Ok(GroupRenderKind::Scalar(Vec::new()));
+                    }
+                    return Ok(GroupRenderKind::Scalar(vec![DisplayItem {
+                        label: label.clone(),
+                        value: resolve_metadata_constant_str(ctx.descriptor, lit),
+                    }]));
+                }
+
+                let path_str = path.as_deref().unwrap_or("");
+                if let Some((base, rest)) = split_array_iter_path(path_str) {
+                    if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
+                        let mut bundles = Vec::new();
+                        for item in &items {
+                            let val = if rest.is_empty() {
+                                Some(item.clone())
+                            } else {
+                                let rest_segments: Vec<&str> = rest.split('.').collect();
+                                navigate_value(item, &rest_segments)
+                            };
+                            if !check_visibility(visible, &val, label, path_str)? {
+                                continue;
+                            }
+                            let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata))
+                            {
+                                flatten_display_entry(
+                                    render_calldata_field(ctx, &val, params.as_ref(), label)
+                                        .await?,
+                                )
+                            } else {
+                                vec![DisplayItem {
+                                    label: label.clone(),
+                                    value: format_value(
+                                        ctx,
+                                        &val,
+                                        format.as_ref(),
+                                        params.as_ref(),
+                                        path_str,
+                                        label,
+                                        separator.as_deref(),
+                                        warnings,
+                                    )
+                                    .await?,
+                                }]
+                            };
+                            bundles.push(rendered);
+                        }
+                        return Ok(GroupRenderKind::Bundles(bundles));
+                    }
+                }
+
+                let value = resolve_path(ctx.decoded, path_str);
+                if !check_visibility(visible, &value, label, path_str)? {
                     return Ok(GroupRenderKind::Scalar(Vec::new()));
                 }
-                return Ok(GroupRenderKind::Scalar(vec![DisplayItem {
-                    label: label.clone(),
-                    value: resolve_metadata_constant_str(ctx.descriptor, lit),
-                }]));
-            }
 
-            let path_str = path.as_deref().unwrap_or("");
-            if let Some((base, rest)) = split_array_iter_path(path_str) {
-                if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
-                    let mut bundles = Vec::new();
-                    for item in &items {
-                        let val = if rest.is_empty() {
-                            Some(item.clone())
-                        } else {
-                            let rest_segments: Vec<&str> = rest.split('.').collect();
-                            navigate_value(item, &rest_segments)
-                        };
-                        if !check_visibility(visible, &val, label, path_str)? {
-                            continue;
-                        }
-                        let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
-                            flatten_display_entry(
-                                render_calldata_field(ctx, &val, params.as_ref(), label).await?,
-                            )
-                        } else {
-                            vec![DisplayItem {
-                                label: label.clone(),
-                                value: format_value(
-                                    ctx,
-                                    &val,
-                                    format.as_ref(),
-                                    params.as_ref(),
-                                    path_str,
-                                    label,
-                                    separator.as_deref(),
-                                    warnings,
-                                )
-                                .await?,
-                            }]
-                        };
-                        bundles.push(rendered);
-                    }
-                    return Ok(GroupRenderKind::Bundles(bundles));
+                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                    return Ok(GroupRenderKind::Scalar(flatten_display_entry(
+                        render_calldata_field(ctx, &value, params.as_ref(), label).await?,
+                    )));
                 }
-            }
 
-            let value = resolve_path(ctx.decoded, path_str);
-            if !check_visibility(visible, &value, label, path_str)? {
-                return Ok(GroupRenderKind::Scalar(Vec::new()));
+                Ok(GroupRenderKind::Scalar(vec![DisplayItem {
+                    label: label.clone(),
+                    value: format_value(
+                        ctx,
+                        &value,
+                        format.as_ref(),
+                        params.as_ref(),
+                        path_str,
+                        label,
+                        separator.as_deref(),
+                        warnings,
+                    )
+                    .await?,
+                }]))
             }
-
-            if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
-                return Ok(GroupRenderKind::Scalar(flatten_display_entry(
-                    render_calldata_field(ctx, &value, params.as_ref(), label).await?,
-                )));
+            DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
+                Ok(GroupRenderKind::Scalar(Vec::new()))
             }
-
-            Ok(GroupRenderKind::Scalar(vec![DisplayItem {
-                label: label.clone(),
-                value: format_value(
-                    ctx,
-                    &value,
-                    format.as_ref(),
-                    params.as_ref(),
-                    path_str,
-                    label,
-                    separator.as_deref(),
-                    warnings,
-                )
-                .await?,
-            }]))
         }
-        DisplayField::Reference { .. } | DisplayField::Scope { .. } => Ok(GroupRenderKind::Scalar(
-            Vec::new(),
-        )),
-    }
     })
 }
 
@@ -474,7 +477,10 @@ fn render_group_kind<'a>(
                 }
 
                 let expected_len = bundle_sets[0].len();
-                if bundle_sets.iter().any(|bundles| bundles.len() != expected_len) {
+                if bundle_sets
+                    .iter()
+                    .any(|bundles| bundles.len() != expected_len)
+                {
                     return Err(Error::Render(
                         "bundled groups require all array-expanded fields to have the same length"
                             .to_string(),
@@ -557,13 +563,8 @@ pub(crate) fn expand_display_fields(
                 visible,
             } => {
                 if let Some(resolved) = resolve_reference(descriptor, reference) {
-                    let merged =
-                        merge_ref_with_definition(resolved, path, ref_params, visible);
-                    expanded.extend(expand_display_fields(
-                        descriptor,
-                        &[merged],
-                        warnings,
-                    ));
+                    let merged = merge_ref_with_definition(resolved, path, ref_params, visible);
+                    expanded.extend(expand_display_fields(descriptor, &[merged], warnings));
                 } else {
                     warnings.push(format!("unresolved reference: {reference}"));
                 }
@@ -650,14 +651,12 @@ pub fn prepend_scope_path(field: &DisplayField, scope: &str) -> DisplayField {
             label,
             iteration,
             fields: children,
-        } => {
-            DisplayField::Scope {
-                path: Some(prepend_path(scope, path.as_deref())),
-                label: label.clone(),
-                iteration: iteration.clone(),
-                fields: children.clone(),
-            }
-        }
+        } => DisplayField::Scope {
+            path: Some(prepend_path(scope, path.as_deref())),
+            label: label.clone(),
+            iteration: iteration.clone(),
+            fields: children.clone(),
+        },
         DisplayField::Simple {
             path,
             label,
@@ -1069,10 +1068,7 @@ pub(crate) fn parse_nested_amount_literal(
     uint_bytes_from_biguint(&biguint, param_name)
 }
 
-pub(crate) fn parse_nested_selector_param(
-    value: &str,
-    param_name: &str,
-) -> Result<[u8; 4], Error> {
+pub(crate) fn parse_nested_selector_param(value: &str, param_name: &str) -> Result<[u8; 4], Error> {
     let hex_str = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
@@ -1094,10 +1090,7 @@ pub(crate) fn parse_nested_selector_param(
     Ok(selector)
 }
 
-pub(crate) fn parse_nested_address_param(
-    value: &str,
-    param_name: &str,
-) -> Result<String, Error> {
+pub(crate) fn parse_nested_address_param(value: &str, param_name: &str) -> Result<String, Error> {
     let hex_str = value
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
@@ -2020,12 +2013,8 @@ async fn format_date(
                 let block_number = u64::try_from(&n).map_err(|_| {
                     Error::Render(format!("blockheight {} does not fit into u64", n))
                 })?;
-                return format_blockheight_timestamp(
-                    ctx.data_provider,
-                    ctx.chain_id,
-                    block_number,
-                )
-                .await;
+                return format_blockheight_timestamp(ctx.data_provider, ctx.chain_id, block_number)
+                    .await;
             }
 
             let timestamp = i64::try_from(&n)

@@ -2,7 +2,7 @@
 
 use erc7730::decoder;
 use erc7730::eip712::TypedData;
-use erc7730::engine::{DisplayEntry, GroupIteration};
+use erc7730::engine::{DisplayEntry, DisplayModel, GroupIteration};
 use erc7730::merge::merge_descriptor_values;
 use erc7730::provider::{DataProvider, EmptyDataProvider};
 use erc7730::token::{StaticTokenSource, TokenMeta};
@@ -117,6 +117,103 @@ impl DataProvider for BlockTimestampProvider {
     ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
         Box::pin(async move { self.0 })
     }
+}
+
+fn semantic_item_snapshot(entries: &[DisplayEntry]) -> Vec<(String, String)> {
+    let mut snapshot = Vec::new();
+    for entry in entries {
+        match entry {
+            DisplayEntry::Item(item) => {
+                snapshot.push((item.label.clone(), item.value.clone()));
+            }
+            DisplayEntry::Group { items, .. } => {
+                snapshot.extend(
+                    items
+                        .iter()
+                        .map(|item| (item.label.clone(), item.value.clone())),
+                );
+            }
+            DisplayEntry::Nested { label, intent, .. } => {
+                snapshot.push((label.clone(), intent.clone()));
+            }
+        }
+    }
+    snapshot
+}
+
+fn assert_semantic_parity(calldata_model: &DisplayModel, typed_model: &DisplayModel) {
+    assert_eq!(calldata_model.intent, typed_model.intent);
+    assert_eq!(
+        semantic_item_snapshot(&calldata_model.entries),
+        semantic_item_snapshot(&typed_model.entries)
+    );
+}
+
+async fn assert_invalid_typed_numeric_format_error(
+    format_name: &str,
+    params: Option<serde_json::Value>,
+    bad_value: serde_json::Value,
+    error_substr: &str,
+) {
+    let field = match params {
+        Some(params) => serde_json::json!({
+            "path": "value",
+            "label": "Value",
+            "format": format_name,
+            "params": params
+        }),
+        None => serde_json::json!({
+            "path": "value",
+            "label": "Value",
+            "format": format_name
+        }),
+    };
+
+    let descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Example(string value)": {
+                        "intent": "Example",
+                        "fields": [field]
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Example": [{ "name": "value", "type": "string" }]
+        },
+        "primaryType": "Example",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "value": bad_value }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains(error_substr),
+        "expected '{error_substr}' in error, got: {err}"
+    );
 }
 
 // ─── #3: Duplicate selector rejection ───
@@ -305,6 +402,63 @@ async fn test_eip712_nft_name_format() {
     } else {
         panic!("expected Item");
     }
+}
+
+#[tokio::test]
+async fn test_eip712_token_amount_rejects_invalid_numeric_string() {
+    assert_invalid_typed_numeric_format_error(
+        "tokenAmount",
+        Some(serde_json::json!({
+            "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+        })),
+        serde_json::json!("not-a-number"),
+        "tokenAmount field must be an unsigned integer",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_eip712_date_rejects_invalid_numeric_string() {
+    assert_invalid_typed_numeric_format_error(
+        "date",
+        None,
+        serde_json::json!("not-a-number"),
+        "date field must be an integer",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_eip712_chain_id_rejects_invalid_numeric_string() {
+    assert_invalid_typed_numeric_format_error(
+        "chainId",
+        None,
+        serde_json::json!("not-a-number"),
+        "chainId field must be an unsigned integer",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_eip712_duration_rejects_invalid_numeric_string() {
+    assert_invalid_typed_numeric_format_error(
+        "duration",
+        None,
+        serde_json::json!("not-a-number"),
+        "duration field must be an unsigned integer",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_eip712_unit_rejects_invalid_numeric_string() {
+    assert_invalid_typed_numeric_format_error(
+        "unit",
+        Some(serde_json::json!({"base": "%", "decimals": 2})),
+        serde_json::json!("not-a-number"),
+        "unit field must be an unsigned integer",
+    )
+    .await;
 }
 
 // ─── #2: DisplayField with value (literal constant) ───
@@ -539,9 +693,13 @@ async fn test_date_blockheight_encoding() {
         from: None,
         implementation_address: None,
     };
-    let result = format_calldata(&descriptors, &tx, &BlockTimestampProvider(Some(1_710_000_000)))
-        .await
-        .unwrap();
+    let result = format_calldata(
+        &descriptors,
+        &tx,
+        &BlockTimestampProvider(Some(1_710_000_000)),
+    )
+    .await
+    .unwrap();
     if let DisplayEntry::Item(ref item) = result.entries[0] {
         assert_eq!(item.value, "2024-03-09 16:00:00 UTC");
     } else {
@@ -812,6 +970,111 @@ async fn test_maps_key_path() {
     }
 }
 
+#[tokio::test]
+async fn test_eip712_maps_key_path_matches_calldata() {
+    let metadata = serde_json::json!({
+        "owner": "test",
+        "enums": {},
+        "constants": {},
+        "maps": {
+            "orderTypes": {
+                "keyPath": "kind",
+                "entries": {"0": "Market", "1": "Limit", "2": "Stop"}
+            }
+        }
+    });
+    let fields = serde_json::json!([
+        {"path": "value", "label": "Order Type", "params": {"mapReference": "orderTypes"}}
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "contract": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": metadata.clone(),
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "placeOrder(uint256 kind,uint256 value)": {
+                        "intent": "Place order",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": metadata,
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "PlaceOrder(uint256 kind,uint256 value)": {
+                        "intent": "Place order",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "placeOrder(uint256,uint256)",
+        &[uint_word(1), uint_word(999)],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "PlaceOrder": [
+                { "name": "kind", "type": "uint256" },
+                { "name": "value", "type": "uint256" }
+            ]
+        },
+        "primaryType": "PlaceOrder",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "kind": 1, "value": 999 }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
 // ─── #19: Intent as object ───
 
 #[test]
@@ -894,7 +1157,10 @@ async fn test_direct_group_without_label_flattens_into_parent_entries() {
     let descriptor = Descriptor::from_json(json).unwrap();
     let calldata = build_calldata(
         "foo(address,uint256)",
-        &[addr_word("0x0000000000000000000000000000000000000001"), uint_word(100)],
+        &[
+            addr_word("0x0000000000000000000000000000000000000001"),
+            uint_word(100),
+        ],
     );
 
     let tx = TransactionContext {
@@ -1028,12 +1294,17 @@ async fn test_eip712_bundled_group_zips_array_items() {
     }))
     .unwrap();
 
-    let result =
-        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-            .await
-            .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     match &result.entries[0] {
-        DisplayEntry::Group { iteration, items, .. } => {
+        DisplayEntry::Group {
+            iteration, items, ..
+        } => {
             assert!(matches!(iteration, GroupIteration::Bundled));
             assert_eq!(items.len(), 4);
         }
@@ -1342,6 +1613,309 @@ async fn test_excluded_paths() {
     } else {
         panic!("expected Item");
     }
+}
+
+#[tokio::test]
+async fn test_eip712_excluded_paths_match_calldata() {
+    let fields = serde_json::json!([
+        {"path": "visible", "label": "Visible", "format": "number"},
+        {"path": "hidden", "label": "Hidden", "format": "number"}
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "contract": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "show(uint256 visible,uint256 hidden)": {
+                        "intent": "Show",
+                        "excluded": ["hidden"],
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Show(uint256 visible,uint256 hidden)": {
+                        "intent": "Show",
+                        "excluded": ["hidden"],
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata("show(uint256,uint256)", &[uint_word(42), uint_word(99)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Show": [
+                { "name": "visible", "type": "uint256" },
+                { "name": "hidden", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Show",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "visible": 42, "hidden": 99 }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
+#[tokio::test]
+async fn test_eip712_token_amount_threshold_matches_calldata() {
+    let token = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    let fields = serde_json::json!([
+        {
+            "path": "value",
+            "label": "Amount",
+            "format": "tokenAmount",
+            "params": {
+                "token": token,
+                "threshold": "0x100",
+                "message": "All"
+            }
+        }
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "contract": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "withdraw(uint256 value)": {
+                        "intent": "Withdraw",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Withdraw(uint256 value)": {
+                        "intent": "Withdraw",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata("withdraw(uint256)", &[uint_word(256)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        token,
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
+        .await
+        .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Withdraw": [{ "name": "value", "type": "uint256" }]
+        },
+        "primaryType": "Withdraw",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "value": "256" }
+    }))
+    .unwrap();
+    let typed_result =
+        format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+            .await
+            .unwrap();
+
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
+#[tokio::test]
+async fn test_eip712_token_amount_native_currency_matches_calldata() {
+    let native = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    let fields = serde_json::json!([
+        {
+            "path": "value",
+            "label": "Amount",
+            "format": "tokenAmount",
+            "params": {
+                "tokenPath": "token",
+                "nativeCurrencyAddress": native
+            }
+        }
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "contract": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "swap(address token,uint256 value)": {
+                        "intent": "Swap",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Swap(address token,uint256 value)": {
+                        "intent": "Swap",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "swap(address,uint256)",
+        &[addr_word(native), uint_word(1_000_000_000_000_000_000)],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Swap": [
+                { "name": "token", "type": "address" },
+                { "name": "value", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Swap",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "token": native,
+            "value": "1000000000000000000"
+        }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_semantic_parity(&calldata_result, &typed_result);
 }
 
 // ─── #17: Includes mechanism ───
@@ -1839,10 +2413,13 @@ async fn test_eip712_bare_primary_type_key_falls_back_for_legacy_descriptor() {
     }))
     .unwrap();
 
-    let result =
-        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     assert_eq!(result.intent, "Permit");
 }
 
@@ -1894,9 +2471,17 @@ async fn test_eip712_real_world_legacy_receive_with_authorization_key_still_form
     }))
     .unwrap();
 
-    let result = format_typed_data(&wrap_rd(descriptor, 42161, "0xaf88d065e77c8cc2239327c5edb3a432268e5831"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(
+            descriptor,
+            42161,
+            "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+        ),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     assert_eq!(result.intent, "Authorize USDC transfer");
 }
 
@@ -1927,10 +2512,14 @@ async fn test_eip712_prefix_only_format_key_rejected() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("no EIP-712 display format found"));
 }
 
@@ -1965,10 +2554,13 @@ async fn test_eip712_canonical_key_wins_over_legacy_primary_type_key() {
     }))
     .unwrap();
 
-    let result =
-        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-            .await
-            .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     assert_eq!(result.intent, "Canonical Permit");
     match &result.entries[0] {
         DisplayEntry::Item(item) => assert_eq!(item.label, "Canonical"),
@@ -2003,10 +2595,14 @@ async fn test_eip712_missing_chain_id_rejected_with_descriptors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("domain.chainId is required"));
 }
 
@@ -2037,10 +2633,14 @@ async fn test_eip712_missing_verifying_contract_rejected_with_descriptors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("domain.verifyingContract is required"));
 }
 
@@ -2071,10 +2671,14 @@ async fn test_eip712_outer_descriptor_match_is_required() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xdef"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xdef"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("no EIP-712 descriptor found"));
 }
 
@@ -2111,10 +2715,13 @@ async fn test_eip712_sender_address_uses_container_from() {
     }))
     .unwrap();
 
-    let result =
-        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-            .await
-            .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     match &result.entries[0] {
         DisplayEntry::Item(item) => assert_eq!(item.value, "Sender"),
         _ => panic!("expected Item"),
@@ -2153,10 +2760,14 @@ async fn test_eip712_sender_address_missing_container_from_errors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("@.from is required"));
 }
 
@@ -2237,10 +2848,14 @@ async fn test_eip712_interpolation_placeholder_for_calldata_field_errors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("non-stringable calldata field"));
 }
 
@@ -2281,10 +2896,14 @@ async fn test_eip712_group_only_interpolation_path_errors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("does not match any display field"));
 }
 
@@ -2325,10 +2944,13 @@ async fn test_eip712_scoped_field_interpolation_matches_rendering() {
     }))
     .unwrap();
 
-    let result =
-        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-            .await
-            .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     match &result.entries[0] {
         DisplayEntry::Item(item) => assert_eq!(item.value, "12.5%"),
         _ => panic!("expected Item"),
@@ -2372,10 +2994,13 @@ async fn test_eip712_ref_field_interpolation_matches_rendering() {
     }))
     .unwrap();
 
-    let result =
-        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-            .await
-            .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     match &result.entries[0] {
         DisplayEntry::Item(item) => assert_eq!(item.value, "12.5%"),
         _ => panic!("expected Item"),
@@ -2556,10 +3181,13 @@ async fn test_visible_if_not_in_hides_matching_value_and_shows_non_matching() {
         from: None,
         implementation_address: None,
     };
-    let hidden_result =
-        format_calldata(&wrap_rd(descriptor.clone(), 1, "0xabc"), &hidden_tx, &EmptyDataProvider)
-            .await
-            .unwrap();
+    let hidden_result = format_calldata(
+        &wrap_rd(descriptor.clone(), 1, "0xabc"),
+        &hidden_tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     assert!(hidden_result.entries.is_empty());
 
     let shown = build_calldata("show(uint256)", &[uint_word(9)]);
@@ -2571,10 +3199,13 @@ async fn test_visible_if_not_in_hides_matching_value_and_shows_non_matching() {
         from: None,
         implementation_address: None,
     };
-    let shown_result =
-        format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &shown_tx, &EmptyDataProvider)
-            .await
-            .unwrap();
+    let shown_result = format_calldata(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &shown_tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     assert_eq!(shown_result.entries.len(), 1);
 }
 
@@ -2637,10 +3268,14 @@ async fn test_visible_must_match_hides_matching_value_and_errors_on_mismatch() {
         from: None,
         implementation_address: None,
     };
-    let err = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &mismatching_tx, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_calldata(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &mismatching_tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("visible.mustMatch"));
 }
 
@@ -2680,9 +3315,13 @@ async fn test_typed_visibility_alias_must_be_behaves_like_must_match() {
     }))
     .unwrap();
 
-    let result = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap();
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
     assert_eq!(result.entries.len(), 1);
     match &result.entries[0] {
         DisplayEntry::Item(item) => assert_eq!(item.label, "Value"),
@@ -2722,10 +3361,14 @@ async fn test_typed_visibility_must_match_errors_when_value_missing() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap_err()
-        .to_string();
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("visible.mustMatch"));
 }
 
@@ -2768,8 +3411,14 @@ fn test_nested_calldata_constant_params_parse() {
         );
         assert_eq!(params.selector.as_deref(), Some("0x12345678"));
         assert_eq!(params.chain_id, Some(10));
-        assert_eq!(params.spender.as_deref(), Some("0x2000000000000000000000000000000000000002"));
-        assert_eq!(params.amount.unwrap().to_biguint().unwrap().to_string(), "42");
+        assert_eq!(
+            params.spender.as_deref(),
+            Some("0x2000000000000000000000000000000000000002")
+        );
+        assert_eq!(
+            params.amount.unwrap().to_biguint().unwrap().to_string(),
+            "42"
+        );
     } else {
         panic!("expected Simple field");
     }
@@ -2848,7 +3497,9 @@ async fn test_calldata_nested_calldata_constant_params_render() {
         .unwrap();
 
     match &result.entries[0] {
-        DisplayEntry::Nested { intent, entries, .. } => {
+        DisplayEntry::Nested {
+            intent, entries, ..
+        } => {
             assert_eq!(intent, "Consume");
             assert!(entries.iter().any(|entry| matches!(
                 entry,
@@ -3036,7 +3687,10 @@ async fn test_typed_nested_calldata_constant_params_render() {
 
 #[tokio::test]
 async fn test_nested_calldata_conflicting_constant_and_path_params_error() {
-    let selector = format!("0x{}", hex::encode(decoder::parse_signature("consume()").unwrap().selector));
+    let selector = format!(
+        "0x{}",
+        hex::encode(decoder::parse_signature("consume()").unwrap().selector)
+    );
     let descriptor = Descriptor::from_json(&format!(
         r#"{{
             "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
@@ -3083,10 +3737,7 @@ async fn test_nested_calldata_conflicting_constant_and_path_params_error() {
 async fn test_nested_calldata_malformed_constant_params_error() {
     let calldata = build_single_bytes_calldata("outer(bytes)", &[]);
     let cases = [
-        (
-            r#""callee": "0x1234", "selector": "0x12345678""#,
-            "callee",
-        ),
+        (r#""callee": "0x1234", "selector": "0x12345678""#, "callee"),
         (
             r#""callee": "0x1000000000000000000000000000000000000001", "selector": "0x1234""#,
             "selector",
@@ -3138,7 +3789,10 @@ async fn test_nested_calldata_malformed_constant_params_error() {
 
 #[tokio::test]
 async fn test_unresolved_nested_callee_falls_back_to_raw_preview() {
-    let selector = format!("0x{}", hex::encode(decoder::parse_signature("consume()").unwrap().selector));
+    let selector = format!(
+        "0x{}",
+        hex::encode(decoder::parse_signature("consume()").unwrap().selector)
+    );
     let descriptor = Descriptor::from_json(&format!(
         r#"{{
             "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},

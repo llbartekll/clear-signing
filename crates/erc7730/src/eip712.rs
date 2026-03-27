@@ -86,7 +86,10 @@ impl<'a> TypedContainerContext<'a> {
         Self {
             chain_id: data.domain.chain_id,
             verifying_contract: data.domain.verifying_contract.as_deref(),
-            from: data.container.as_ref().and_then(|container| container.from.as_deref()),
+            from: data
+                .container
+                .as_ref()
+                .and_then(|container| container.from.as_deref()),
         }
     }
 }
@@ -156,10 +159,11 @@ pub async fn format_typed_data(
     let mut warnings = Vec::new();
     let expanded_fields =
         crate::engine::expand_display_fields(descriptor, &format.fields, &mut warnings);
+    let renderable_fields = filter_excluded_fields(&expanded_fields, &format.excluded);
     let entries = render_typed_fields(
         descriptor,
         &data.message,
-        &expanded_fields,
+        &renderable_fields,
         container,
         data_provider,
         &mut warnings,
@@ -175,22 +179,55 @@ pub async fn format_typed_data(
             .map(crate::types::display::intent_as_string)
             .unwrap_or_else(|| data.primary_type.clone()),
         interpolated_intent: match format.interpolated_intent.as_ref() {
-            Some(template) => Some(interpolate_typed_intent(
-                template,
-                descriptor,
-                &data.message,
-                container,
-                &expanded_fields,
-                &format.excluded,
-                data_provider,
-            )
-            .await?),
+            Some(template) => Some(
+                interpolate_typed_intent(
+                    template,
+                    descriptor,
+                    &data.message,
+                    container,
+                    &expanded_fields,
+                    &format.excluded,
+                    data_provider,
+                )
+                .await?,
+            ),
             None => None,
         },
         entries,
         warnings,
         owner: descriptor.metadata.owner.clone(),
     })
+}
+
+fn filter_excluded_fields(fields: &[DisplayField], excluded: &[String]) -> Vec<DisplayField> {
+    fields
+        .iter()
+        .filter_map(|field| match field {
+            DisplayField::Simple {
+                path: Some(path), ..
+            } if excluded.iter().any(|excluded_path| excluded_path == path) => None,
+            DisplayField::Group { field_group } => Some(DisplayField::Group {
+                field_group: FieldGroup {
+                    path: field_group.path.clone(),
+                    label: field_group.label.clone(),
+                    iteration: field_group.iteration.clone(),
+                    fields: filter_excluded_fields(&field_group.fields, excluded),
+                },
+            }),
+            DisplayField::Scope {
+                path,
+                label,
+                iteration,
+                fields,
+            } => Some(DisplayField::Scope {
+                path: path.clone(),
+                label: label.clone(),
+                iteration: iteration.clone(),
+                fields: filter_excluded_fields(fields, excluded),
+            }),
+            _ => Some(field.clone()),
+        })
+        .collect()
 }
 
 /// Render typed data fields recursively.
@@ -216,16 +253,16 @@ fn render_typed_fields<'a>(
                 DisplayField::Group { field_group } => {
                     entries.extend(
                         render_typed_field_group_entries(
-                        descriptor,
-                        message,
-                        field_group,
-                        container,
-                        data_provider,
-                        warnings,
-                        descriptors,
-                        depth,
-                    )
-                    .await?,
+                            descriptor,
+                            message,
+                            field_group,
+                            container,
+                            data_provider,
+                            warnings,
+                            descriptors,
+                            depth,
+                        )
+                        .await?,
                     );
                 }
                 DisplayField::Simple {
@@ -345,6 +382,7 @@ enum TypedGroupRenderKind {
     Bundles(Vec<Vec<DisplayItem>>),
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_typed_group_field_kind<'a>(
     descriptor: &'a Descriptor,
     message: &'a serde_json::Value,
@@ -357,133 +395,134 @@ fn render_typed_group_field_kind<'a>(
 ) -> Pin<Box<dyn Future<Output = Result<TypedGroupRenderKind, Error>> + Send + 'a>> {
     Box::pin(async move {
         match field {
-        DisplayField::Group { field_group } => {
-            render_typed_group_kind(
-                descriptor,
-                message,
-                field_group,
-                container,
-                data_provider,
-                warnings,
-                descriptors,
-                depth,
-            )
-            .await
-        }
-        DisplayField::Simple {
-            path,
-            label,
-            value: literal_value,
-            format,
-            params,
-            separator: _,
-            visible,
-        } => {
-            if let Some(lit) = literal_value {
-                if !check_typed_visibility(visible, &None, label, "")? {
-                    return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
-                }
-                return Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem {
-                    label: label.clone(),
-                    value: resolve_metadata_constant_str(descriptor, lit),
-                }]));
-            }
-
-            let path_str = path.as_deref().unwrap_or("");
-            if let Some((base, rest)) = crate::engine::split_array_iter_path(path_str) {
-                if let Some(serde_json::Value::Array(items)) =
-                    resolve_typed_path_in_context(message, base, container)?
-                {
-                    let mut bundles = Vec::new();
-                    for item in &items {
-                        let val = if rest.is_empty() {
-                            Some(item.clone())
-                        } else {
-                            resolve_typed_path_in_context(item, rest, container)?
-                        };
-                        if !check_typed_visibility(visible, &val, label, path_str)? {
-                            continue;
-                        }
-                        let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
-                            crate::engine::flatten_display_entry(
-                                render_typed_calldata_field(
-                                    descriptor,
-                                    message,
-                                    &val,
-                                    params.as_ref(),
-                                    label,
-                                    container,
-                                    data_provider,
-                                    descriptors,
-                                    depth,
-                                )
-                                .await?,
-                            )
-                        } else {
-                            vec![DisplayItem {
-                                label: label.clone(),
-                                value: format_typed_value(
-                                    descriptor,
-                                    &val,
-                                    format.as_ref(),
-                                    params.as_ref(),
-                                    container,
-                                    message,
-                                    data_provider,
-                                    warnings,
-                                )
-                                .await?,
-                            }]
-                        };
-                        bundles.push(rendered);
-                    }
-                    return Ok(TypedGroupRenderKind::Bundles(bundles));
-                }
-            }
-
-            let value = resolve_typed_path_in_context(message, path_str, container)?;
-            if !check_typed_visibility(visible, &value, label, path_str)? {
-                return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
-            }
-
-            if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
-                return Ok(TypedGroupRenderKind::Scalar(
-                    crate::engine::flatten_display_entry(
-                        render_typed_calldata_field(
-                            descriptor,
-                            message,
-                            &value,
-                            params.as_ref(),
-                            label,
-                            container,
-                            data_provider,
-                            descriptors,
-                            depth,
-                        )
-                        .await?,
-                    ),
-                ));
-            }
-
-            Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem {
-                label: label.clone(),
-                value: format_typed_value(
+            DisplayField::Group { field_group } => {
+                render_typed_group_kind(
                     descriptor,
-                    &value,
-                    format.as_ref(),
-                    params.as_ref(),
-                    container,
                     message,
+                    field_group,
+                    container,
                     data_provider,
                     warnings,
+                    descriptors,
+                    depth,
                 )
-                .await?,
-            }]))
+                .await
+            }
+            DisplayField::Simple {
+                path,
+                label,
+                value: literal_value,
+                format,
+                params,
+                separator: _,
+                visible,
+            } => {
+                if let Some(lit) = literal_value {
+                    if !check_typed_visibility(visible, &None, label, "")? {
+                        return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
+                    }
+                    return Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem {
+                        label: label.clone(),
+                        value: resolve_metadata_constant_str(descriptor, lit),
+                    }]));
+                }
+
+                let path_str = path.as_deref().unwrap_or("");
+                if let Some((base, rest)) = crate::engine::split_array_iter_path(path_str) {
+                    if let Some(serde_json::Value::Array(items)) =
+                        resolve_typed_path_in_context(message, base, container)?
+                    {
+                        let mut bundles = Vec::new();
+                        for item in &items {
+                            let val = if rest.is_empty() {
+                                Some(item.clone())
+                            } else {
+                                resolve_typed_path_in_context(item, rest, container)?
+                            };
+                            if !check_typed_visibility(visible, &val, label, path_str)? {
+                                continue;
+                            }
+                            let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata))
+                            {
+                                crate::engine::flatten_display_entry(
+                                    render_typed_calldata_field(
+                                        descriptor,
+                                        message,
+                                        &val,
+                                        params.as_ref(),
+                                        label,
+                                        container,
+                                        data_provider,
+                                        descriptors,
+                                        depth,
+                                    )
+                                    .await?,
+                                )
+                            } else {
+                                vec![DisplayItem {
+                                    label: label.clone(),
+                                    value: format_typed_value(
+                                        descriptor,
+                                        &val,
+                                        format.as_ref(),
+                                        params.as_ref(),
+                                        container,
+                                        message,
+                                        data_provider,
+                                        warnings,
+                                    )
+                                    .await?,
+                                }]
+                            };
+                            bundles.push(rendered);
+                        }
+                        return Ok(TypedGroupRenderKind::Bundles(bundles));
+                    }
+                }
+
+                let value = resolve_typed_path_in_context(message, path_str, container)?;
+                if !check_typed_visibility(visible, &value, label, path_str)? {
+                    return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
+                }
+
+                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                    return Ok(TypedGroupRenderKind::Scalar(
+                        crate::engine::flatten_display_entry(
+                            render_typed_calldata_field(
+                                descriptor,
+                                message,
+                                &value,
+                                params.as_ref(),
+                                label,
+                                container,
+                                data_provider,
+                                descriptors,
+                                depth,
+                            )
+                            .await?,
+                        ),
+                    ));
+                }
+
+                Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem {
+                    label: label.clone(),
+                    value: format_typed_value(
+                        descriptor,
+                        &value,
+                        format.as_ref(),
+                        params.as_ref(),
+                        container,
+                        message,
+                        data_provider,
+                        warnings,
+                    )
+                    .await?,
+                }]))
+            }
+            DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
+                Ok(TypedGroupRenderKind::Scalar(Vec::new()))
+            }
         }
-        DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
-            Ok(TypedGroupRenderKind::Scalar(Vec::new()))
-        }
-    }
     })
 }
 
@@ -548,7 +587,10 @@ fn render_typed_group_kind<'a>(
                 }
 
                 let expected_len = bundle_sets[0].len();
-                if bundle_sets.iter().any(|bundles| bundles.len() != expected_len) {
+                if bundle_sets
+                    .iter()
+                    .any(|bundles| bundles.len() != expected_len)
+                {
                     return Err(Error::Render(
                         "bundled groups require all array-expanded fields to have the same length"
                             .to_string(),
@@ -1108,16 +1150,92 @@ pub(crate) fn coerce_typed_numeric_string(val: &serde_json::Value) -> Option<Str
         serde_json::Value::String(s) => {
             if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
                 let bytes = hex::decode(hex_str).ok()?;
-                if bytes.len() <= 32 {
-                    Some(num_bigint::BigUint::from_bytes_be(&bytes).to_string())
-                } else {
-                    None
-                }
-            } else {
+                Some(num_bigint::BigUint::from_bytes_be(&bytes).to_string())
+            } else if s.trim_start().starts_with('-') {
                 None
+            } else {
+                s.trim().parse::<BigUint>().ok().map(|n| n.to_string())
             }
         }
         _ => None,
+    }
+}
+
+fn parse_typed_biguint_value(val: &serde_json::Value, format_name: &str) -> Result<BigUint, Error> {
+    match val {
+        serde_json::Value::Number(n) => n.as_u64().map(BigUint::from).ok_or_else(|| {
+            Error::Render(format!("{format_name} field must be an unsigned integer"))
+        }),
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if let Some(hex_str) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
+                let bytes = hex::decode(hex_str).map_err(|_| {
+                    Error::Render(format!("{format_name} field must be an unsigned integer"))
+                })?;
+                Ok(BigUint::from_bytes_be(&bytes))
+            } else {
+                trimmed.parse::<BigUint>().map_err(|_| {
+                    Error::Render(format!("{format_name} field must be an unsigned integer"))
+                })
+            }
+        }
+        _ => Err(Error::Render(format!(
+            "{format_name} field must be an unsigned integer"
+        ))),
+    }
+}
+
+fn parse_typed_u64_value(val: &serde_json::Value, format_name: &str) -> Result<u64, Error> {
+    let value = parse_typed_biguint_value(val, format_name)?;
+    u64::try_from(&value)
+        .map_err(|_| Error::Render(format!("{format_name} field does not fit into u64")))
+}
+
+fn parse_typed_i64_value(val: &serde_json::Value, format_name: &str) -> Result<i64, Error> {
+    match val {
+        serde_json::Value::Number(n) => {
+            if let Some(value) = n.as_i64() {
+                Ok(value)
+            } else if let Some(value) = n.as_u64() {
+                i64::try_from(value).map_err(|_| {
+                    Error::Render(format!("{format_name} field does not fit into i64"))
+                })
+            } else {
+                Err(Error::Render(format!(
+                    "{format_name} field must be an integer"
+                )))
+            }
+        }
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if let Ok(value) = trimmed.parse::<i64>() {
+                Ok(value)
+            } else if let Some(hex_str) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
+                let bytes = hex::decode(hex_str).map_err(|_| {
+                    Error::Render(format!("{format_name} field must be an integer"))
+                })?;
+                let value = BigUint::from_bytes_be(&bytes);
+                i64::try_from(&value).map_err(|_| {
+                    Error::Render(format!("{format_name} field does not fit into i64"))
+                })
+            } else {
+                let value = trimmed.parse::<BigUint>().map_err(|_| {
+                    Error::Render(format!("{format_name} field must be an integer"))
+                })?;
+                i64::try_from(&value).map_err(|_| {
+                    Error::Render(format!("{format_name} field does not fit into i64"))
+                })
+            }
+        }
+        _ => Err(Error::Render(format!(
+            "{format_name} field must be an integer"
+        ))),
     }
 }
 
@@ -1176,6 +1294,72 @@ fn uint_bytes_from_typed_value(val: &serde_json::Value) -> Option<Vec<u8>> {
     let numeric = coerce_typed_numeric_string(val)?;
     let biguint = numeric.parse::<BigUint>().ok()?;
     uint_bytes_from_biguint(&biguint, "amount").ok()
+}
+
+fn parse_metadata_constant_biguint(val: &serde_json::Value) -> Option<BigUint> {
+    match val {
+        serde_json::Value::String(s) => {
+            let hex_str = s
+                .strip_prefix("0x")
+                .or_else(|| s.strip_prefix("0X"))
+                .unwrap_or(s);
+            BigUint::parse_bytes(hex_str.as_bytes(), 16)
+        }
+        serde_json::Value::Number(n) => n.as_u64().map(BigUint::from),
+        _ => None,
+    }
+}
+
+fn resolve_typed_metadata_constant(descriptor: &Descriptor, ref_path: &str) -> Option<BigUint> {
+    if let Some(const_name) = ref_path.strip_prefix("$.metadata.constants.") {
+        let val = descriptor.metadata.constants.get(const_name)?;
+        parse_metadata_constant_biguint(val)
+    } else {
+        let hex_str = ref_path.strip_prefix("0x").unwrap_or(ref_path);
+        BigUint::parse_bytes(hex_str.as_bytes(), 16)
+    }
+}
+
+fn typed_native_token_meta(chain_id: u64) -> crate::token::TokenMeta {
+    let (symbol, name) = match chain_id {
+        1 | 5 | 11155111 => ("ETH", "Ether"),
+        137 | 80001 => ("MATIC", "Polygon"),
+        56 | 97 => ("BNB", "BNB"),
+        43114 | 43113 => ("AVAX", "Avalanche"),
+        250 => ("FTM", "Fantom"),
+        42161 | 421613 => ("ETH", "Ether"),
+        10 | 420 => ("ETH", "Ether"),
+        8453 | 84531 => ("ETH", "Ether"),
+        _ => ("ETH", "Ether"),
+    };
+    crate::token::TokenMeta {
+        symbol: symbol.to_string(),
+        decimals: 18,
+        name: name.to_string(),
+    }
+}
+
+fn resolve_typed_map(
+    descriptor: &Descriptor,
+    message: &serde_json::Value,
+    container: TypedContainerContext<'_>,
+    map_ref: &str,
+    val: &serde_json::Value,
+) -> Result<Option<String>, Error> {
+    let Some(map_def) = descriptor.metadata.maps.get(map_ref) else {
+        return Ok(None);
+    };
+
+    let key = if let Some(ref key_path) = map_def.key_path {
+        let Some(key_val) = resolve_typed_path_in_context(message, key_path, container)? else {
+            return Ok(None);
+        };
+        json_value_to_string(&key_val)
+    } else {
+        json_value_to_string(val)
+    };
+
+    Ok(map_def.entries.get(&key).cloned())
 }
 
 fn resolve_typed_nested_callee(
@@ -1325,11 +1509,8 @@ async fn format_typed_value(
     // Map reference
     if let Some(params) = params {
         if let Some(ref map_ref) = params.map_reference {
-            let raw = json_value_to_string(val);
-            if let Some(map_def) = descriptor.metadata.maps.get(map_ref) {
-                if let Some(mapped) = map_def.entries.get(&raw) {
-                    return Ok(mapped.clone());
-                }
+            if let Some(mapped) = resolve_typed_map(descriptor, message, container, map_ref, val)? {
+                return Ok(mapped);
             }
         }
     }
@@ -1356,17 +1537,16 @@ async fn format_typed_value(
                         }
                     };
                     for sender_ref in &sender_addrs {
-                        let resolved = if sender_ref.starts_with("@.")
-                            || sender_ref.starts_with('#')
-                        {
-                            resolve_typed_path_in_context(message, sender_ref, container)?
-                                .and_then(|v| match v {
-                                    serde_json::Value::String(s) => Some(s),
-                                    _ => None,
-                                })
-                        } else {
-                            Some(sender_ref.to_string())
-                        };
+                        let resolved =
+                            if sender_ref.starts_with("@.") || sender_ref.starts_with('#') {
+                                resolve_typed_path_in_context(message, sender_ref, container)?
+                                    .and_then(|v| match v {
+                                        serde_json::Value::String(s) => Some(s),
+                                        _ => None,
+                                    })
+                            } else {
+                                Some(sender_ref.to_string())
+                            };
                         if let Some(resolved_addr) = resolved {
                             if resolved_addr.to_lowercase() == addr.to_lowercase() {
                                 return Ok("Sender".to_string());
@@ -1409,10 +1589,7 @@ async fn format_typed_value(
             Ok(addr)
         }
         FieldFormat::TokenAmount => {
-            let amount_str = json_value_to_string(val);
-            let amount: num_bigint::BigUint = amount_str
-                .parse()
-                .unwrap_or_else(|_| num_bigint::BigUint::from(0u64));
+            let amount = parse_typed_biguint_value(val, "tokenAmount")?;
 
             let lookup_chain = resolve_typed_chain_id(params, container, message)?;
 
@@ -1421,19 +1598,50 @@ async fn format_typed_value(
                     let token_addr = resolve_typed_path_in_context(message, token_path, container)?;
                     let addr_str = token_addr.as_ref().and_then(coerce_typed_address_string);
                     if let Some(addr) = addr_str {
-                        data_provider.resolve_token(lookup_chain, &addr).await
+                        if let Some(ref native) = params.native_currency_address {
+                            if native.matches(&addr, &descriptor.metadata.constants) {
+                                Some(typed_native_token_meta(lookup_chain))
+                            } else {
+                                data_provider.resolve_token(lookup_chain, &addr).await
+                            }
+                        } else {
+                            data_provider.resolve_token(lookup_chain, &addr).await
+                        }
                     } else {
                         None
                     }
                 } else if let Some(ref token_ref) = params.token {
                     let addr = resolve_metadata_constant_str(descriptor, token_ref);
-                    data_provider.resolve_token(lookup_chain, &addr).await
+                    if let Some(ref native) = params.native_currency_address {
+                        if native.matches(&addr, &descriptor.metadata.constants) {
+                            Some(typed_native_token_meta(lookup_chain))
+                        } else {
+                            data_provider.resolve_token(lookup_chain, &addr).await
+                        }
+                    } else {
+                        data_provider.resolve_token(lookup_chain, &addr).await
+                    }
                 } else {
                     None
                 }
             } else {
                 None
             };
+
+            if let Some(params) = params {
+                if let (Some(threshold_ref), Some(message)) = (&params.threshold, &params.message) {
+                    if let Some(threshold) =
+                        resolve_typed_metadata_constant(descriptor, threshold_ref)
+                    {
+                        if amount >= threshold {
+                            if let Some(meta) = token_meta.as_ref() {
+                                return Ok(format!("{} {}", message, meta.symbol));
+                            }
+                            return Ok(message.clone());
+                        }
+                    }
+                }
+            }
 
             if let Some(meta) = token_meta {
                 let formatted = crate::engine::format_with_decimals(&amount, meta.decimals);
@@ -1450,28 +1658,11 @@ async fn format_typed_value(
                             .to_string(),
                     )
                 })?;
-                let block_number = match val {
-                    serde_json::Value::Number(n) => n.as_u64(),
-                    serde_json::Value::String(s) => s.parse::<u64>().ok(),
-                    _ => None,
-                }
-                .ok_or_else(|| {
-                    Error::Render(
-                        "blockheight date value must be an unsigned integer".to_string(),
-                    )
-                })?;
-                crate::engine::format_blockheight_timestamp(
-                    data_provider,
-                    chain_id,
-                    block_number,
-                )
-                .await
+                let block_number = parse_typed_u64_value(val, "date")?;
+                crate::engine::format_blockheight_timestamp(data_provider, chain_id, block_number)
+                    .await
             } else {
-                let ts: i64 = match val {
-                    serde_json::Value::Number(n) => n.as_i64().unwrap_or(0),
-                    serde_json::Value::String(s) => s.parse().unwrap_or(0),
-                    _ => 0,
-                };
+                let ts = parse_typed_i64_value(val, "date")?;
                 crate::engine::format_timestamp(ts)
             }
         }
@@ -1511,11 +1702,7 @@ async fn format_typed_value(
             }
         }
         FieldFormat::ChainId => {
-            let cid: u64 = match val {
-                serde_json::Value::Number(n) => n.as_u64().unwrap_or(0),
-                serde_json::Value::String(s) => s.parse().unwrap_or(0),
-                _ => 0,
-            };
+            let cid = parse_typed_u64_value(val, "chainId")?;
             Ok(crate::engine::chain_name(cid))
         }
         FieldFormat::Raw => Ok(json_value_to_string(val)),
@@ -1524,18 +1711,11 @@ async fn format_typed_value(
             Ok(json_value_to_string(val))
         }
         FieldFormat::Duration => {
-            let secs: u64 = match val {
-                serde_json::Value::Number(n) => n.as_u64().unwrap_or(0),
-                serde_json::Value::String(s) => s.parse().unwrap_or(0),
-                _ => 0,
-            };
+            let secs = parse_typed_u64_value(val, "duration")?;
             Ok(crate::engine::format_duration_seconds(secs))
         }
         FieldFormat::Unit => {
-            let raw = json_value_to_string(val);
-            let amount: num_bigint::BigUint = raw
-                .parse()
-                .unwrap_or_else(|_| num_bigint::BigUint::from(0u64));
+            let amount = parse_typed_biguint_value(val, "unit")?;
             Ok(crate::engine::format_unit_biguint(&amount, params))
         }
         FieldFormat::NftName => {
@@ -1587,14 +1767,14 @@ fn resolve_typed_chain_id(
         }
         if let Some(ref path) = params.chain_id_path {
             if let Some(val) = resolve_typed_path_in_context(message, path, container)? {
-                if let Some(n) = val.as_u64() {
-                    return Ok(n);
-                }
+                return parse_typed_u64_value(&val, "chainId");
             }
         }
     }
     container.chain_id.ok_or_else(|| {
-        Error::Descriptor("EIP-712 container value @.chainId is required but unavailable".to_string())
+        Error::Descriptor(
+            "EIP-712 container value @.chainId is required but unavailable".to_string(),
+        )
     })
 }
 
@@ -1713,12 +1893,13 @@ async fn resolve_and_format_typed_interpolation(
         )));
     }
 
-    let value = resolve_typed_path_in_context(message, field.path, container)?.ok_or_else(|| {
-        Error::Descriptor(format!(
-            "interpolatedIntent path '{}' could not be resolved from typed data",
-            path
-        ))
-    })?;
+    let value =
+        resolve_typed_path_in_context(message, field.path, container)?.ok_or_else(|| {
+            Error::Descriptor(format!(
+                "interpolatedIntent path '{}' could not be resolved from typed data",
+                path
+            ))
+        })?;
 
     let mut warnings = Vec::new();
     format_typed_value(
