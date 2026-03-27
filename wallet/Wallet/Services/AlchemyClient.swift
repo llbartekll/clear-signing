@@ -150,6 +150,35 @@ final class AlchemyClient {
         return .value(name)
     }
 
+    func fetchBlockTimestamp(chainId: UInt64, blockNumber: UInt64) -> RemoteLookup<UInt64> {
+        guard let url = rpcURL(for: chainId) else {
+            return .unavailable
+        }
+
+        let payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_getBlockByNumber",
+            "params": [Self.hexQuantity(blockNumber), false]
+        ]
+
+        guard let json = performJSONRequest(url: url, method: "POST", jsonBody: payload) else {
+            return .unavailable
+        }
+
+        if json["error"] != nil {
+            return .unavailable
+        }
+
+        guard let result = json["result"] as? [String: Any],
+              let timestampHex = result["timestamp"] as? String,
+              let timestamp = Self.parseHexQuantity(timestampHex) else {
+            return .notFound
+        }
+
+        return .value(timestamp)
+    }
+
     private func performJSONRequest(url: URL, method: String, jsonBody: [String: Any]?) -> [String: Any]? {
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -270,4 +299,13 @@ final class AlchemyClient {
         8453: "base-mainnet",
         42161: "arb-mainnet",
     ]
+
+    private static func hexQuantity(_ value: UInt64) -> String {
+        "0x" + String(value, radix: 16)
+    }
+
+    private static func parseHexQuantity(_ value: String) -> UInt64? {
+        let trimmed = value.hasPrefix("0x") ? String(value.dropFirst(2)) : value
+        return UInt64(trimmed, radix: 16)
+    }
 }

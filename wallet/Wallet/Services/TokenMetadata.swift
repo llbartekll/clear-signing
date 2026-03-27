@@ -69,6 +69,10 @@ enum LookupKey {
         "impl.eip155:\(chainId):\(address.lowercased())"
     }
 
+    static func blockTimestamp(chainId: UInt64, blockNumber: UInt64) -> String {
+        "block.eip155:\(chainId):\(blockNumber)"
+    }
+
     static func tokenKey(chainId: UInt64, address: String) -> String {
         "eip155:\(chainId)/erc20:\(address.lowercased())"
     }

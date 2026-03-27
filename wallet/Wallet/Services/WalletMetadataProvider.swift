@@ -10,6 +10,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         static let token: TimeInterval = 30 * 24 * 60 * 60
         static let ens: TimeInterval = 7 * 24 * 60 * 60
         static let nft: TimeInterval = 30 * 24 * 60 * 60
+        static let blockTimestamp: TimeInterval = 24 * 60 * 60
         static let negative: TimeInterval = 12 * 60 * 60
         static let implementation: TimeInterval = 90 * 24 * 60 * 60
     }
@@ -70,6 +71,36 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
 
     func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -> String? {
         lookupNFTCollectionName(chainId: chainId, address: collectionAddress)
+    }
+
+    func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64) -> UInt64? {
+        let cacheKey = LookupKey.blockTimestamp(chainId: chainId, blockNumber: blockNumber)
+        let date = now()
+
+        switch cachedValue(for: cacheKey, as: UInt64.self, now: date, positiveTTL: TTL.blockTimestamp) {
+        case .value(let timestamp):
+            return timestamp
+        case .negative:
+            return nil
+        case .missing:
+            break
+        }
+
+        guard canPerformLiveLookup(on: chainId),
+              let alchemyClient else {
+            return nil
+        }
+
+        switch alchemyClient.fetchBlockTimestamp(chainId: chainId, blockNumber: blockNumber) {
+        case .value(let timestamp):
+            store(timestamp, key: cacheKey, ttl: TTL.blockTimestamp, now: date)
+            return timestamp
+        case .notFound:
+            store(nil as UInt64?, key: cacheKey, ttl: TTL.negative, now: date)
+            return nil
+        case .unavailable:
+            return nil
+        }
     }
 
     private enum ProxySlot {

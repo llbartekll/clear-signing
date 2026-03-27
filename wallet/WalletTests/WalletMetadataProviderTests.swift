@@ -174,6 +174,32 @@ final class WalletMetadataProviderTests: XCTestCase {
         XCTAssertEqual(name, "Fallback Contract Name")
     }
 
+    func testBlockTimestampUsesRemoteLookupAndCachesResult() {
+        MockURLProtocol.handler = { request in
+            let json = try XCTUnwrap(Self.jsonObject(from: request))
+            XCTAssertEqual(json["method"] as? String, "eth_getBlockByNumber")
+            let params = try XCTUnwrap(json["params"] as? [Any])
+            XCTAssertEqual(params.first as? String, "0x1298d40")
+
+            return Self.jsonResponse(
+                url: request.url!,
+                body: [
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": [
+                        "timestamp": "0x65ec89c0",
+                    ],
+                ]
+            )
+        }
+
+        let provider = makeProvider(seedEntries: [:], session: makeSession())
+
+        XCTAssertEqual(provider.resolveBlockTimestamp(chainId: 1, blockNumber: 19_500_000), 1_710_000_000)
+        XCTAssertEqual(provider.resolveBlockTimestamp(chainId: 1, blockNumber: 19_500_000), 1_710_000_000)
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
+    }
+
     func testPersistentCacheExpiresEntries() {
         let cache = makePersistentCache(name: #function)
         let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
