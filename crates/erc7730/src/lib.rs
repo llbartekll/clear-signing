@@ -13,6 +13,7 @@ pub mod error;
 pub mod merge;
 mod path;
 pub mod provider;
+mod render_shared;
 pub mod resolver;
 pub mod token;
 pub mod types;

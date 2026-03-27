@@ -11,12 +11,17 @@ use tiny_keccak::{Hasher, Keccak};
 
 use crate::engine::{
     ensure_single_nested_param_source, normalized_nested_calldata, parse_nested_address_param,
-    parse_nested_amount_literal, parse_nested_selector_param, resolve_metadata_constant_str,
-    uint_bytes_from_biguint, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
+    parse_nested_amount_literal, parse_nested_selector_param, uint_bytes_from_biguint,
+    DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
+use crate::render_shared::{
+    chain_name, format_blockheight_timestamp, format_duration_seconds, format_timestamp,
+    format_token_amount_output, format_unit_biguint, is_excluded_path, lookup_map_entry,
+    native_token_meta, resolve_interpolation_field_spec, resolve_metadata_constant_str,
+};
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
@@ -205,7 +210,7 @@ fn filter_excluded_fields(fields: &[DisplayField], excluded: &[String]) -> Vec<D
         .filter_map(|field| match field {
             DisplayField::Simple {
                 path: Some(path), ..
-            } if excluded.iter().any(|excluded_path| excluded_path == path) => None,
+            } if is_excluded_path(excluded, path) => None,
             DisplayField::Group { field_group } => Some(DisplayField::Group {
                 field_group: FieldGroup {
                     path: field_group.path.clone(),
@@ -1296,49 +1301,6 @@ fn uint_bytes_from_typed_value(val: &serde_json::Value) -> Option<Vec<u8>> {
     uint_bytes_from_biguint(&biguint, "amount").ok()
 }
 
-fn parse_metadata_constant_biguint(val: &serde_json::Value) -> Option<BigUint> {
-    match val {
-        serde_json::Value::String(s) => {
-            let hex_str = s
-                .strip_prefix("0x")
-                .or_else(|| s.strip_prefix("0X"))
-                .unwrap_or(s);
-            BigUint::parse_bytes(hex_str.as_bytes(), 16)
-        }
-        serde_json::Value::Number(n) => n.as_u64().map(BigUint::from),
-        _ => None,
-    }
-}
-
-fn resolve_typed_metadata_constant(descriptor: &Descriptor, ref_path: &str) -> Option<BigUint> {
-    if let Some(const_name) = ref_path.strip_prefix("$.metadata.constants.") {
-        let val = descriptor.metadata.constants.get(const_name)?;
-        parse_metadata_constant_biguint(val)
-    } else {
-        let hex_str = ref_path.strip_prefix("0x").unwrap_or(ref_path);
-        BigUint::parse_bytes(hex_str.as_bytes(), 16)
-    }
-}
-
-fn typed_native_token_meta(chain_id: u64) -> crate::token::TokenMeta {
-    let (symbol, name) = match chain_id {
-        1 | 5 | 11155111 => ("ETH", "Ether"),
-        137 | 80001 => ("MATIC", "Polygon"),
-        56 | 97 => ("BNB", "BNB"),
-        43114 | 43113 => ("AVAX", "Avalanche"),
-        250 => ("FTM", "Fantom"),
-        42161 | 421613 => ("ETH", "Ether"),
-        10 | 420 => ("ETH", "Ether"),
-        8453 | 84531 => ("ETH", "Ether"),
-        _ => ("ETH", "Ether"),
-    };
-    crate::token::TokenMeta {
-        symbol: symbol.to_string(),
-        decimals: 18,
-        name: name.to_string(),
-    }
-}
-
 fn resolve_typed_map(
     descriptor: &Descriptor,
     message: &serde_json::Value,
@@ -1359,7 +1321,7 @@ fn resolve_typed_map(
         json_value_to_string(val)
     };
 
-    Ok(map_def.entries.get(&key).cloned())
+    Ok(lookup_map_entry(descriptor, map_ref, &key))
 }
 
 fn resolve_typed_nested_callee(
@@ -1600,7 +1562,7 @@ async fn format_typed_value(
                     if let Some(addr) = addr_str {
                         if let Some(ref native) = params.native_currency_address {
                             if native.matches(&addr, &descriptor.metadata.constants) {
-                                Some(typed_native_token_meta(lookup_chain))
+                                Some(native_token_meta(lookup_chain))
                             } else {
                                 data_provider.resolve_token(lookup_chain, &addr).await
                             }
@@ -1614,7 +1576,7 @@ async fn format_typed_value(
                     let addr = resolve_metadata_constant_str(descriptor, token_ref);
                     if let Some(ref native) = params.native_currency_address {
                         if native.matches(&addr, &descriptor.metadata.constants) {
-                            Some(typed_native_token_meta(lookup_chain))
+                            Some(native_token_meta(lookup_chain))
                         } else {
                             data_provider.resolve_token(lookup_chain, &addr).await
                         }
@@ -1628,27 +1590,12 @@ async fn format_typed_value(
                 None
             };
 
-            if let Some(params) = params {
-                if let (Some(threshold_ref), Some(message)) = (&params.threshold, &params.message) {
-                    if let Some(threshold) =
-                        resolve_typed_metadata_constant(descriptor, threshold_ref)
-                    {
-                        if amount >= threshold {
-                            if let Some(meta) = token_meta.as_ref() {
-                                return Ok(format!("{} {}", message, meta.symbol));
-                            }
-                            return Ok(message.clone());
-                        }
-                    }
-                }
-            }
-
-            if let Some(meta) = token_meta {
-                let formatted = crate::engine::format_with_decimals(&amount, meta.decimals);
-                Ok(format!("{formatted} {}", meta.symbol))
-            } else {
-                Ok(amount.to_string())
-            }
+            Ok(format_token_amount_output(
+                descriptor,
+                &amount,
+                params,
+                token_meta.as_ref(),
+            ))
         }
         FieldFormat::Date => {
             if params.and_then(|p| p.encoding.as_deref()) == Some("blockheight") {
@@ -1659,11 +1606,10 @@ async fn format_typed_value(
                     )
                 })?;
                 let block_number = parse_typed_u64_value(val, "date")?;
-                crate::engine::format_blockheight_timestamp(data_provider, chain_id, block_number)
-                    .await
+                format_blockheight_timestamp(data_provider, chain_id, block_number).await
             } else {
                 let ts = parse_typed_i64_value(val, "date")?;
-                crate::engine::format_timestamp(ts)
+                format_timestamp(ts)
             }
         }
         FieldFormat::Enum => {
@@ -1703,7 +1649,7 @@ async fn format_typed_value(
         }
         FieldFormat::ChainId => {
             let cid = parse_typed_u64_value(val, "chainId")?;
-            Ok(crate::engine::chain_name(cid))
+            Ok(chain_name(cid))
         }
         FieldFormat::Raw => Ok(json_value_to_string(val)),
         FieldFormat::Amount => {
@@ -1712,11 +1658,11 @@ async fn format_typed_value(
         }
         FieldFormat::Duration => {
             let secs = parse_typed_u64_value(val, "duration")?;
-            Ok(crate::engine::format_duration_seconds(secs))
+            Ok(format_duration_seconds(secs))
         }
         FieldFormat::Unit => {
             let amount = parse_typed_biguint_value(val, "unit")?;
-            Ok(crate::engine::format_unit_biguint(&amount, params))
+            Ok(format_unit_biguint(&amount, params))
         }
         FieldFormat::NftName => {
             let token_id = json_value_to_string(val);
@@ -1872,26 +1818,7 @@ async fn resolve_and_format_typed_interpolation(
     excluded: &[String],
     data_provider: &dyn DataProvider,
 ) -> Result<String, Error> {
-    if excluded.iter().any(|excluded_path| excluded_path == path) {
-        return Err(Error::Descriptor(format!(
-            "interpolatedIntent path '{}' refers to an excluded field",
-            path
-        )));
-    }
-
-    let field = crate::engine::find_interpolation_field(fields, path).ok_or_else(|| {
-        Error::Descriptor(format!(
-            "interpolatedIntent path '{}' does not match any display field",
-            path
-        ))
-    })?;
-
-    if matches!(field.format, Some(FieldFormat::Calldata)) {
-        return Err(Error::Descriptor(format!(
-            "interpolatedIntent path '{}' refers to non-stringable calldata field",
-            path
-        )));
-    }
+    let field = resolve_interpolation_field_spec(fields, excluded, path)?;
 
     let value =
         resolve_typed_path_in_context(message, field.path, container)?.ok_or_else(|| {

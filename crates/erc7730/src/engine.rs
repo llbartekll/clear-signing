@@ -10,6 +10,12 @@ use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::error::Error;
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
+use crate::render_shared::{
+    chain_name, format_blockheight_timestamp, format_duration_seconds, format_timestamp,
+    format_token_amount_output, format_unit_biguint, format_with_decimals, is_excluded_path,
+    lookup_map_entry, native_token_meta, resolve_interpolation_field_spec,
+    resolve_metadata_constant_str,
+};
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
@@ -63,27 +69,6 @@ pub enum GroupIteration {
 pub struct DisplayItem {
     pub label: String,
     pub value: String,
-}
-
-/// Known chain IDs → human-readable names.
-pub(crate) fn chain_name(chain_id: u64) -> String {
-    match chain_id {
-        1 => "Ethereum".to_string(),
-        10 => "Optimism".to_string(),
-        56 => "BNB Chain".to_string(),
-        100 => "Gnosis".to_string(),
-        137 => "Polygon".to_string(),
-        250 => "Fantom".to_string(),
-        324 => "zkSync Era".to_string(),
-        8453 => "Base".to_string(),
-        42161 => "Arbitrum One".to_string(),
-        42170 => "Arbitrum Nova".to_string(),
-        43114 => "Avalanche".to_string(),
-        59144 => "Linea".to_string(),
-        534352 => "Scroll".to_string(),
-        7777777 => "Zora".to_string(),
-        _ => format!("Chain {chain_id}"),
-    }
 }
 
 /// Rendering context passed through the pipeline (immutable).
@@ -271,7 +256,7 @@ fn render_fields<'a>(
 
                     // Check excluded paths
                     if let Some(fmt) = find_current_format(ctx) {
-                        if fmt.excluded.iter().any(|e| e == path_str) {
+                        if is_excluded_path(&fmt.excluded, path_str) {
                             continue;
                         }
                     }
@@ -1811,71 +1796,19 @@ async fn format_token_amount(
         None
     };
 
-    // Check threshold/message for max-amount display
-    if let Some(params) = params {
-        if let (Some(ref threshold_ref), Some(ref message)) = (&params.threshold, &params.message) {
-            if let Some(threshold) = resolve_metadata_constant(ctx.descriptor, threshold_ref) {
-                if raw_amount >= threshold {
-                    if let Some(ref meta) = token_meta {
-                        return Ok(format!("{} {}", message, meta.symbol));
-                    }
-                    return Ok(message.clone());
-                }
-            }
-        }
-    }
-
-    if let Some(meta) = token_meta {
-        let formatted = format_with_decimals(&raw_amount, meta.decimals);
-        Ok(format!("{} {}", formatted, meta.symbol))
-    } else {
+    if token_meta.is_none() {
         warnings.push(format!(
             "token metadata not found for field '{}' (path: {})",
             label, path
         ));
-        Ok(raw_amount.to_string())
     }
-}
 
-/// Resolve a `$.metadata.constants.xxx` reference to its string value, or return the input as-is.
-pub(crate) fn resolve_metadata_constant_str(descriptor: &Descriptor, ref_str: &str) -> String {
-    if let Some(const_name) = ref_str.strip_prefix("$.metadata.constants.") {
-        descriptor
-            .metadata
-            .constants
-            .get(const_name)
-            .and_then(|v| v.as_str())
-            .unwrap_or(ref_str)
-            .to_string()
-    } else {
-        ref_str.to_string()
-    }
-}
-
-/// Resolve a `$.metadata.constants.xxx` or literal hex reference to a BigUint.
-fn resolve_metadata_constant(descriptor: &Descriptor, ref_path: &str) -> Option<BigUint> {
-    if let Some(const_name) = ref_path.strip_prefix("$.metadata.constants.") {
-        let val = descriptor.metadata.constants.get(const_name)?;
-        parse_constant_to_biguint(val)
-    } else {
-        // Try parsing as literal hex
-        let hex_str = ref_path.strip_prefix("0x").unwrap_or(ref_path);
-        BigUint::parse_bytes(hex_str.as_bytes(), 16)
-    }
-}
-
-fn parse_constant_to_biguint(val: &serde_json::Value) -> Option<BigUint> {
-    match val {
-        serde_json::Value::String(s) => {
-            let hex_str = s
-                .strip_prefix("0x")
-                .or_else(|| s.strip_prefix("0X"))
-                .unwrap_or(s);
-            BigUint::parse_bytes(hex_str.as_bytes(), 16)
-        }
-        serde_json::Value::Number(n) => n.as_u64().map(BigUint::from),
-        _ => None,
-    }
+    Ok(format_token_amount_output(
+        ctx.descriptor,
+        &raw_amount,
+        params,
+        token_meta.as_ref(),
+    ))
 }
 
 async fn format_token_ticker(
@@ -1930,26 +1863,6 @@ fn resolve_chain_id(ctx: &RenderContext<'_>, params: Option<&FormatParams>) -> u
     ctx.chain_id
 }
 
-/// Get native token metadata for a chain.
-fn native_token_meta(chain_id: u64) -> crate::token::TokenMeta {
-    let (symbol, name) = match chain_id {
-        1 | 5 | 11155111 => ("ETH", "Ether"),
-        137 | 80001 => ("MATIC", "Polygon"),
-        56 | 97 => ("BNB", "BNB"),
-        43114 | 43113 => ("AVAX", "Avalanche"),
-        250 => ("FTM", "Fantom"),
-        42161 | 421613 => ("ETH", "Ether"),
-        10 | 420 => ("ETH", "Ether"),
-        8453 | 84531 => ("ETH", "Ether"),
-        _ => ("ETH", "Ether"),
-    };
-    crate::token::TokenMeta {
-        symbol: symbol.to_string(),
-        decimals: 18,
-        name: name.to_string(),
-    }
-}
-
 fn format_amount(
     ctx: &RenderContext<'_>,
     val: &ArgumentValue,
@@ -1968,37 +1881,6 @@ fn format_amount(
         }
         _ => Ok(format_raw(val)),
     }
-}
-
-pub(crate) fn format_timestamp(timestamp: i64) -> Result<String, Error> {
-    let dt = time::OffsetDateTime::from_unix_timestamp(timestamp)
-        .map_err(|e| Error::Render(format!("invalid timestamp: {e}")))?;
-
-    let format =
-        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second] UTC")
-            .map_err(|e| Error::Render(format!("format error: {e}")))?;
-
-    dt.format(&format)
-        .map_err(|e| Error::Render(format!("format error: {e}")))
-}
-
-pub(crate) async fn format_blockheight_timestamp(
-    data_provider: &dyn DataProvider,
-    chain_id: u64,
-    block_number: u64,
-) -> Result<String, Error> {
-    let timestamp = data_provider
-        .resolve_block_timestamp(chain_id, block_number)
-        .await
-        .ok_or_else(|| {
-            Error::Render(format!(
-                "could not resolve approximate timestamp for block {} on chain {}",
-                block_number, chain_id
-            ))
-        })?;
-    let timestamp = i64::try_from(timestamp)
-        .map_err(|_| Error::Render(format!("timestamp {} does not fit into i64", timestamp)))?;
-    format_timestamp(timestamp)
 }
 
 async fn format_date(
@@ -2060,44 +1942,12 @@ fn format_enum(
 ///
 /// If the map has `keyPath`, resolve the key from that path instead of the field's own value.
 fn resolve_map(ctx: &RenderContext<'_>, map_ref: &str, val: &ArgumentValue) -> Option<String> {
-    let map_def = ctx.descriptor.metadata.maps.get(map_ref)?;
-    let key = if let Some(ref key_path) = map_def.key_path {
+    let key = if let Some(ref key_path) = ctx.descriptor.metadata.maps.get(map_ref)?.key_path {
         resolve_path(ctx.decoded, key_path).map(|v| format_raw(&v))?
     } else {
         format_raw(val)
     };
-    map_def.entries.get(&key).cloned()
-}
-
-/// Format a BigUint with decimal places (public for eip712 module).
-pub(crate) fn format_with_decimals(amount: &BigUint, decimals: u8) -> String {
-    let s = amount.to_string();
-    let decimals = decimals as usize;
-
-    if decimals == 0 {
-        return s;
-    }
-
-    if s.len() <= decimals {
-        let zeros = decimals - s.len();
-        let mut result = String::from("0.");
-        result.extend(std::iter::repeat_n('0', zeros));
-        result.push_str(&s);
-        // Trim trailing zeros after decimal point
-        let trimmed = result.trim_end_matches('0');
-        if trimmed.ends_with('.') {
-            return format!("{trimmed}0");
-        }
-        return trimmed.to_string();
-    }
-
-    let (integer_part, decimal_part) = s.split_at(s.len() - decimals);
-    let trimmed = decimal_part.trim_end_matches('0');
-    if trimmed.is_empty() {
-        integer_part.to_string()
-    } else {
-        format!("{integer_part}.{trimmed}")
-    }
+    lookup_map_entry(ctx.descriptor, map_ref, &key)
 }
 
 /// Format an NFT name: "{collection_name} #{token_id}" or "#{token_id}" fallback.
@@ -2215,13 +2065,6 @@ async fn interpolate_intent(
     Ok(result)
 }
 
-pub(crate) fn format_duration_seconds(secs: u64) -> String {
-    let hours = secs / 3600;
-    let minutes = (secs % 3600) / 60;
-    let seconds = secs % 60;
-    format!("{hours:02}:{minutes:02}:{seconds:02}")
-}
-
 /// Format a duration value (seconds → `HH:MM:ss`).
 fn format_duration(val: &ArgumentValue) -> Result<String, Error> {
     let secs = match val {
@@ -2236,25 +2079,6 @@ fn format_duration(val: &ArgumentValue) -> Result<String, Error> {
     Ok(format_duration_seconds(secs))
 }
 
-pub(crate) fn format_unit_biguint(raw_val: &BigUint, params: Option<&FormatParams>) -> String {
-    let base = params.and_then(|p| p.base.as_deref()).unwrap_or("");
-    let decimals = params.and_then(|p| p.decimals).unwrap_or(0);
-    let use_prefix = params.and_then(|p| p.prefix).unwrap_or(false);
-
-    let formatted = if decimals > 0 {
-        format_with_decimals(raw_val, decimals)
-    } else {
-        raw_val.to_string()
-    };
-
-    if use_prefix {
-        let si_formatted = apply_si_prefix(&formatted);
-        format!("{si_formatted}{base}")
-    } else {
-        format!("{formatted}{base}")
-    }
-}
-
 /// Format a unit value (e.g., percentage, bps) with optional decimals and SI prefix.
 fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> Result<String, Error> {
     let raw_val = match val {
@@ -2265,104 +2089,13 @@ fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> Result<Str
     Ok(format_unit_biguint(&raw_val, params))
 }
 
-/// Apply SI prefix notation to a numeric string.
-fn apply_si_prefix(value_str: &str) -> String {
-    let n: f64 = match value_str.parse() {
-        Ok(v) => v,
-        Err(_) => return value_str.to_string(),
-    };
-    let abs = n.abs();
-    let (divisor, prefix) = if abs >= 1e18 {
-        (1e18, "E")
-    } else if abs >= 1e15 {
-        (1e15, "P")
-    } else if abs >= 1e12 {
-        (1e12, "T")
-    } else if abs >= 1e9 {
-        (1e9, "G")
-    } else if abs >= 1e6 {
-        (1e6, "M")
-    } else if abs >= 1e3 {
-        (1e3, "k")
-    } else {
-        return value_str.to_string();
-    };
-    let scaled = n / divisor;
-    // Trim trailing zeros
-    let formatted = format!("{:.2}", scaled);
-    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
-    format!("{}{}", trimmed, prefix)
-}
-
-pub(crate) struct InterpolationFieldSpec<'a> {
-    pub label: &'a str,
-    pub path: &'a str,
-    pub format: Option<&'a FieldFormat>,
-    pub params: Option<&'a FormatParams>,
-    pub separator: Option<&'a str>,
-}
-
-pub(crate) fn find_interpolation_field<'a>(
-    fields: &'a [DisplayField],
-    path: &str,
-) -> Option<InterpolationFieldSpec<'a>> {
-    for field in fields {
-        match field {
-            DisplayField::Simple {
-                path: Some(field_path),
-                label,
-                value: None,
-                format,
-                params,
-                separator,
-                ..
-            } if field_path == path => {
-                return Some(InterpolationFieldSpec {
-                    label,
-                    path: field_path,
-                    format: format.as_ref(),
-                    params: params.as_ref(),
-                    separator: separator.as_deref(),
-                });
-            }
-            DisplayField::Group { field_group } => {
-                if let Some(spec) = find_interpolation_field(&field_group.fields, path) {
-                    return Some(spec);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    None
-}
-
 async fn resolve_and_format_for_interpolation(
     ctx: &RenderContext<'_>,
     fields: &[DisplayField],
     excluded: &[String],
     path: &str,
 ) -> Result<String, Error> {
-    if excluded.iter().any(|excluded_path| excluded_path == path) {
-        return Err(Error::Descriptor(format!(
-            "interpolatedIntent path '{}' refers to an excluded field",
-            path
-        )));
-    }
-
-    let field = find_interpolation_field(fields, path).ok_or_else(|| {
-        Error::Descriptor(format!(
-            "interpolatedIntent path '{}' does not match any display field",
-            path
-        ))
-    })?;
-
-    if matches!(field.format, Some(FieldFormat::Calldata)) {
-        return Err(Error::Descriptor(format!(
-            "interpolatedIntent path '{}' refers to non-stringable calldata field",
-            path
-        )));
-    }
+    let field = resolve_interpolation_field_spec(fields, excluded, path)?;
 
     let value = resolve_path(ctx.decoded, field.path).ok_or_else(|| {
         Error::Descriptor(format!(
@@ -2390,31 +2123,6 @@ mod tests {
     use super::*;
     use crate::decoder::{DecodedArgument, ParamType};
     use crate::path::{parse_collection_access, CollectionAccess};
-
-    #[test]
-    fn test_format_with_decimals() {
-        let amount = BigUint::from(1_000_000u64);
-        assert_eq!(format_with_decimals(&amount, 6), "1");
-
-        let amount = BigUint::from(1_500_000u64);
-        assert_eq!(format_with_decimals(&amount, 6), "1.5");
-
-        let amount = BigUint::from(500_000u64);
-        assert_eq!(format_with_decimals(&amount, 6), "0.5");
-
-        let amount = BigUint::from(123u64);
-        assert_eq!(format_with_decimals(&amount, 6), "0.000123");
-
-        let amount = BigUint::from(0u64);
-        assert_eq!(format_with_decimals(&amount, 18), "0.0");
-    }
-
-    #[test]
-    fn test_chain_name() {
-        assert_eq!(chain_name(1), "Ethereum");
-        assert_eq!(chain_name(137), "Polygon");
-        assert_eq!(chain_name(99999), "Chain 99999");
-    }
 
     #[test]
     fn test_eip55_checksum() {
