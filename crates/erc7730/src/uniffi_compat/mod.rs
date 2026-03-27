@@ -465,11 +465,8 @@ pub async fn erc7730_resolve_descriptors_for_typed_data(
     let source = get_registry_source().await?;
 
     // Try direct lookup
-    let mut descriptors = crate::resolve_descriptors_for_typed_data(
-        chain_id,
-        verifying_contract,
-        primary_type,
-        &typed_data.message,
+    let mut descriptors = crate::resolver::resolve_descriptors_for_typed_data_with_types(
+        &typed_data,
         source,
     )
     .await
@@ -489,11 +486,10 @@ pub async fn erc7730_resolve_descriptors_for_typed_data(
             impl_addr
         );
         if let Some(impl_addr) = impl_addr {
-            descriptors = crate::resolve_descriptors_for_typed_data(
-                chain_id,
-                &impl_addr,
-                primary_type,
-                &typed_data.message,
+            let mut proxied = typed_data.clone();
+            proxied.domain.verifying_contract = Some(impl_addr.clone());
+            descriptors = crate::resolver::resolve_descriptors_for_typed_data_with_types(
+                &proxied,
                 source,
             )
             .await
@@ -738,7 +734,7 @@ mod tests {
                                 "format": "address"
                             },
                             {
-                                "path": "@.contents",
+                                "path": "contents",
                                 "label": "Contents",
                                 "format": "raw"
                             }
@@ -765,6 +761,9 @@ mod tests {
             "domain": {
                 "chainId": 1,
                 "verifyingContract": "0x0000000000000000000000000000000000000001"
+            },
+            "container": {
+                "from": "0x0000000000000000000000000000000000000002"
             },
             "message": {
                 "from": "0x0000000000000000000000000000000000000002",

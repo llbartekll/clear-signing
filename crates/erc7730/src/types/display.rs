@@ -1,5 +1,6 @@
 //! Display configuration types: field formats, visibility rules, and layout groups.
 
+use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -152,8 +153,8 @@ pub enum VisibleRule {
     /// Boolean shorthand: true = Always, false = Never.
     Bool(bool),
 
-    /// String shorthand: "always" or "never".
-    Named(String),
+    /// String shorthand: "always", "never", or "optional".
+    Named(VisibleLiteral),
 
     /// Conditional visibility.
     Condition(VisibleCondition),
@@ -163,43 +164,38 @@ pub enum VisibleRule {
     Always,
 }
 
-impl VisibleRule {
-    /// Evaluate visibility against a decoded value.
-    pub fn is_visible(&self, value: &serde_json::Value) -> bool {
-        match self {
-            VisibleRule::Always => true,
-            VisibleRule::Bool(b) => *b,
-            VisibleRule::Named(s) => s != "never",
-            VisibleRule::Condition(cond) => cond.evaluate(value),
-        }
-    }
+/// Named visibility literals accepted by the current spec.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VisibleLiteral {
+    Always,
+    Never,
+    Optional,
 }
 
-/// Conditional visibility: `ifNotIn` or `mustBe`.
+/// Conditional visibility: `ifNotIn` or `mustMatch`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VisibleCondition {
     #[serde(rename = "ifNotIn")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub if_not_in: Option<Vec<serde_json::Value>>,
 
-    #[serde(rename = "mustBe")]
+    #[serde(rename = "mustMatch", alias = "mustBe")]
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub must_be: Option<Vec<serde_json::Value>>,
+    pub must_match: Option<Vec<serde_json::Value>>,
 }
 
 impl VisibleCondition {
-    pub fn evaluate(&self, value: &serde_json::Value) -> bool {
-        if let Some(ref excluded) = self.if_not_in {
-            if excluded.contains(value) {
-                return false;
-            }
-        }
-        if let Some(ref required) = self.must_be {
-            if !required.contains(value) {
-                return false;
-            }
-        }
-        true
+    pub fn hides_for_if_not_in(&self, value: &serde_json::Value) -> bool {
+        self.if_not_in
+            .as_ref()
+            .is_some_and(|excluded| excluded.contains(value))
+    }
+
+    pub fn matches_must_match(&self, value: &serde_json::Value) -> bool {
+        self.must_match
+            .as_ref()
+            .is_none_or(|required| required.contains(value))
     }
 }
 
@@ -303,20 +299,36 @@ pub struct FormatParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selector_path: Option<String>,
 
+    /// Constant selector override for nested calldata decoding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selector: Option<String>,
+
     /// Path to the callee address for nested calldata (e.g., "to").
     #[serde(rename = "calleePath")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub callee_path: Option<String>,
+
+    /// Constant callee address for nested calldata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub callee: Option<String>,
 
     /// Path to the value amount for nested calldata (injected as `@.value` in inner context).
     #[serde(rename = "amountPath")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub amount_path: Option<String>,
 
+    /// Constant native amount for nested calldata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amount: Option<UintLiteral>,
+
     /// Path to the spender/from address for nested calldata (injected as `@.from` in inner context).
     #[serde(rename = "spenderPath")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub spender_path: Option<String>,
+
+    /// Constant spender/from address for nested calldata.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spender: Option<String>,
 
     /// Address types for addressName format (spec: "eoa", "contract", etc.).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -375,6 +387,34 @@ impl NativeCurrencyAddress {
 pub enum SenderAddress {
     Single(String),
     Multiple(Vec<String>),
+}
+
+/// Unsigned integer literal for descriptor params.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum UintLiteral {
+    Number(u64),
+    String(String),
+}
+
+impl UintLiteral {
+    pub fn to_biguint(&self) -> Option<BigUint> {
+        match self {
+            UintLiteral::Number(value) => Some(BigUint::from(*value)),
+            UintLiteral::String(value) => {
+                let trimmed = value.trim();
+                if let Some(hex) = trimmed
+                    .strip_prefix("0x")
+                    .or_else(|| trimmed.strip_prefix("0X"))
+                {
+                    let bytes = hex::decode(hex).ok()?;
+                    Some(BigUint::from_bytes_be(&bytes))
+                } else {
+                    trimmed.parse::<BigUint>().ok()
+                }
+            }
+        }
+    }
 }
 
 /// Encryption parameters for encrypted fields.

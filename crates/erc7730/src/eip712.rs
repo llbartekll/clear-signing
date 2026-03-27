@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 use tiny_keccak::{Hasher, Keccak};
 
 use crate::engine::{
-    resolve_metadata_constant_str, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
+    ensure_single_nested_param_source, normalized_nested_calldata, parse_nested_address_param,
+    parse_nested_amount_literal, parse_nested_selector_param, resolve_metadata_constant_str,
+    uint_bytes_from_biguint, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
 use crate::path::{apply_collection_access, CollectionSelection};
@@ -18,7 +20,7 @@ use crate::provider::DataProvider;
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
-    DisplayField, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleRule,
+    DisplayField, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleLiteral, VisibleRule,
 };
 
 /// Maximum recursion depth for nested calldata in EIP-712 context.
@@ -238,6 +240,9 @@ fn render_typed_fields<'a>(
                 } => {
                     // If literal value is provided (no path), resolve constant refs and use it
                     if let Some(lit) = literal_value {
+                        if !check_typed_visibility(visible, &None, label, "")? {
+                            continue;
+                        }
                         let resolved = resolve_metadata_constant_str(descriptor, lit);
                         entries.push(DisplayEntry::Item(DisplayItem {
                             label: label.clone(),
@@ -259,6 +264,9 @@ fn render_typed_fields<'a>(
                                 } else {
                                     resolve_typed_path_in_context(item, rest, container)?
                                 };
+                                if !check_typed_visibility(visible, &val, label, path_str)? {
+                                    continue;
+                                }
                                 let formatted = format_typed_value(
                                     descriptor,
                                     &val,
@@ -282,7 +290,7 @@ fn render_typed_fields<'a>(
                     let value = resolve_typed_path_in_context(message, path_str, container)?;
 
                     // Check visibility
-                    if !check_typed_visibility(visible, &value) {
+                    if !check_typed_visibility(visible, &value, label, path_str)? {
                         continue;
                     }
 
@@ -456,7 +464,24 @@ async fn render_typed_calldata_field(
         });
     }
 
-    if inner_calldata.len() < 4 {
+    let callee = match resolve_typed_nested_callee(message, params, container)? {
+        Some(addr) => addr,
+        None => {
+            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
+        }
+    };
+
+    let amount_bytes = resolve_typed_nested_amount(message, params, container)?;
+    let spender_addr = resolve_typed_nested_spender(message, params, container)?;
+    let chain_id = resolve_typed_nested_chain_id(message, params, container)?.ok_or_else(|| {
+        Error::Descriptor(
+            "EIP-712 container value @.chainId is required for nested calldata".to_string(),
+        )
+    })?;
+    let selector_override = resolve_typed_nested_selector(message, params, container)?;
+    let normalized_calldata = normalized_nested_calldata(&inner_calldata, selector_override);
+
+    if normalized_calldata.len() < 4 {
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
@@ -468,56 +493,6 @@ async fn render_typed_calldata_field(
         });
     }
 
-    // Resolve callee address — supports `#.` prefix for message field reference
-    let callee_addr: Option<String> = match params.and_then(|p| p.callee_path.as_ref()) {
-        Some(path) => resolve_typed_path_in_context(message, path, container)?.and_then(|v| {
-            if let serde_json::Value::String(s) = v {
-                Some(s)
-            } else {
-                None
-            }
-        }),
-        None => None,
-    };
-
-    let callee = match callee_addr {
-        Some(addr) => addr,
-        None => {
-            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
-        }
-    };
-
-    // Resolve amount (for @.value injection)
-    let amount_bytes: Option<Vec<u8>> = match params.and_then(|p| p.amount_path.as_ref()) {
-        Some(path) => resolve_typed_path_in_context(message, path, container)?.and_then(|v| {
-            let s = json_value_to_string(&v);
-            let n: BigUint = s.parse().ok()?;
-            let bytes = n.to_bytes_be();
-            let mut padded = vec![0u8; 32usize.saturating_sub(bytes.len())];
-            padded.extend_from_slice(&bytes);
-            Some(padded)
-        }),
-        None => None,
-    };
-
-    // Resolve spender/from
-    let spender_addr: Option<String> = match params.and_then(|p| p.spender_path.as_ref()) {
-        Some(path) => resolve_typed_path_in_context(message, path, container)?.and_then(|v| {
-            if let serde_json::Value::String(s) = v {
-                Some(s)
-            } else {
-                None
-            }
-        }),
-        None => None,
-    };
-
-    // Find matching inner descriptor
-    let chain_id = container.chain_id.ok_or_else(|| {
-        Error::Descriptor(
-            "EIP-712 container value @.chainId is required for nested calldata".to_string(),
-        )
-    })?;
     let inner_descriptor = descriptors.iter().find(|rd| {
         rd.descriptor.context.deployments().iter().any(|dep| {
             dep.chain_id == chain_id && dep.address.to_lowercase() == callee.to_lowercase()
@@ -532,14 +507,15 @@ async fn render_typed_calldata_field(
     };
 
     // Find matching signature + decode
-    let (sig, _) = match crate::find_matching_signature(inner_descriptor, &inner_calldata[..4]) {
+    let (sig, _) = match crate::find_matching_signature(inner_descriptor, &normalized_calldata[..4])
+    {
         Ok(result) => result,
         Err(_) => {
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
 
-    let mut decoded = match crate::decoder::decode_calldata(&sig, &inner_calldata) {
+    let mut decoded = match crate::decoder::decode_calldata(&sig, &normalized_calldata) {
         Ok(d) => d,
         Err(_) => {
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
@@ -610,7 +586,7 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
     }
 }
 
-fn find_typed_format<'a>(
+pub(crate) fn find_typed_format<'a>(
     descriptor: &'a Descriptor,
     data: &TypedData,
 ) -> Result<&'a crate::types::display::DisplayFormat, Error> {
@@ -853,22 +829,56 @@ fn apply_typed_access(current: &serde_json::Value, segment: &str) -> Option<serd
     }
 }
 
-fn check_typed_visibility(rule: &VisibleRule, value: &Option<serde_json::Value>) -> bool {
+fn typed_visibility_context(label: &str, path: &str) -> String {
+    if path.is_empty() {
+        format!("field '{}'", label)
+    } else {
+        format!("field '{}' (path '{}')", label, path)
+    }
+}
+
+fn check_typed_visibility(
+    rule: &VisibleRule,
+    value: &Option<serde_json::Value>,
+    label: &str,
+    path: &str,
+) -> Result<bool, Error> {
     match rule {
-        VisibleRule::Always => true,
-        VisibleRule::Bool(b) => *b,
-        VisibleRule::Named(s) => s != "never",
+        VisibleRule::Always => Ok(true),
+        VisibleRule::Bool(b) => Ok(*b),
+        VisibleRule::Named(literal) => Ok(matches!(
+            literal,
+            VisibleLiteral::Always | VisibleLiteral::Optional
+        )),
         VisibleRule::Condition(cond) => {
-            if let Some(val) = value {
-                cond.evaluate(val)
-            } else {
-                true
+            let Some(val) = value else {
+                if cond.must_match.is_some() {
+                    return Err(Error::Render(format!(
+                        "{} uses visible.mustMatch but the value could not be resolved",
+                        typed_visibility_context(label, path)
+                    )));
+                }
+                return Ok(true);
+            };
+
+            if cond.hides_for_if_not_in(val) {
+                return Ok(false);
             }
+            if cond.must_match.is_some() {
+                if cond.matches_must_match(val) {
+                    return Ok(false);
+                }
+                return Err(Error::Render(format!(
+                    "{} failed visible.mustMatch",
+                    typed_visibility_context(label, path)
+                )));
+            }
+            Ok(true)
         }
     }
 }
 
-fn coerce_typed_numeric_string(val: &serde_json::Value) -> Option<String> {
+pub(crate) fn coerce_typed_numeric_string(val: &serde_json::Value) -> Option<String> {
     match val {
         serde_json::Value::Number(n) => Some(n.to_string()),
         serde_json::Value::String(s) => {
@@ -887,7 +897,7 @@ fn coerce_typed_numeric_string(val: &serde_json::Value) -> Option<String> {
     }
 }
 
-fn coerce_typed_address_string(val: &serde_json::Value) -> Option<String> {
+pub(crate) fn coerce_typed_address_string(val: &serde_json::Value) -> Option<String> {
     match val {
         serde_json::Value::String(s) => {
             let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
@@ -902,6 +912,166 @@ fn coerce_typed_address_string(val: &serde_json::Value) -> Option<String> {
         serde_json::Value::Number(n) => n.as_u64().map(|v| format!("0x{:040x}", v)),
         _ => None,
     }
+}
+
+pub(crate) fn selector_from_typed_value(val: &serde_json::Value) -> Option<[u8; 4]> {
+    match val {
+        serde_json::Value::String(s) => {
+            let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
+            let bytes = hex::decode(hex_str).ok()?;
+            if bytes.len() < 4 {
+                return None;
+            }
+            let mut selector = [0u8; 4];
+            selector.copy_from_slice(&bytes[..4]);
+            Some(selector)
+        }
+        serde_json::Value::Number(_) => {
+            let numeric = coerce_typed_numeric_string(val)?;
+            let biguint = numeric.parse::<BigUint>().ok()?;
+            let bytes = biguint.to_bytes_be();
+            if bytes.len() > 32 || bytes.is_empty() {
+                return None;
+            }
+            let mut padded = vec![0u8; 32usize.saturating_sub(bytes.len())];
+            padded.extend_from_slice(&bytes);
+            let mut selector = [0u8; 4];
+            selector.copy_from_slice(&padded[padded.len() - 4..]);
+            Some(selector)
+        }
+        _ => None,
+    }
+}
+
+fn chain_id_from_typed_value(val: &serde_json::Value) -> Option<u64> {
+    let numeric = coerce_typed_numeric_string(val)?;
+    numeric.parse::<u64>().ok()
+}
+
+fn uint_bytes_from_typed_value(val: &serde_json::Value) -> Option<Vec<u8>> {
+    let numeric = coerce_typed_numeric_string(val)?;
+    let biguint = numeric.parse::<BigUint>().ok()?;
+    uint_bytes_from_biguint(&biguint, "amount").ok()
+}
+
+fn resolve_typed_nested_callee(
+    message: &serde_json::Value,
+    params: Option<&FormatParams>,
+    container: TypedContainerContext<'_>,
+) -> Result<Option<String>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.callee.is_some(),
+        params.callee_path.is_some(),
+        "callee",
+    )?;
+    if let Some(callee) = params.callee.as_deref() {
+        return parse_nested_address_param(callee, "callee").map(Some);
+    }
+    Ok(match params.callee_path.as_ref() {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?
+            .as_ref()
+            .and_then(coerce_typed_address_string),
+        None => None,
+    })
+}
+
+fn resolve_typed_nested_spender(
+    message: &serde_json::Value,
+    params: Option<&FormatParams>,
+    container: TypedContainerContext<'_>,
+) -> Result<Option<String>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.spender.is_some(),
+        params.spender_path.is_some(),
+        "spender",
+    )?;
+    if let Some(spender) = params.spender.as_deref() {
+        return parse_nested_address_param(spender, "spender").map(Some);
+    }
+    Ok(match params.spender_path.as_ref() {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?
+            .as_ref()
+            .and_then(coerce_typed_address_string),
+        None => None,
+    })
+}
+
+fn resolve_typed_nested_amount(
+    message: &serde_json::Value,
+    params: Option<&FormatParams>,
+    container: TypedContainerContext<'_>,
+) -> Result<Option<Vec<u8>>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.amount.is_some(),
+        params.amount_path.is_some(),
+        "amount",
+    )?;
+    if let Some(amount) = params.amount.as_ref() {
+        return parse_nested_amount_literal(amount, "amount").map(Some);
+    }
+    Ok(match params.amount_path.as_ref() {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?
+            .as_ref()
+            .and_then(uint_bytes_from_typed_value),
+        None => None,
+    })
+}
+
+fn resolve_typed_nested_chain_id(
+    message: &serde_json::Value,
+    params: Option<&FormatParams>,
+    container: TypedContainerContext<'_>,
+) -> Result<Option<u64>, Error> {
+    let Some(params) = params else {
+        return Ok(container.chain_id);
+    };
+    ensure_single_nested_param_source(
+        params.chain_id.is_some(),
+        params.chain_id_path.is_some(),
+        "chainId",
+    )?;
+    if let Some(chain_id) = params.chain_id {
+        return Ok(Some(chain_id));
+    }
+    Ok(match params.chain_id_path.as_ref() {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?
+            .as_ref()
+            .and_then(chain_id_from_typed_value),
+        None => container.chain_id,
+    })
+}
+
+fn resolve_typed_nested_selector(
+    message: &serde_json::Value,
+    params: Option<&FormatParams>,
+    container: TypedContainerContext<'_>,
+) -> Result<Option<[u8; 4]>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.selector.is_some(),
+        params.selector_path.is_some(),
+        "selector",
+    )?;
+    if let Some(selector) = params.selector.as_deref() {
+        return parse_nested_selector_param(selector, "selector").map(Some);
+    }
+    Ok(match params.selector_path.as_ref() {
+        Some(path) => resolve_typed_path_in_context(message, path, container)?
+            .as_ref()
+            .and_then(selector_from_typed_value),
+        None => None,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

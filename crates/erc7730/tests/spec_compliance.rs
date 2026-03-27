@@ -29,10 +29,33 @@ fn build_calldata(sig_str: &str, words: &[[u8; 32]]) -> Vec<u8> {
     calldata
 }
 
+fn build_single_bytes_calldata(sig_str: &str, bytes: &[u8]) -> Vec<u8> {
+    let sig = decoder::parse_signature(sig_str).unwrap();
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&sig.selector);
+
+    let mut offset = [0u8; 32];
+    offset[31] = 0x20;
+    calldata.extend_from_slice(&offset);
+
+    let mut len = [0u8; 32];
+    len[24..32].copy_from_slice(&(bytes.len() as u64).to_be_bytes());
+    calldata.extend_from_slice(&len);
+    calldata.extend_from_slice(bytes);
+
+    let padding = (32 - (bytes.len() % 32)) % 32;
+    calldata.extend(std::iter::repeat_n(0u8, padding));
+    calldata
+}
+
 fn uint_word(val: u64) -> [u8; 32] {
     let mut word = [0u8; 32];
     word[24..32].copy_from_slice(&val.to_be_bytes());
     word
+}
+
+fn uint_hex_literal(val: u64) -> String {
+    format!("0x{}", hex::encode(uint_word(val)))
 }
 
 fn addr_word(addr_hex: &str) -> [u8; 32] {
@@ -2083,4 +2106,800 @@ async fn test_eip712_interpolation_uses_same_formatting_as_fields() {
         result.interpolated_intent.as_deref(),
         Some("Send 1.5 USDC to Sender as Variable before 2023-11-14 22:13:20 UTC")
     );
+}
+
+#[tokio::test]
+async fn test_visible_optional_displays_by_default() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "show(uint256 value)": {
+                        "intent": "Show",
+                        "fields": [
+                            { "path": "value", "label": "Value", "format": "number", "visible": "optional" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let calldata = build_calldata("show(uint256)", &[uint_word(7)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(result.entries.len(), 1);
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => {
+            assert_eq!(item.label, "Value");
+            assert_eq!(item.value, "7");
+        }
+        _ => panic!("expected Item"),
+    }
+}
+
+#[test]
+fn test_unknown_visibility_string_is_rejected() {
+    assert!(Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "show(uint256 value)": {
+                        "intent": "Show",
+                        "fields": [
+                            { "path": "value", "label": "Value", "visible": "sometimes" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .is_err());
+}
+
+#[tokio::test]
+async fn test_visible_if_not_in_hides_matching_value_and_shows_non_matching() {
+    let descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "show(uint256 value)": {
+                        "intent": "Show",
+                        "fields": [
+                            {
+                                "path": "value",
+                                "label": "Value",
+                                "format": "number",
+                                "visible": { "ifNotIn": [uint_hex_literal(0)] }
+                            }
+                        ]
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let hidden = build_calldata("show(uint256)", &[uint_word(0)]);
+    let hidden_tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &hidden,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let hidden_result =
+        format_calldata(&wrap_rd(descriptor.clone(), 1, "0xabc"), &hidden_tx, &EmptyDataProvider)
+            .await
+            .unwrap();
+    assert!(hidden_result.entries.is_empty());
+
+    let shown = build_calldata("show(uint256)", &[uint_word(9)]);
+    let shown_tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &shown,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let shown_result =
+        format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &shown_tx, &EmptyDataProvider)
+            .await
+            .unwrap();
+    assert_eq!(shown_result.entries.len(), 1);
+}
+
+#[tokio::test]
+async fn test_visible_must_match_hides_matching_value_and_errors_on_mismatch() {
+    let descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "show(uint256 guard,uint256 value)": {
+                        "intent": "Show",
+                        "fields": [
+                            {
+                                "path": "guard",
+                                "label": "Guard",
+                                "format": "number",
+                                "visible": { "mustMatch": [uint_hex_literal(1)] }
+                            },
+                            { "path": "value", "label": "Value", "format": "number" }
+                        ]
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let matching = build_calldata("show(uint256,uint256)", &[uint_word(1), uint_word(5)]);
+    let matching_tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &matching,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let matching_result = format_calldata(
+        &wrap_rd(descriptor.clone(), 1, "0xabc"),
+        &matching_tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(matching_result.entries.len(), 1);
+    match &matching_result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Value"),
+        _ => panic!("expected Item"),
+    }
+
+    let mismatching = build_calldata("show(uint256,uint256)", &[uint_word(2), uint_word(5)]);
+    let mismatching_tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &mismatching,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let err = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &mismatching_tx, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("visible.mustMatch"));
+}
+
+#[tokio::test]
+async fn test_typed_visibility_alias_must_be_behaves_like_must_match() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(uint256 flag,uint256 value)": {
+                        "intent": "Permit",
+                        "fields": [
+                            { "path": "flag", "label": "Flag", "format": "number", "visible": { "mustBe": [1] } },
+                            { "path": "value", "label": "Value", "format": "number" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Permit": [
+                { "name": "flag", "type": "uint256" },
+                { "name": "value", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Permit",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "flag": 1, "value": 9 }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(result.entries.len(), 1);
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Value"),
+        _ => panic!("expected Item"),
+    }
+}
+
+#[tokio::test]
+async fn test_typed_visibility_must_match_errors_when_value_missing() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(uint256 value)": {
+                        "intent": "Permit",
+                        "fields": [
+                            { "path": "missing", "label": "Missing", "format": "number", "visible": { "mustMatch": [1] } }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Permit": [{ "name": "value", "type": "uint256" }]
+        },
+        "primaryType": "Permit",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "value": 9 }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("visible.mustMatch"));
+}
+
+#[test]
+fn test_nested_calldata_constant_params_parse() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "outer(bytes data)": {
+                        "intent": "Outer",
+                        "fields": [{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {
+                                "callee": "0x1000000000000000000000000000000000000001",
+                                "selector": "0x12345678",
+                                "chainId": 10,
+                                "amount": "42",
+                                "spender": "0x2000000000000000000000000000000000000002"
+                            }
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let field = descriptor.display.formats["outer(bytes data)"].fields[0].clone();
+    if let erc7730::types::display::DisplayField::Simple { params, .. } = field {
+        let params = params.unwrap();
+        assert_eq!(
+            params.callee.as_deref(),
+            Some("0x1000000000000000000000000000000000000001")
+        );
+        assert_eq!(params.selector.as_deref(), Some("0x12345678"));
+        assert_eq!(params.chain_id, Some(10));
+        assert_eq!(params.spender.as_deref(), Some("0x2000000000000000000000000000000000000002"));
+        assert_eq!(params.amount.unwrap().to_biguint().unwrap().to_string(), "42");
+    } else {
+        panic!("expected Simple field");
+    }
+}
+
+#[tokio::test]
+async fn test_calldata_nested_calldata_constant_params_render() {
+    let inner_sig = decoder::parse_signature("consume()").unwrap();
+    let inner_selector = format!("0x{}", hex::encode(inner_sig.selector));
+    let inner_addr = "0x1000000000000000000000000000000000000001";
+    let spender = "0x2000000000000000000000000000000000000002";
+
+    let outer_json = format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "outer(bytes data)": {{
+                        "intent": "Outer",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{
+                                "callee": "{inner_addr}",
+                                "selector": "{inner_selector}",
+                                "chainId": 10,
+                                "amount": "7",
+                                "spender": "{spender}"
+                            }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    );
+    let outer = Descriptor::from_json(&outer_json).unwrap();
+    let inner = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 10, "address": "0x1000000000000000000000000000000000000001"}] } },
+            "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "consume()": {
+                        "intent": "Consume",
+                        "fields": [
+                            { "path": "@.from", "label": "Spender", "format": "address" },
+                            { "path": "@.value", "label": "Amount", "format": "number" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let calldata = build_single_bytes_calldata("outer(bytes)", &[]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let descriptors = vec![
+        wrap_rd(outer, 1, "0xabc").into_iter().next().unwrap(),
+        wrap_rd(inner, 10, inner_addr).into_iter().next().unwrap(),
+    ];
+    let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Nested { intent, entries, .. } => {
+            assert_eq!(intent, "Consume");
+            assert!(entries.iter().any(|entry| matches!(
+                entry,
+                DisplayEntry::Item(item) if item.label == "Spender" && item.value == "0x2000000000000000000000000000000000000002"
+            )));
+            assert!(entries.iter().any(|entry| matches!(
+                entry,
+                DisplayEntry::Item(item) if item.label == "Amount" && item.value == "7"
+            )));
+        }
+        _ => panic!("expected Nested entry"),
+    }
+}
+
+#[tokio::test]
+async fn test_typed_nested_calldata_selector_path_and_chain_id_path_render() {
+    let inner_sig = decoder::parse_signature("consume()").unwrap();
+    let inner_selector = format!("0x{}", hex::encode(inner_sig.selector));
+    let inner_addr = "0x1000000000000000000000000000000000000001";
+
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Relay(address target,uint256 targetChainId,bytes4 selector,bytes data)": {
+                        "intent": "Relay",
+                        "fields": [{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {
+                                "calleePath": "target",
+                                "chainIdPath": "targetChainId",
+                                "selectorPath": "selector"
+                            }
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let inner = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 10, "address": "0x1000000000000000000000000000000000000001"}] } },
+            "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "consume()": {
+                        "intent": "Consume",
+                        "fields": []
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Relay": [
+                { "name": "target", "type": "address" },
+                { "name": "targetChainId", "type": "uint256" },
+                { "name": "selector", "type": "bytes4" },
+                { "name": "data", "type": "bytes" }
+            ]
+        },
+        "primaryType": "Relay",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "target": inner_addr,
+            "targetChainId": 10,
+            "selector": inner_selector,
+            "data": "0x"
+        }
+    }))
+    .unwrap();
+
+    let descriptors = vec![
+        wrap_rd(descriptor, 1, "0xabc").into_iter().next().unwrap(),
+        wrap_rd(inner, 10, inner_addr).into_iter().next().unwrap(),
+    ];
+    let result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Nested { intent, .. } => assert_eq!(intent, "Consume"),
+        _ => panic!("expected Nested entry"),
+    }
+}
+
+#[tokio::test]
+async fn test_typed_nested_calldata_constant_params_render() {
+    let inner_sig = decoder::parse_signature("consume()").unwrap();
+    let inner_selector = format!("0x{}", hex::encode(inner_sig.selector));
+    let inner_addr = "0x1000000000000000000000000000000000000001";
+    let spender = "0x2000000000000000000000000000000000000002";
+
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "Relay(bytes data)": {{
+                        "intent": "Relay",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{
+                                "callee": "{inner_addr}",
+                                "chainId": 10,
+                                "selector": "{inner_selector}",
+                                "amount": "9",
+                                "spender": "{spender}"
+                            }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let inner = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 10, "address": "0x1000000000000000000000000000000000000001"}] } },
+            "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "consume()": {
+                        "intent": "Consume",
+                        "fields": [
+                            { "path": "@.from", "label": "Spender", "format": "address" },
+                            { "path": "@.value", "label": "Amount", "format": "number" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Relay": [{ "name": "data", "type": "bytes" }]
+        },
+        "primaryType": "Relay",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "data": "0x" }
+    }))
+    .unwrap();
+
+    let descriptors = vec![
+        wrap_rd(descriptor, 1, "0xabc").into_iter().next().unwrap(),
+        wrap_rd(inner, 10, inner_addr).into_iter().next().unwrap(),
+    ];
+    let result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Nested { entries, .. } => {
+            assert!(entries.iter().any(|entry| matches!(
+                entry,
+                DisplayEntry::Item(item) if item.label == "Spender" && item.value == spender
+            )));
+            assert!(entries.iter().any(|entry| matches!(
+                entry,
+                DisplayEntry::Item(item) if item.label == "Amount" && item.value == "9"
+            )));
+        }
+        _ => panic!("expected Nested entry"),
+    }
+}
+
+#[tokio::test]
+async fn test_nested_calldata_conflicting_constant_and_path_params_error() {
+    let selector = format!("0x{}", hex::encode(decoder::parse_signature("consume()").unwrap().selector));
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "outer(bytes data)": {{
+                        "intent": "Outer",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{
+                                "callee": "0x1000000000000000000000000000000000000001",
+                                "calleePath": "missing",
+                                "selector": "{selector}"
+                            }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let calldata = build_single_bytes_calldata("outer(bytes)", &[]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let err = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("both constant and path forms"));
+}
+
+#[tokio::test]
+async fn test_nested_calldata_malformed_constant_params_error() {
+    let calldata = build_single_bytes_calldata("outer(bytes)", &[]);
+    let cases = [
+        (
+            r#""callee": "0x1234", "selector": "0x12345678""#,
+            "callee",
+        ),
+        (
+            r#""callee": "0x1000000000000000000000000000000000000001", "selector": "0x1234""#,
+            "selector",
+        ),
+        (
+            r#""callee": "0x1000000000000000000000000000000000000001", "selector": "0x12345678", "amount": "not-a-number""#,
+            "amount",
+        ),
+    ];
+
+    for (params_body, expected_param) in cases {
+        let descriptor = Descriptor::from_json(&format!(
+            r#"{{
+                "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+                "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+                "display": {{
+                    "definitions": {{}},
+                    "formats": {{
+                        "outer(bytes data)": {{
+                            "intent": "Outer",
+                            "fields": [{{
+                                "path": "data",
+                                "label": "Inner",
+                                "format": "calldata",
+                                "params": {{ {params_body} }}
+                            }}]
+                        }}
+                    }}
+                }}
+            }}"#
+        ))
+        .unwrap();
+
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xabc",
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: None,
+        };
+        let err = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(expected_param), "{err}");
+    }
+}
+
+#[tokio::test]
+async fn test_unresolved_nested_callee_falls_back_to_raw_preview() {
+    let selector = format!("0x{}", hex::encode(decoder::parse_signature("consume()").unwrap().selector));
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "outer(bytes data)": {{
+                        "intent": "Outer",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{
+                                "calleePath": "missing",
+                                "selector": "{selector}"
+                            }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+
+    let calldata = build_single_bytes_calldata("outer(bytes)", &[]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Nested { intent, .. } => {
+            assert!(intent.starts_with("Unknown function"));
+        }
+        _ => panic!("expected Nested entry"),
+    }
+}
+
+#[tokio::test]
+async fn test_resolver_finds_nested_descriptor_with_constant_callee_and_chain_id() {
+    let inner_sig = decoder::parse_signature("consume()").unwrap();
+    let selector = format!("0x{}", hex::encode(inner_sig.selector));
+    let outer = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "outer(bytes data)": {{
+                        "intent": "Outer",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{
+                                "callee": "0x1000000000000000000000000000000000000001",
+                                "chainId": 10,
+                                "selector": "{selector}"
+                            }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let inner = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 10, "address": "0x1000000000000000000000000000000000000001"}] } },
+            "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": { "consume()": { "intent": "Consume", "fields": [] } }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let mut source = erc7730::resolver::StaticSource::new();
+    source.add_calldata(1, "0xabc", outer);
+    source.add_calldata(10, "0x1000000000000000000000000000000000000001", inner);
+
+    let calldata = build_single_bytes_calldata("outer(bytes)", &[]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let descriptors = erc7730::resolve_descriptors_for_tx(&tx, &source)
+        .await
+        .unwrap();
+    assert_eq!(descriptors.len(), 2);
+    assert_eq!(
+        descriptors[1].address,
+        "0x1000000000000000000000000000000000000001"
+    );
+    assert_eq!(descriptors[1].chain_id, 10);
 }

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::error::ResolveError;
+use crate::error::{Error, ResolveError};
 use crate::types::descriptor::Descriptor;
 
 /// A resolved descriptor ready for use.
@@ -663,20 +663,13 @@ fn resolve_recursive<'a>(
         results.push(resolved);
 
         for field in &calldata_fields {
-            let callee_path = match &field.callee_path {
-                Some(p) => p,
-                None => continue,
-            };
             let data_path = match &field.data_path {
                 Some(p) => p,
                 None => continue,
             };
 
-            // Resolve callee address from decoded arguments
-            let callee = crate::engine::resolve_path(&decoded, callee_path).and_then(|v| match v {
-                ArgumentValue::Address(addr) => Some(format!("0x{}", hex::encode(addr))),
-                _ => None,
-            });
+            let callee = resolve_resolver_nested_callee(field, &decoded)
+                .map_err(|e| ResolveError::Parse(e.to_string()))?;
 
             // Resolve inner calldata bytes
             let inner_data =
@@ -685,22 +678,16 @@ fn resolve_recursive<'a>(
                     _ => None,
                 });
 
-            // Resolve inner chain_id (from chainIdPath, or default to outer)
-            let inner_chain = field
-                .chain_id_path
-                .as_ref()
-                .and_then(|p| crate::engine::resolve_path(&decoded, p))
-                .and_then(|v| match v {
-                    ArgumentValue::Uint(bytes) => {
-                        let n = num_bigint::BigUint::from_bytes_be(&bytes);
-                        u64::try_from(n).ok()
-                    }
-                    _ => None,
-                })
-                .unwrap_or(chain_id);
+            let inner_chain = resolve_resolver_nested_chain_id(field, &decoded, chain_id)
+                .map_err(|e| ResolveError::Parse(e.to_string()))?;
+            let selector_override = resolve_resolver_nested_selector(field, &decoded)
+                .map_err(|e| ResolveError::Parse(e.to_string()))?;
 
             if let (Some(addr), Some(data)) = (callee, inner_data) {
-                resolve_recursive(inner_chain, &addr, &data, source, depth - 1, results).await?;
+                let normalized =
+                    crate::engine::normalized_nested_calldata(&data, selector_override);
+                resolve_recursive(inner_chain, &addr, &normalized, source, depth - 1, results)
+                    .await?;
             }
         }
 
@@ -711,7 +698,11 @@ fn resolve_recursive<'a>(
 /// Info extracted from a `FieldFormat::Calldata` display field.
 pub(crate) struct CalldataFieldInfo {
     pub(crate) callee_path: Option<String>,
+    pub(crate) callee: Option<String>,
     pub(crate) data_path: Option<String>,
+    pub(crate) selector_path: Option<String>,
+    pub(crate) selector: Option<String>,
+    pub(crate) chain_id: Option<u64>,
     pub(crate) chain_id_path: Option<String>,
 }
 
@@ -742,7 +733,11 @@ fn collect_calldata_fields_recursive(
                     let fp = params.as_ref();
                     result.push(CalldataFieldInfo {
                         callee_path: fp.and_then(|p| p.callee_path.clone()),
+                        callee: fp.and_then(|p| p.callee.clone()),
                         data_path: path.clone(),
+                        selector_path: fp.and_then(|p| p.selector_path.clone()),
+                        selector: fp.and_then(|p| p.selector.clone()),
+                        chain_id: fp.and_then(|p| p.chain_id),
                         chain_id_path: fp.and_then(|p| p.chain_id_path.clone()),
                     });
                 }
@@ -769,13 +764,33 @@ fn collect_calldata_fields_recursive(
                             .as_ref()
                             .and_then(|p| p.callee_path.clone())
                             .or_else(|| def_params.as_ref().and_then(|p| p.callee_path.clone()));
+                        let callee = ref_params
+                            .as_ref()
+                            .and_then(|p| p.callee.clone())
+                            .or_else(|| def_params.as_ref().and_then(|p| p.callee.clone()));
+                        let selector_path = ref_params
+                            .as_ref()
+                            .and_then(|p| p.selector_path.clone())
+                            .or_else(|| def_params.as_ref().and_then(|p| p.selector_path.clone()));
+                        let selector = ref_params
+                            .as_ref()
+                            .and_then(|p| p.selector.clone())
+                            .or_else(|| def_params.as_ref().and_then(|p| p.selector.clone()));
+                        let chain_id = ref_params
+                            .as_ref()
+                            .and_then(|p| p.chain_id)
+                            .or_else(|| def_params.as_ref().and_then(|p| p.chain_id));
                         let chain_id_path = ref_params
                             .as_ref()
                             .and_then(|p| p.chain_id_path.clone())
                             .or_else(|| def_params.as_ref().and_then(|p| p.chain_id_path.clone()));
                         result.push(CalldataFieldInfo {
                             callee_path,
+                            callee,
                             data_path: path.clone(),
+                            selector_path,
+                            selector,
+                            chain_id,
                             chain_id_path,
                         });
                     }
@@ -791,9 +806,251 @@ fn collect_calldata_fields_recursive(
     }
 }
 
+fn resolve_resolver_nested_callee(
+    field: &CalldataFieldInfo,
+    decoded: &crate::decoder::DecodedArguments,
+) -> Result<Option<String>, Error> {
+    crate::engine::ensure_single_nested_param_source(
+        field.callee.is_some(),
+        field.callee_path.is_some(),
+        "callee",
+    )?;
+    if let Some(callee) = field.callee.as_deref() {
+        return crate::engine::parse_nested_address_param(callee, "callee").map(Some);
+    }
+    Ok(field
+        .callee_path
+        .as_ref()
+        .and_then(|p| crate::engine::resolve_path(decoded, p))
+        .and_then(|value| crate::engine::address_string_from_argument_value(&value)))
+}
+
+fn resolve_resolver_nested_chain_id(
+    field: &CalldataFieldInfo,
+    decoded: &crate::decoder::DecodedArguments,
+    default_chain_id: u64,
+) -> Result<u64, Error> {
+    crate::engine::ensure_single_nested_param_source(
+        field.chain_id.is_some(),
+        field.chain_id_path.is_some(),
+        "chainId",
+    )?;
+    if let Some(chain_id) = field.chain_id {
+        return Ok(chain_id);
+    }
+    Ok(field
+        .chain_id_path
+        .as_ref()
+        .and_then(|p| crate::engine::resolve_path(decoded, p))
+        .and_then(|value| crate::engine::chain_id_from_argument_value(&value))
+        .unwrap_or(default_chain_id))
+}
+
+fn resolve_resolver_nested_selector(
+    field: &CalldataFieldInfo,
+    decoded: &crate::decoder::DecodedArguments,
+) -> Result<Option<[u8; 4]>, Error> {
+    crate::engine::ensure_single_nested_param_source(
+        field.selector.is_some(),
+        field.selector_path.is_some(),
+        "selector",
+    )?;
+    if let Some(selector) = field.selector.as_deref() {
+        return crate::engine::parse_nested_selector_param(selector, "selector").map(Some);
+    }
+    Ok(field
+        .selector_path
+        .as_ref()
+        .and_then(|p| crate::engine::resolve_path(decoded, p))
+        .and_then(|value| crate::engine::selector_from_argument_value(&value)))
+}
+
+#[cfg(feature = "github-registry")]
+fn resolve_typed_nested_callee_for_resolver(
+    field: &CalldataFieldInfo,
+    message: &serde_json::Value,
+    chain_id: u64,
+    verifying_contract: &str,
+) -> Result<Option<String>, Error> {
+    crate::engine::ensure_single_nested_param_source(
+        field.callee.is_some(),
+        field.callee_path.is_some(),
+        "callee",
+    )?;
+    if let Some(callee) = field.callee.as_deref() {
+        return crate::engine::parse_nested_address_param(callee, "callee").map(Some);
+    }
+    Ok(field
+        .callee_path
+        .as_ref()
+        .and_then(|p| crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract)))
+        .as_ref()
+        .and_then(crate::eip712::coerce_typed_address_string))
+}
+
+#[cfg(feature = "github-registry")]
+fn resolve_typed_nested_chain_id_for_resolver(
+    field: &CalldataFieldInfo,
+    message: &serde_json::Value,
+    chain_id: u64,
+    verifying_contract: &str,
+) -> Result<u64, Error> {
+    crate::engine::ensure_single_nested_param_source(
+        field.chain_id.is_some(),
+        field.chain_id_path.is_some(),
+        "chainId",
+    )?;
+    if let Some(chain_id) = field.chain_id {
+        return Ok(chain_id);
+    }
+    Ok(field
+        .chain_id_path
+        .as_ref()
+        .and_then(|p| crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract)))
+        .as_ref()
+        .and_then(crate::eip712::coerce_typed_numeric_string)
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(chain_id))
+}
+
+#[cfg(feature = "github-registry")]
+fn resolve_typed_nested_selector_for_resolver(
+    field: &CalldataFieldInfo,
+    message: &serde_json::Value,
+    chain_id: u64,
+    verifying_contract: &str,
+) -> Result<Option<[u8; 4]>, Error> {
+    crate::engine::ensure_single_nested_param_source(
+        field.selector.is_some(),
+        field.selector_path.is_some(),
+        "selector",
+    )?;
+    if let Some(selector) = field.selector.as_deref() {
+        return crate::engine::parse_nested_selector_param(selector, "selector").map(Some);
+    }
+    Ok(field
+        .selector_path
+        .as_ref()
+        .and_then(|p| crate::eip712::resolve_typed_path(message, p, chain_id, Some(verifying_contract)))
+        .as_ref()
+        .and_then(crate::eip712::selector_from_typed_value))
+}
+
 // ---------------------------------------------------------------------------
 // Nested descriptor resolution for EIP-712 typed data
 // ---------------------------------------------------------------------------
+
+/// Resolve all descriptors needed to format EIP-712 typed data using the full
+/// typed-data schema, so nested calldata discovery follows the same format
+/// selection rules as rendering.
+#[cfg(feature = "github-registry")]
+pub(crate) async fn resolve_descriptors_for_typed_data_with_types(
+    typed_data: &crate::eip712::TypedData,
+    source: &GitHubRegistrySource,
+) -> Result<Vec<ResolvedDescriptor>, ResolveError> {
+    let mut results = Vec::new();
+
+    let Some(chain_id) = typed_data.domain.chain_id else {
+        return Ok(results);
+    };
+    let Some(verifying_contract) = typed_data.domain.verifying_contract.as_deref() else {
+        return Ok(results);
+    };
+
+    let outer = match source
+        .resolve_typed_for_primary_type(chain_id, verifying_contract, &typed_data.primary_type)
+        .await
+    {
+        Ok(r) => r,
+        Err(ResolveError::NotFound { .. }) => return Ok(results),
+        Err(e) => return Err(e),
+    };
+
+    let format = crate::eip712::find_typed_format(&outer.descriptor, typed_data).ok();
+    let calldata_fields = if let Some(format) = format {
+        let mut warnings = Vec::new();
+        let expanded =
+            crate::engine::expand_display_fields(&outer.descriptor, &format.fields, &mut warnings);
+        collect_calldata_fields(&expanded, &outer.descriptor.display.definitions)
+    } else {
+        Vec::new()
+    };
+
+    results.push(outer);
+
+    for field in &calldata_fields {
+        let callee_addr = match resolve_typed_nested_callee_for_resolver(
+            field,
+            &typed_data.message,
+            chain_id,
+            verifying_contract,
+        )
+        .map_err(|e| ResolveError::Parse(e.to_string()))?
+        {
+            Some(addr) => addr,
+            None => continue,
+        };
+
+        let inner_chain = resolve_typed_nested_chain_id_for_resolver(
+            field,
+            &typed_data.message,
+            chain_id,
+            verifying_contract,
+        )
+        .map_err(|e| ResolveError::Parse(e.to_string()))?;
+        let selector_override = resolve_typed_nested_selector_for_resolver(
+            field,
+            &typed_data.message,
+            chain_id,
+            verifying_contract,
+        )
+        .map_err(|e| ResolveError::Parse(e.to_string()))?;
+
+        if let Some(data_path) = &field.data_path {
+            if let Some(inner_hex) = crate::eip712::resolve_typed_path(
+                &typed_data.message,
+                data_path,
+                chain_id,
+                Some(verifying_contract),
+            )
+            .and_then(|v| v.as_str().map(String::from))
+            {
+                let hex_str = inner_hex
+                    .strip_prefix("0x")
+                    .or_else(|| inner_hex.strip_prefix("0X"))
+                    .unwrap_or(&inner_hex);
+                if let Ok(inner_bytes) = hex::decode(hex_str) {
+                    let normalized =
+                        crate::engine::normalized_nested_calldata(&inner_bytes, selector_override);
+                    let _ = resolve_recursive(
+                        inner_chain,
+                        &callee_addr,
+                        &normalized,
+                        source,
+                        MAX_RESOLVE_DEPTH - 1,
+                        &mut results,
+                    )
+                    .await;
+                    continue;
+                }
+            }
+        }
+
+        match source.resolve_calldata(inner_chain, &callee_addr).await {
+            Ok(r) => {
+                if !results.iter().any(|e| {
+                    e.chain_id == r.chain_id && e.address.eq_ignore_ascii_case(&r.address)
+                }) {
+                    results.push(r);
+                }
+            }
+            Err(ResolveError::NotFound { .. }) => {}
+            Err(e) => return Err(e),
+        }
+    }
+
+    Ok(results)
+}
 
 /// Resolve all descriptors needed to format EIP-712 typed data, including nested calldata.
 ///
@@ -851,49 +1108,37 @@ pub async fn resolve_descriptors_for_typed_data(
 
     // 4. For each calldata field, resolve inner callee from JSON message
     for field in &calldata_fields {
-        let callee_path = match &field.callee_path {
-            Some(p) => p,
-            None => continue,
-        };
-
-        // Strip `#.` prefix (message-relative) same as render_typed_calldata_field does
-        let callee_key = callee_path.strip_prefix("#.").unwrap_or(callee_path);
-        let callee_addr = crate::eip712::resolve_typed_path(
+        let callee_addr = match resolve_typed_nested_callee_for_resolver(
+            field,
             message,
-            callee_key,
             chain_id,
-            Some(verifying_contract),
+            verifying_contract,
         )
-        .and_then(|v| match v {
-            serde_json::Value::String(s) => Some(s),
-            _ => None,
-        });
-
-        let callee_addr = match callee_addr {
+        .map_err(|e| ResolveError::Parse(e.to_string()))?
+        {
             Some(addr) => addr,
             None => continue,
         };
 
-        // Resolve inner chain_id (from chainIdPath in message, or default to outer)
-        let inner_chain = field
-            .chain_id_path
-            .as_ref()
-            .and_then(|p| {
-                let path = p.strip_prefix("#.").unwrap_or(p);
-                crate::eip712::resolve_typed_path(message, path, chain_id, Some(verifying_contract))
-            })
-            .and_then(|v| match v {
-                serde_json::Value::Number(n) => n.as_u64(),
-                serde_json::Value::String(s) => s.parse::<u64>().ok(),
-                _ => None,
-            })
-            .unwrap_or(chain_id);
+        let inner_chain = resolve_typed_nested_chain_id_for_resolver(
+            field,
+            message,
+            chain_id,
+            verifying_contract,
+        )
+        .map_err(|e| ResolveError::Parse(e.to_string()))?;
+        let selector_override = resolve_typed_nested_selector_for_resolver(
+            field,
+            message,
+            chain_id,
+            verifying_contract,
+        )
+        .map_err(|e| ResolveError::Parse(e.to_string()))?;
 
         // Try to get inner calldata bytes for deeper nesting via resolve_recursive
         if let Some(data_path) = &field.data_path {
-            let path = data_path.strip_prefix("#.").unwrap_or(data_path);
             if let Some(inner_hex) =
-                crate::eip712::resolve_typed_path(message, path, chain_id, Some(verifying_contract))
+                crate::eip712::resolve_typed_path(message, data_path, chain_id, Some(verifying_contract))
                     .and_then(|v| v.as_str().map(String::from))
             {
                 let hex_str = inner_hex
@@ -901,11 +1146,13 @@ pub async fn resolve_descriptors_for_typed_data(
                     .or_else(|| inner_hex.strip_prefix("0X"))
                     .unwrap_or(&inner_hex);
                 if let Ok(inner_bytes) = hex::decode(hex_str) {
+                    let normalized =
+                        crate::engine::normalized_nested_calldata(&inner_bytes, selector_override);
                     // Use resolve_recursive for the inner calldata (reuses calldata flow)
                     let _ = resolve_recursive(
                         inner_chain,
                         &callee_addr,
-                        &inner_bytes,
+                        &normalized,
                         source,
                         MAX_RESOLVE_DEPTH - 1,
                         &mut results,

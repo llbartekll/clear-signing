@@ -152,11 +152,8 @@ async fn lifi_swap_tokens_multiple_v3_erc20_to_erc20() {
         get_entry_value(&result, "Recipient"),
         "0x619bDeA84b29D317B701014bE8092fCA7c9da3ef"
     );
-    // Multi-leg swap has swap data entries (call data, call to, approve to, requires deposit)
-    assert!(
-        result.entries.len() >= 5,
-        "multi-leg swap should have swap data entries"
-    );
+    // LI.FI marks multi-leg swap internals as visible: "never"; they should not leak into the UI.
+    assert_eq!(result.entries.len(), 3);
     assert!(result.warnings.is_empty());
 }
 

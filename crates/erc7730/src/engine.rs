@@ -14,7 +14,7 @@ use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
     DisplayField, DisplayFormat, FieldFormat, FieldGroup, FormatParams, Iteration, SenderAddress,
-    VisibleRule,
+    UintLiteral, VisibleLiteral, VisibleRule,
 };
 
 /// Maximum recursion depth for nested calldata formatting.
@@ -217,6 +217,9 @@ fn render_fields<'a>(
                 } => {
                     // If literal value is provided (no path), resolve constant refs and use it
                     if let Some(lit) = literal_value {
+                        if !check_visibility(visible, &None, label, "")? {
+                            continue;
+                        }
                         let resolved = resolve_metadata_constant_str(ctx.descriptor, lit);
                         entries.push(DisplayEntry::Item(DisplayItem {
                             label: label.clone(),
@@ -237,6 +240,9 @@ fn render_fields<'a>(
                                     let rest_segments: Vec<&str> = rest.split('.').collect();
                                     navigate_value(item, &rest_segments)
                                 };
+                                if !check_visibility(visible, &val, label, path_str)? {
+                                    continue;
+                                }
                                 let formatted = format_value(
                                     ctx,
                                     &val,
@@ -261,7 +267,7 @@ fn render_fields<'a>(
                     let value = resolve_path(ctx.decoded, path_str);
 
                     // Check visibility
-                    if !check_visibility(visible, &value) {
+                    if !check_visibility(visible, &value, label, path_str)? {
                         continue;
                     }
 
@@ -763,21 +769,302 @@ pub(crate) fn split_array_iter_path(path: &str) -> Option<(&str, &str)> {
     Some((base, rest))
 }
 
+fn visibility_context(label: &str, path: &str) -> String {
+    if path.is_empty() {
+        format!("field '{}'", label)
+    } else {
+        format!("field '{}' (path '{}')", label, path)
+    }
+}
+
 /// Check if a field should be visible based on the visibility rule and decoded value.
-fn check_visibility(rule: &VisibleRule, value: &Option<ArgumentValue>) -> bool {
+fn check_visibility(
+    rule: &VisibleRule,
+    value: &Option<ArgumentValue>,
+    label: &str,
+    path: &str,
+) -> Result<bool, Error> {
     match rule {
-        VisibleRule::Always => true,
-        VisibleRule::Bool(b) => *b,
-        VisibleRule::Named(s) => s != "never",
+        VisibleRule::Always => Ok(true),
+        VisibleRule::Bool(b) => Ok(*b),
+        VisibleRule::Named(literal) => Ok(matches!(
+            literal,
+            VisibleLiteral::Always | VisibleLiteral::Optional
+        )),
         VisibleRule::Condition(cond) => {
-            if let Some(val) = value {
-                let json_val = val.to_json_value();
-                cond.evaluate(&json_val)
-            } else {
-                true // Show if value is unresolvable
+            let Some(val) = value else {
+                if cond.must_match.is_some() {
+                    return Err(Error::Render(format!(
+                        "{} uses visible.mustMatch but the value could not be resolved",
+                        visibility_context(label, path)
+                    )));
+                }
+                return Ok(true);
+            };
+
+            let json_val = val.to_json_value();
+            if cond.hides_for_if_not_in(&json_val) {
+                return Ok(false);
             }
+            if cond.must_match.is_some() {
+                if cond.matches_must_match(&json_val) {
+                    return Ok(false);
+                }
+                return Err(Error::Render(format!(
+                    "{} failed visible.mustMatch",
+                    visibility_context(label, path)
+                )));
+            }
+            Ok(true)
         }
     }
+}
+
+pub(crate) fn selector_from_argument_value(val: &ArgumentValue) -> Option<[u8; 4]> {
+    match val {
+        ArgumentValue::FixedBytes(bytes) | ArgumentValue::Bytes(bytes) if bytes.len() >= 4 => {
+            let mut selector = [0u8; 4];
+            selector.copy_from_slice(&bytes[..4]);
+            Some(selector)
+        }
+        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) if bytes.len() >= 4 => {
+            let mut selector = [0u8; 4];
+            selector.copy_from_slice(&bytes[bytes.len() - 4..]);
+            Some(selector)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn chain_id_from_argument_value(val: &ArgumentValue) -> Option<u64> {
+    match val {
+        ArgumentValue::Uint(bytes) => {
+            let n = BigUint::from_bytes_be(bytes);
+            u64::try_from(n).ok()
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn uint_bytes_from_argument_value(val: &ArgumentValue) -> Option<Vec<u8>> {
+    match val {
+        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => Some(bytes.clone()),
+        _ => None,
+    }
+}
+
+pub(crate) fn uint_bytes_from_biguint(value: &BigUint, param_name: &str) -> Result<Vec<u8>, Error> {
+    let bytes = value.to_bytes_be();
+    if bytes.len() > 32 {
+        return Err(Error::Descriptor(format!(
+            "nested calldata param '{}' exceeds 32 bytes",
+            param_name
+        )));
+    }
+    let mut padded = vec![0u8; 32usize.saturating_sub(bytes.len())];
+    padded.extend_from_slice(&bytes);
+    Ok(padded)
+}
+
+pub(crate) fn parse_nested_amount_literal(
+    value: &UintLiteral,
+    param_name: &str,
+) -> Result<Vec<u8>, Error> {
+    let biguint = value.to_biguint().ok_or_else(|| {
+        Error::Descriptor(format!(
+            "invalid nested calldata param '{}': expected a non-negative integer",
+            param_name
+        ))
+    })?;
+    uint_bytes_from_biguint(&biguint, param_name)
+}
+
+pub(crate) fn parse_nested_selector_param(
+    value: &str,
+    param_name: &str,
+) -> Result<[u8; 4], Error> {
+    let hex_str = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    let bytes = hex::decode(hex_str).map_err(|_| {
+        Error::Descriptor(format!(
+            "invalid nested calldata param '{}': expected 4-byte hex selector",
+            param_name
+        ))
+    })?;
+    if bytes.len() != 4 {
+        return Err(Error::Descriptor(format!(
+            "invalid nested calldata param '{}': expected 4-byte hex selector",
+            param_name
+        )));
+    }
+    let mut selector = [0u8; 4];
+    selector.copy_from_slice(&bytes);
+    Ok(selector)
+}
+
+pub(crate) fn parse_nested_address_param(
+    value: &str,
+    param_name: &str,
+) -> Result<String, Error> {
+    let hex_str = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+        .unwrap_or(value);
+    let bytes = hex::decode(hex_str).map_err(|_| {
+        Error::Descriptor(format!(
+            "invalid nested calldata param '{}': expected 20-byte hex address",
+            param_name
+        ))
+    })?;
+    let addr = address_bytes_from_raw_bytes(&bytes).ok_or_else(|| {
+        Error::Descriptor(format!(
+            "invalid nested calldata param '{}': expected 20-byte hex address",
+            param_name
+        ))
+    })?;
+    Ok(format!("0x{}", hex::encode(addr)))
+}
+
+pub(crate) fn normalized_nested_calldata(
+    inner_calldata: &[u8],
+    selector_override: Option<[u8; 4]>,
+) -> Vec<u8> {
+    match selector_override {
+        Some(selector) if !inner_calldata.starts_with(&selector) => {
+            let mut normalized = selector.to_vec();
+            normalized.extend_from_slice(inner_calldata);
+            normalized
+        }
+        _ => inner_calldata.to_vec(),
+    }
+}
+
+pub(crate) fn ensure_single_nested_param_source(
+    constant_present: bool,
+    path_present: bool,
+    param_name: &str,
+) -> Result<(), Error> {
+    if constant_present && path_present {
+        return Err(Error::Descriptor(format!(
+            "nested calldata param '{}' cannot specify both constant and path forms",
+            param_name
+        )));
+    }
+    Ok(())
+}
+
+fn resolve_nested_callee(
+    decoded: &DecodedArguments,
+    params: Option<&FormatParams>,
+) -> Result<Option<String>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.callee.is_some(),
+        params.callee_path.is_some(),
+        "callee",
+    )?;
+    if let Some(callee) = params.callee.as_deref() {
+        return parse_nested_address_param(callee, "callee").map(Some);
+    }
+    Ok(params
+        .callee_path
+        .as_ref()
+        .and_then(|path| resolve_path(decoded, path))
+        .and_then(|value| address_string_from_argument_value(&value)))
+}
+
+fn resolve_nested_spender(
+    decoded: &DecodedArguments,
+    params: Option<&FormatParams>,
+) -> Result<Option<String>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.spender.is_some(),
+        params.spender_path.is_some(),
+        "spender",
+    )?;
+    if let Some(spender) = params.spender.as_deref() {
+        return parse_nested_address_param(spender, "spender").map(Some);
+    }
+    Ok(params
+        .spender_path
+        .as_ref()
+        .and_then(|path| resolve_path(decoded, path))
+        .and_then(|value| address_string_from_argument_value(&value)))
+}
+
+fn resolve_nested_amount(
+    decoded: &DecodedArguments,
+    params: Option<&FormatParams>,
+) -> Result<Option<Vec<u8>>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.amount.is_some(),
+        params.amount_path.is_some(),
+        "amount",
+    )?;
+    if let Some(amount) = params.amount.as_ref() {
+        return parse_nested_amount_literal(amount, "amount").map(Some);
+    }
+    Ok(params
+        .amount_path
+        .as_ref()
+        .and_then(|path| resolve_path(decoded, path))
+        .and_then(|value| uint_bytes_from_argument_value(&value)))
+}
+
+fn resolve_nested_chain_id(
+    decoded: &DecodedArguments,
+    params: Option<&FormatParams>,
+    default_chain_id: u64,
+) -> Result<u64, Error> {
+    let Some(params) = params else {
+        return Ok(default_chain_id);
+    };
+    ensure_single_nested_param_source(
+        params.chain_id.is_some(),
+        params.chain_id_path.is_some(),
+        "chainId",
+    )?;
+    if let Some(chain_id) = params.chain_id {
+        return Ok(chain_id);
+    }
+    Ok(params
+        .chain_id_path
+        .as_ref()
+        .and_then(|path| resolve_path(decoded, path))
+        .and_then(|value| chain_id_from_argument_value(&value))
+        .unwrap_or(default_chain_id))
+}
+
+fn resolve_nested_selector(
+    decoded: &DecodedArguments,
+    params: Option<&FormatParams>,
+) -> Result<Option<[u8; 4]>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    ensure_single_nested_param_source(
+        params.selector.is_some(),
+        params.selector_path.is_some(),
+        "selector",
+    )?;
+    if let Some(selector) = params.selector.as_deref() {
+        return parse_nested_selector_param(selector, "selector").map(Some);
+    }
+    Ok(params
+        .selector_path
+        .as_ref()
+        .and_then(|path| resolve_path(decoded, path))
+        .and_then(|value| selector_from_argument_value(&value)))
 }
 
 /// Format a decoded value according to its format type.
@@ -897,7 +1184,21 @@ async fn render_calldata_field(
         });
     }
 
-    if inner_calldata.len() < 4 {
+    let callee = match resolve_nested_callee(ctx.decoded, params)? {
+        Some(addr) => addr,
+        None => {
+            // No callee — return raw preview
+            return Ok(build_raw_nested(label, inner_calldata));
+        }
+    };
+
+    let amount_bytes = resolve_nested_amount(ctx.decoded, params)?;
+    let spender_addr = resolve_nested_spender(ctx.decoded, params)?;
+    let inner_chain_id = resolve_nested_chain_id(ctx.decoded, params, ctx.chain_id)?;
+    let selector_override = resolve_nested_selector(ctx.decoded, params)?;
+    let normalized_calldata = normalized_nested_calldata(inner_calldata, selector_override);
+
+    if normalized_calldata.len() < 4 {
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
@@ -908,54 +1209,6 @@ async fn render_calldata_field(
             warnings: vec!["inner calldata too short".to_string()],
         });
     }
-
-    // Resolve callee address from params
-    let callee_addr = params
-        .and_then(|p| p.callee_path.as_ref())
-        .and_then(|path| resolve_path(ctx.decoded, path))
-        .and_then(|v| match v {
-            ArgumentValue::Address(addr) => Some(format!("0x{}", hex::encode(addr))),
-            _ => None,
-        });
-
-    let callee = match callee_addr {
-        Some(addr) => addr,
-        None => {
-            // No callee — return raw preview
-            return Ok(build_raw_nested(label, inner_calldata));
-        }
-    };
-
-    // Resolve amount (for @.value injection)
-    let amount_bytes: Option<Vec<u8>> = params
-        .and_then(|p| p.amount_path.as_ref())
-        .and_then(|path| resolve_path(ctx.decoded, path))
-        .and_then(|v| match v {
-            ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => Some(bytes),
-            _ => None,
-        });
-
-    // Resolve spender/from (for @.from injection)
-    let spender_addr: Option<String> = params
-        .and_then(|p| p.spender_path.as_ref())
-        .and_then(|path| resolve_path(ctx.decoded, path))
-        .and_then(|v| match v {
-            ArgumentValue::Address(addr) => Some(format!("0x{}", hex::encode(addr))),
-            _ => None,
-        });
-
-    // Resolve chain ID for inner descriptor lookup (#9 chainIdPath)
-    let inner_chain_id = params
-        .and_then(|p| p.chain_id_path.as_ref())
-        .and_then(|path| resolve_path(ctx.decoded, path))
-        .and_then(|v| match v {
-            ArgumentValue::Uint(bytes) => {
-                let n = BigUint::from_bytes_be(&bytes);
-                u64::try_from(n).ok()
-            }
-            _ => None,
-        })
-        .unwrap_or(ctx.chain_id);
 
     // Find matching inner descriptor by chain_id + callee address
     let inner_descriptor = ctx.descriptors.iter().find(|rd| {
@@ -971,30 +1224,8 @@ async fn render_calldata_field(
         }
     };
 
-    // Resolve selector — use selectorPath if present (#8), else first 4 bytes
-    let actual_selector: [u8; 4] = if let Some(selector_bytes) = params
-        .and_then(|p| p.selector_path.as_ref())
-        .and_then(|path| resolve_path(ctx.decoded, path))
-        .and_then(|v| match v {
-            ArgumentValue::FixedBytes(b) if b.len() >= 4 => {
-                let mut sel = [0u8; 4];
-                sel.copy_from_slice(&b[..4]);
-                Some(sel)
-            }
-            ArgumentValue::Uint(b) if b.len() >= 4 => {
-                // Selector from uint — take last 4 bytes
-                let mut sel = [0u8; 4];
-                sel.copy_from_slice(&b[b.len() - 4..]);
-                Some(sel)
-            }
-            _ => None,
-        }) {
-        selector_bytes
-    } else {
-        let mut sel = [0u8; 4];
-        sel.copy_from_slice(&inner_calldata[..4]);
-        sel
-    };
+    let mut actual_selector = [0u8; 4];
+    actual_selector.copy_from_slice(&normalized_calldata[..4]);
 
     // Find matching signature
     let (sig, _format_key) =
@@ -1006,7 +1237,7 @@ async fn render_calldata_field(
         };
 
     // Decode inner calldata
-    let mut decoded = match crate::decoder::decode_calldata(&sig, inner_calldata) {
+    let mut decoded = match crate::decoder::decode_calldata(&sig, &normalized_calldata) {
         Ok(d) => d,
         Err(_) => {
             return Ok(build_raw_nested(label, inner_calldata));
@@ -2171,7 +2402,7 @@ mod tests {
                 format: Some(FieldFormat::Address),
                 params: None,
                 separator: None,
-                visible: VisibleRule::Named("never".to_string()),
+                visible: VisibleRule::Named(VisibleLiteral::Never),
             },
             DisplayField::Simple {
                 path: Some("1".to_string()),
@@ -2180,7 +2411,7 @@ mod tests {
                 format: Some(FieldFormat::Number),
                 params: None,
                 separator: None,
-                visible: VisibleRule::Named("never".to_string()),
+                visible: VisibleRule::Named(VisibleLiteral::Never),
             },
         ];
 
