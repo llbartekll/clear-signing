@@ -626,10 +626,30 @@ fn find_typed_format<'a>(
 
     match matches.len() {
         1 => Ok(matches[0].1),
-        0 => Err(Error::Descriptor(format!(
-            "no EIP-712 display format found for primaryType '{}' (expected encodeType '{}')",
-            data.primary_type, encode_type
-        ))),
+        0 => {
+            // ERC-7730 requires EIP-712 display.format keys to be encodeType(primaryType),
+            // but some production descriptors in the current registry still use the short
+            // primaryType as the key. Keep this exact-name fallback narrow and temporary:
+            // canonical encodeType always wins, and we never do prefix or fuzzy matching.
+            let mut legacy_matches = descriptor
+                .display
+                .formats
+                .iter()
+                .filter(|(key, _)| *key == &data.primary_type)
+                .collect::<Vec<_>>();
+
+            match legacy_matches.len() {
+                1 => Ok(legacy_matches.remove(0).1),
+                0 => Err(Error::Descriptor(format!(
+                    "no EIP-712 display format found for primaryType '{}' (expected encodeType '{}')",
+                    data.primary_type, encode_type
+                ))),
+                _ => Err(Error::Descriptor(format!(
+                    "multiple legacy EIP-712 display formats match primaryType '{}'",
+                    data.primary_type
+                ))),
+            }
+        }
         _ => {
             let keys: Vec<&str> = matches.iter().map(|(key, _)| key.as_str()).collect();
             Err(Error::Descriptor(format!(
@@ -743,6 +763,7 @@ fn resolve_typed_message_path(
     Some(current)
 }
 
+#[allow(dead_code)]
 pub(crate) fn resolve_typed_path(
     message: &serde_json::Value,
     path: &str,

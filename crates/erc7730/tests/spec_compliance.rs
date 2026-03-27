@@ -1444,7 +1444,7 @@ async fn test_eip712_encode_type_format_key() {
 }
 
 #[tokio::test]
-async fn test_eip712_bare_primary_type_key_rejected() {
+async fn test_eip712_bare_primary_type_key_falls_back_for_legacy_descriptor() {
     let descriptor = Descriptor::from_json(
         r#"{
             "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
@@ -1470,11 +1470,65 @@ async fn test_eip712_bare_primary_type_key_rejected() {
     }))
     .unwrap();
 
-    let err = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+    let result =
+        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("expected encodeType 'Permit(address spender)'"));
+        .unwrap();
+    assert_eq!(result.intent, "Permit");
+}
+
+#[tokio::test]
+async fn test_eip712_real_world_legacy_receive_with_authorization_key_still_formats() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 42161, "address": "0xaf88d065e77c8cc2239327c5edb3a432268e5831"}] } },
+            "metadata": { "owner": "Circle", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "ReceiveWithAuthorization": {
+                        "intent": "Authorize USDC transfer",
+                        "fields": [
+                            { "path": "from", "label": "From", "format": "addressName" },
+                            { "path": "to", "label": "To", "format": "addressName" },
+                            { "path": "value", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "@.to" } }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "ReceiveWithAuthorization": [
+                { "name": "from", "type": "address" },
+                { "name": "to", "type": "address" },
+                { "name": "value", "type": "uint256" },
+                { "name": "validAfter", "type": "uint256" },
+                { "name": "validBefore", "type": "uint256" },
+                { "name": "nonce", "type": "bytes32" }
+            ]
+        },
+        "primaryType": "ReceiveWithAuthorization",
+        "domain": { "chainId": 42161, "verifyingContract": "0xaf88d065e77c8cc2239327c5edb3a432268e5831" },
+        "message": {
+            "from": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+            "to": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+            "value": "6050000",
+            "validAfter": 1774607678,
+            "validBefore": 1774611338,
+            "nonce": "0x073a2d085bbb11c3d51a9ce8ed3105ed0892dbaa516b8f2d2853fd4d6e0054d4"
+        }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(&wrap_rd(descriptor, 42161, "0xaf88d065e77c8cc2239327c5edb3a432268e5831"), &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(result.intent, "Authorize USDC transfer");
 }
 
 #[tokio::test]
@@ -1509,6 +1563,48 @@ async fn test_eip712_prefix_only_format_key_rejected() {
         .unwrap_err()
         .to_string();
     assert!(err.contains("no EIP-712 display format found"));
+}
+
+#[tokio::test]
+async fn test_eip712_canonical_key_wins_over_legacy_primary_type_key() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit": {
+                        "intent": "Legacy Permit",
+                        "fields": [{ "path": "spender", "label": "Legacy", "format": "address" }]
+                    },
+                    "Permit(address spender)": {
+                        "intent": "Canonical Permit",
+                        "fields": [{ "path": "spender", "label": "Canonical", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let result =
+        format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
+    assert_eq!(result.intent, "Canonical Permit");
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Canonical"),
+        _ => panic!("expected Item"),
+    }
 }
 
 #[tokio::test]
