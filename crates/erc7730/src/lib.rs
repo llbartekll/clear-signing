@@ -871,6 +871,7 @@ mod tests {
                 chain_id: Some(1),
                 verifying_contract: Some("0xabc".to_string()),
                 salt: None,
+                extra: std::collections::HashMap::new(),
             },
             container: None,
             message: serde_json::json!({

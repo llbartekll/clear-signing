@@ -63,7 +63,7 @@ pub struct Eip712Info {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain: Option<Eip712Domain>,
 
-    /// Domain separator hash for validation (wallet-side).
+    /// Domain separator hash validated during typed-data formatting.
     #[serde(rename = "domainSeparator")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_separator: Option<String>,

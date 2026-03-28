@@ -12,6 +12,7 @@ use erc7730::{
 };
 use std::future::Future;
 use std::pin::Pin;
+use tiny_keccak::{Hasher, Keccak};
 
 fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
     vec![ResolvedDescriptor {
@@ -105,6 +106,52 @@ fn build_two_array_calldata(sig_str: &str, addrs: &[&str], values: &[u64]) -> Ve
     calldata.extend_from_slice(&addresses_encoded);
     calldata.extend_from_slice(&values_encoded);
     calldata
+}
+
+fn keccak256_test(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Keccak::v256();
+    hasher.update(bytes);
+    let mut output = [0u8; 32];
+    hasher.finalize(&mut output);
+    output
+}
+
+fn address_word(addr_hex: &str) -> [u8; 32] {
+    let bytes = hex::decode(addr_hex.strip_prefix("0x").unwrap_or(addr_hex)).unwrap();
+    let mut word = [0u8; 32];
+    word[12..].copy_from_slice(&bytes);
+    word
+}
+
+fn bytes32_word(hex_value: &str) -> [u8; 32] {
+    let bytes = hex::decode(hex_value.strip_prefix("0x").unwrap_or(hex_value)).unwrap();
+    let mut word = [0u8; 32];
+    word[..bytes.len()].copy_from_slice(&bytes);
+    word
+}
+
+fn domain_separator_hex(
+    type_signature: &str,
+    name: &str,
+    version: &str,
+    chain_id: u64,
+    verifying_contract: &str,
+    extra_fields: &[([u8; 32], &str)],
+) -> String {
+    let mut encoded = Vec::new();
+    encoded.extend_from_slice(&keccak256_test(type_signature.as_bytes()));
+    encoded.extend_from_slice(&keccak256_test(name.as_bytes()));
+    encoded.extend_from_slice(&keccak256_test(version.as_bytes()));
+    encoded.extend_from_slice(&uint_word(chain_id));
+    encoded.extend_from_slice(&address_word(verifying_contract));
+    for (word, field_type) in extra_fields {
+        if *field_type == "string" || *field_type == "bytes" {
+            encoded.extend_from_slice(&keccak256_test(word));
+        } else {
+            encoded.extend_from_slice(word);
+        }
+    }
+    format!("0x{}", hex::encode(keccak256_test(&encoded)))
 }
 
 struct BlockTimestampProvider(Option<u64>);

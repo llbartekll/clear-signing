@@ -139,7 +139,7 @@ The library supports v2 registry descriptor features:
 - **`interoperableAddressName` format**: ERC-7930 stub with fallback to `addressName`
 - **`date` encoding**: `"blockheight"` encoding shows block number instead of timestamp
 - **`selectorPath`/`chainIdPath`**: Cross-field selector and chain ID resolution for nested calldata
-- **`domainSeparator`**: EIP-712 context field (parsing only, validation is wallet-side)
+- **`domainSeparator`**: EIP-712 context field validated during typed-data formatting
 - **Factory context**: `factory` object with `deployEvent` and `deployments`
 - **EIP-712 shared-format parity**: Shared formatting behavior is expected to match calldata semantics for all supported EIP-712 format types, and spec-compliance tests are the guardrail for that parity
 - **EIP-712 AddressName**: Full senderAddress, sources, local/ENS resolution (parity with calldata)
