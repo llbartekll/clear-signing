@@ -660,9 +660,9 @@ fn parse_typed_bigint_value(value: &serde_json::Value, format_name: &str) -> Res
                 })?;
                 Ok(BigInt::from_bytes_be(Sign::Plus, &bytes))
             } else {
-                trimmed.parse::<BigInt>().map_err(|_| {
-                    Error::Render(format!("{format_name} field must be an integer"))
-                })
+                trimmed
+                    .parse::<BigInt>()
+                    .map_err(|_| Error::Render(format!("{format_name} field must be an integer")))
             }
         }
         _ => Err(Error::Render(format!(
@@ -671,7 +671,11 @@ fn parse_typed_bigint_value(value: &serde_json::Value, format_name: &str) -> Res
     }
 }
 
-fn domain_separator_field_error(field_name: Option<&str>, field_type: &str, reason: &str) -> String {
+fn domain_separator_field_error(
+    field_name: Option<&str>,
+    field_type: &str,
+    reason: &str,
+) -> String {
     match field_name {
         Some(name) => format!(
             "descriptor eip712.domainSeparator field '{}' ({}) {}",
@@ -1439,10 +1443,7 @@ fn encode_type_for_type(
     type_name: &str,
 ) -> Result<String, Error> {
     let primary_fields = types.get(type_name).ok_or_else(|| {
-        Error::Descriptor(format!(
-            "missing EIP-712 type definition '{}'",
-            type_name
-        ))
+        Error::Descriptor(format!("missing EIP-712 type definition '{}'", type_name))
     })?;
 
     let mut dependencies = std::collections::BTreeSet::new();

@@ -3272,6 +3272,552 @@ async fn test_eip712_domain_binding_ambiguity_errors() {
 }
 
 #[tokio::test]
+async fn test_eip712_domain_separator_exact_match_succeeds() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+    let separator = domain_separator_hex(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+        "Permit2",
+        "1",
+        1,
+        verifying_contract,
+        &[],
+    );
+
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{
+                "eip712": {{
+                    "deployments": [{{"chainId": 1, "address": "{verifying_contract}"}}],
+                    "domainSeparator": "{separator}"
+                }}
+            }},
+            "metadata": {{"owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "Permit(address spender)": {{
+                        "intent": "Permit",
+                        "fields": [{{ "path": "spender", "label": "Spender", "format": "address" }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, verifying_contract),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Spender"),
+        _ => panic!("expected Item"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_mismatch_rejects() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0x0000000000000000000000000000000000000abc"}],
+                    "domainSeparator": "0x1111111111111111111111111111111111111111111111111111111111111111"
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, verifying_contract),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domainSeparator mismatch"));
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_uppercase_prefix_validates() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+    let separator = domain_separator_hex(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+        "Permit2",
+        "1",
+        1,
+        verifying_contract,
+        &[],
+    );
+    let separator = format!("0X{}", separator.trim_start_matches("0x"));
+
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{
+                "eip712": {{
+                    "deployments": [{{"chainId": 1, "address": "{verifying_contract}"}}],
+                    "domainSeparator": "{separator}"
+                }}
+            }},
+            "metadata": {{"owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+            "display": {{ "definitions": {{}}, "formats": {{ "Permit(address spender)": {{ "intent": "Permit", "fields": [] }} }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    format_typed_data(
+        &wrap_rd(descriptor, 1, verifying_contract),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_missing_type_rejects() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0x0000000000000000000000000000000000000abc"}],
+                    "domainSeparator": "0x1111111111111111111111111111111111111111111111111111111111111111"
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, verifying_contract),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domainSeparator requires types.EIP712Domain"));
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_malformed_descriptor_hex_rejects() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0x0000000000000000000000000000000000000abc"}],
+                    "domainSeparator": "0x1234"
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, verifying_contract),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domainSeparator must be 32-byte hex"));
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_missing_domain_field_rejects() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+    let separator = domain_separator_hex(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+        "Permit2",
+        "1",
+        1,
+        verifying_contract,
+        &[],
+    );
+
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{
+                "eip712": {{
+                    "deployments": [{{"chainId": 1, "address": "{verifying_contract}"}}],
+                    "domainSeparator": "{separator}"
+                }}
+            }},
+            "metadata": {{"owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+            "display": {{ "definitions": {{}}, "formats": {{ "Permit(address spender)": {{ "intent": "Permit", "fields": [] }} }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, verifying_contract),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domainSeparator requires domain field 'version'"));
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_extension_field_participates_in_hashing() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+    let sub_account = "0x1111111111111111111111111111111111111111111111111111111111111111";
+    let separator = domain_separator_hex(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract,bytes32 subAccount)",
+        "Permit2",
+        "1",
+        1,
+        verifying_contract,
+        &[(bytes32_word(sub_account), "bytes32")],
+    );
+
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{
+                "eip712": {{
+                    "deployments": [{{"chainId": 1, "address": "{verifying_contract}"}}],
+                    "domainSeparator": "{separator}"
+                }}
+            }},
+            "metadata": {{"owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+            "display": {{ "definitions": {{}}, "formats": {{ "Permit(address spender)": {{ "intent": "Permit", "fields": [] }} }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" },
+                { "name": "subAccount", "type": "bytes32" }
+            ],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": verifying_contract,
+            "subAccount": sub_account
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    format_typed_data(
+        &wrap_rd(descriptor, 1, verifying_contract),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_selects_correct_descriptor() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+    let correct_separator = domain_separator_hex(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+        "Permit2",
+        "1",
+        1,
+        verifying_contract,
+        &[],
+    );
+
+    let descriptor_a = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0x0000000000000000000000000000000000000abc"}],
+                    "domainSeparator": "0x1111111111111111111111111111111111111111111111111111111111111111"
+                }
+            },
+            "metadata": {"owner": "a", "enums": {}, "constants": {}, "maps": {}},
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "A", "fields": [{ "path": "spender", "label": "Spender A", "format": "address" }] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let descriptor_b = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{
+                "eip712": {{
+                    "deployments": [{{"chainId": 1, "address": "{verifying_contract}"}}],
+                    "domainSeparator": "{correct_separator}"
+                }}
+            }},
+            "metadata": {{"owner": "b", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+            "display": {{ "definitions": {{}}, "formats": {{ "Permit(address spender)": {{ "intent": "B", "fields": [{{ "path": "spender", "label": "Spender B", "format": "address" }}] }} }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let descriptors = vec![
+        wrap_rd(descriptor_a, 1, verifying_contract)
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(descriptor_b, 1, verifying_contract)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+
+    let result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Spender B"),
+        _ => panic!("expected Item"),
+    }
+    assert_eq!(result.owner.as_deref(), Some("b"));
+}
+
+#[tokio::test]
+async fn test_eip712_domain_separator_ambiguity_errors() {
+    let verifying_contract = "0x0000000000000000000000000000000000000abc";
+    let separator = domain_separator_hex(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+        "Permit2",
+        "1",
+        1,
+        verifying_contract,
+        &[],
+    );
+
+    let descriptor_a = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{
+                "eip712": {{
+                    "deployments": [{{"chainId": 1, "address": "{verifying_contract}"}}],
+                    "domainSeparator": "{separator}"
+                }}
+            }},
+            "metadata": {{"owner": "a", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+            "display": {{ "definitions": {{}}, "formats": {{ "Permit(address spender)": {{ "intent": "A", "fields": [] }} }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let descriptor_b = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{
+                "eip712": {{
+                    "deployments": [{{"chainId": 1, "address": "{verifying_contract}"}}],
+                    "domainSeparator": "{separator}"
+                }}
+            }},
+            "metadata": {{"owner": "b", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+            "display": {{ "definitions": {{}}, "formats": {{ "Permit(address spender)": {{ "intent": "B", "fields": [] }} }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" }
+            ],
+            "Permit": [{ "name": "spender", "type": "address" }]
+        },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "1",
+            "chainId": 1,
+            "verifyingContract": verifying_contract
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let descriptors = vec![
+        wrap_rd(descriptor_a, 1, verifying_contract)
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(descriptor_b, 1, verifying_contract)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+
+    let err = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("multiple EIP-712 descriptors match"));
+}
+
+#[tokio::test]
 async fn test_eip712_sender_address_uses_container_from() {
     let descriptor = Descriptor::from_json(
         r#"{
