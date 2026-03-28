@@ -77,6 +77,9 @@ pub struct TypedDataDomain {
     #[serde(rename = "verifyingContract")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verifying_contract: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub salt: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -202,6 +205,118 @@ pub async fn format_typed_data(
         warnings,
         owner: descriptor.metadata.owner.clone(),
     })
+}
+
+fn normalize_hex_prefix_case(value: &str) -> String {
+    if let Some(rest) = value.strip_prefix("0X") {
+        format!("0x{rest}")
+    } else {
+        value.to_string()
+    }
+}
+
+pub(crate) fn validate_descriptor_domain_binding(
+    descriptor: &Descriptor,
+    data: &TypedData,
+) -> Result<(), Error> {
+    let crate::types::context::DescriptorContext::Eip712(ctx) = &descriptor.context else {
+        return Err(Error::Descriptor(
+            "typed-data descriptor must use eip712 context".to_string(),
+        ));
+    };
+
+    let Some(expected_domain) = ctx.eip712.domain.as_ref() else {
+        return Ok(());
+    };
+
+    if let Some(expected_name) = expected_domain.name.as_deref() {
+        match data.domain.name.as_deref() {
+            Some(actual_name) if actual_name == expected_name => {}
+            Some(_) => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.name mismatch".to_string(),
+                ));
+            }
+            None => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.name is required by descriptor but missing from typed data"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    if let Some(expected_version) = expected_domain.version.as_deref() {
+        match data.domain.version.as_deref() {
+            Some(actual_version) if actual_version == expected_version => {}
+            Some(_) => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.version mismatch".to_string(),
+                ));
+            }
+            None => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.version is required by descriptor but missing from typed data"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    if let Some(expected_chain_id) = expected_domain.chain_id {
+        match data.domain.chain_id {
+            Some(actual_chain_id) if actual_chain_id == expected_chain_id => {}
+            Some(_) => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.chainId mismatch".to_string(),
+                ));
+            }
+            None => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.chainId is required by descriptor but missing from typed data"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    if let Some(expected_contract) = expected_domain.verifying_contract.as_deref() {
+        match data.domain.verifying_contract.as_deref() {
+            Some(actual_contract) if actual_contract.eq_ignore_ascii_case(expected_contract) => {}
+            Some(_) => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.verifyingContract mismatch".to_string(),
+                ));
+            }
+            None => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.verifyingContract is required by descriptor but missing from typed data"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    if let Some(expected_salt) = expected_domain.salt.as_deref() {
+        match data.domain.salt.as_deref() {
+            Some(actual_salt)
+                if normalize_hex_prefix_case(actual_salt)
+                    == normalize_hex_prefix_case(expected_salt) => {}
+            Some(_) => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.salt mismatch".to_string(),
+                ));
+            }
+            None => {
+                return Err(Error::Descriptor(
+                    "descriptor eip712.domain.salt is required by descriptor but missing from typed data"
+                        .to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn filter_excluded_fields(fields: &[DisplayField], excluded: &[String]) -> Vec<DisplayField> {

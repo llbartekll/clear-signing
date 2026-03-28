@@ -2683,6 +2683,548 @@ async fn test_eip712_outer_descriptor_match_is_required() {
 }
 
 #[tokio::test]
+async fn test_eip712_descriptor_domain_name_match_succeeds() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "name": "Permit2" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "chainId": 1,
+            "verifyingContract": "0xabc"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Spender"),
+        _ => panic!("expected Item"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_name_mismatch_rejects() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "name": "Permit2" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Other",
+            "chainId": 1,
+            "verifyingContract": "0xabc"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domain.name mismatch"));
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_version_mismatch_rejects() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "version": "1" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "version": "2",
+            "chainId": 1,
+            "verifyingContract": "0xabc"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domain.version mismatch"));
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_chain_id_mismatch_rejects_after_deployment_match() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "chainId": 10 }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "chainId": 1,
+            "verifyingContract": "0xabc"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domain.chainId mismatch"));
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_verifying_contract_match_is_case_insensitive() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xaBc"}],
+                    "domain": { "verifyingContract": "0xaBc" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "chainId": 1,
+            "verifyingContract": "0xAbC"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xaBc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Spender"),
+        _ => panic!("expected Item"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_salt_match_succeeds() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "salt": "0xdeadbeef" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "chainId": 1,
+            "verifyingContract": "0xabc",
+            "salt": "0Xdeadbeef"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Spender"),
+        _ => panic!("expected Item"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_salt_mismatch_rejects() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "salt": "0xdeadbeef" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "chainId": 1,
+            "verifyingContract": "0xabc",
+            "salt": "0xbeefdead"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("descriptor eip712.domain.salt mismatch"));
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_salt_missing_rejects() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "salt": "0xdeadbeef" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "chainId": 1,
+            "verifyingContract": "0xabc"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let err = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains(
+        "descriptor eip712.domain.salt is required by descriptor but missing from typed data"
+    ));
+}
+
+#[tokio::test]
+async fn test_eip712_descriptor_domain_omitted_field_is_not_enforced() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "name": "Permit2" }
+                }
+            },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit",
+                        "fields": [{ "path": "spender", "label": "Spender", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "version": "7",
+            "chainId": 1,
+            "verifyingContract": "0xabc",
+            "salt": "0x1234"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Spender"),
+        _ => panic!("expected Item"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_domain_binding_selects_correct_descriptor() {
+    let descriptor_a = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "name": "Permit2" }
+                }
+            },
+            "metadata": { "owner": "a", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit A",
+                        "fields": [{ "path": "spender", "label": "Spender A", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let descriptor_b = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "name": "AllowanceTransfer" }
+                }
+            },
+            "metadata": { "owner": "b", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Permit(address spender)": {
+                        "intent": "Permit B",
+                        "fields": [{ "path": "spender", "label": "Spender B", "format": "address" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "AllowanceTransfer",
+            "chainId": 1,
+            "verifyingContract": "0xabc"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let descriptors = vec![
+        wrap_rd(descriptor_a, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(descriptor_b, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+
+    let result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Spender B"),
+        _ => panic!("expected Item"),
+    }
+    assert_eq!(result.owner.as_deref(), Some("b"));
+}
+
+#[tokio::test]
+async fn test_eip712_domain_binding_ambiguity_errors() {
+    let descriptor_a = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "name": "Permit2" }
+                }
+            },
+            "metadata": { "owner": "a", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit A", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let descriptor_b = Descriptor::from_json(
+        r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}],
+                    "domain": { "name": "Permit2" }
+                }
+            },
+            "metadata": { "owner": "b", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "Permit(address spender)": { "intent": "Permit B", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Permit": [{ "name": "spender", "type": "address" }] },
+        "primaryType": "Permit",
+        "domain": {
+            "name": "Permit2",
+            "chainId": 1,
+            "verifyingContract": "0xabc"
+        },
+        "message": { "spender": "0x1234567890123456789012345678901234567890" }
+    }))
+    .unwrap();
+
+    let descriptors = vec![
+        wrap_rd(descriptor_a, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(descriptor_b, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+
+    let err = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap_err()
+        .to_string();
+
+    assert!(err.contains("multiple EIP-712 descriptors match"));
+}
+
+#[tokio::test]
 async fn test_eip712_sender_address_uses_container_from() {
     let descriptor = Descriptor::from_json(
         r#"{

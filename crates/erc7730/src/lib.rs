@@ -243,22 +243,51 @@ pub async fn format_typed_data(
         )
     })?;
 
-    // Find the outer descriptor matching chain_id + verifying_contract
-    let outer_idx = descriptors.iter().position(|rd| {
-        rd.descriptor.context.deployments().iter().any(|dep| {
-            dep.chain_id == chain_id
-                && dep.address.to_lowercase() == verifying_contract.to_lowercase()
-        })
-    });
+    let mut matching_descriptors = Vec::new();
+    let mut domain_errors = Vec::new();
 
-    let outer_idx = outer_idx.ok_or_else(|| {
-        Error::Descriptor(format!(
-            "no EIP-712 descriptor found for chain_id={} verifying_contract={}",
-            chain_id, verifying_contract
-        ))
-    })?;
+    for descriptor in descriptors {
+        let deployment_matches = descriptor
+            .descriptor
+            .context
+            .deployments()
+            .iter()
+            .any(|dep| {
+                dep.chain_id == chain_id
+                    && dep.address.to_lowercase() == verifying_contract.to_lowercase()
+            });
+        if !deployment_matches {
+            continue;
+        }
 
-    let outer_descriptor = &descriptors[outer_idx].descriptor;
+        match eip712::validate_descriptor_domain_binding(&descriptor.descriptor, data) {
+            Ok(()) => matching_descriptors.push(&descriptor.descriptor),
+            Err(Error::Descriptor(message)) => domain_errors.push(message),
+            Err(err) => return Err(err),
+        }
+    }
+
+    let outer_descriptor = match matching_descriptors.len() {
+        1 => matching_descriptors[0],
+        0 => {
+            let mut message = format!(
+                "no EIP-712 descriptor found for chain_id={} verifying_contract={} after domain validation",
+                chain_id, verifying_contract
+            );
+            if !domain_errors.is_empty() {
+                message.push_str(": ");
+                message.push_str(&domain_errors.join("; "));
+            }
+            return Err(Error::Descriptor(message));
+        }
+        _ => {
+            return Err(Error::Descriptor(format!(
+                "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain validation",
+                chain_id, verifying_contract
+            )));
+        }
+    };
+
     eip712::format_typed_data(outer_descriptor, data, data_provider, descriptors).await
 }
 
@@ -841,6 +870,7 @@ mod tests {
                 version: Some("1".to_string()),
                 chain_id: Some(1),
                 verifying_contract: Some("0xabc".to_string()),
+                salt: None,
             },
             container: None,
             message: serde_json::json!({
