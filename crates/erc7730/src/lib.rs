@@ -8,6 +8,7 @@ uniffi::setup_scaffolding!();
 
 pub mod decoder;
 pub mod eip712;
+mod eip712_domain;
 pub mod engine;
 pub mod error;
 pub mod merge;
