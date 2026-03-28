@@ -7,7 +7,7 @@ let useLocal = true //ProcessInfo.processInfo.environment["USE_LOCAL_RUST_XCFRAM
 let package = Package(
     name: "Erc7730",
     platforms: [
-        .iOS(.v17)
+        .iOS(.v16)
     ],
     products: [
         .library(name: "Erc7730", targets: ["Erc7730"])

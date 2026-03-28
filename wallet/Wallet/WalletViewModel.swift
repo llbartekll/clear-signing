@@ -5,40 +5,39 @@ import ReownWalletKit
 
 private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "WalletViewModel")
 
-@Observable
-final class WalletViewModel {
+final class WalletViewModel: ObservableObject {
 
     // Key management
-    var privateKeyHex = ""
-    var ethereumAddress: String?
-    var keyError: String?
+    @Published var privateKeyHex = ""
+    @Published var ethereumAddress: String?
+    @Published var keyError: String?
 
     // WalletConnect
-    var pairingURI = ""
-    var isPaired = false
-    var pairingError: String?
+    @Published var pairingURI = ""
+    @Published var isPaired = false
+    @Published var pairingError: String?
 
     // Sessions
-    var activeSessions: [Session] = []
+    @Published var activeSessions: [Session] = []
 
     // Proposal
-    var pendingProposal: Session.Proposal?
-    var showProposal = false
+    @Published var pendingProposal: Session.Proposal?
+    @Published var showProposal = false
 
     // Request
-    var pendingRequest: Request?
-    var displayModel: DisplayModel?
-    var requestError: String?
-    var rawRequestJSON: String?
-    var showRequest = false
+    @Published var pendingRequest: Request?
+    @Published var displayModel: DisplayModel?
+    @Published var requestError: String?
+    @Published var rawRequestJSON: String?
+    @Published var showRequest = false
 
     // QR
-    var showScanner = false
+    @Published var showScanner = false
 
     private var keyManager: KeyManager?
     private let clearSigning: ClearSigningService
     private let wc = WalletConnectService.shared
-    var wcConfigured = false
+    @Published var wcConfigured = false
 
     init(metadataProvider: DataProviderFfi) {
         clearSigning = ClearSigningService(dataProvider: metadataProvider)

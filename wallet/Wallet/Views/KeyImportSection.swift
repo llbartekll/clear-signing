@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct KeyImportSection: View {
-    @Bindable var viewModel: WalletViewModel
+    @ObservedObject var viewModel: WalletViewModel
 
     var body: some View {
         Section("Ethereum Key") {

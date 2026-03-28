@@ -2,11 +2,11 @@ import SwiftUI
 
 @main
 struct WalletApp: App {
-    private let viewModel: WalletViewModel
+    @StateObject private var viewModel: WalletViewModel
 
     init() {
         let metadataProvider = WalletMetadataProvider.live()
-        viewModel = WalletViewModel(metadataProvider: metadataProvider)
+        _viewModel = StateObject(wrappedValue: WalletViewModel(metadataProvider: metadataProvider))
     }
 
     var body: some Scene {

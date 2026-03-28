@@ -2,11 +2,7 @@ import SwiftUI
 import ReownWalletKit
 
 struct ContentView: View {
-    @State private var viewModel: WalletViewModel
-
-    init(viewModel: WalletViewModel) {
-        _viewModel = State(initialValue: viewModel)
-    }
+    @ObservedObject var viewModel: WalletViewModel
 
     var body: some View {
         NavigationStack {
