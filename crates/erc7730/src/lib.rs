@@ -246,39 +246,39 @@ pub async fn format_typed_data(
         )
     })?;
 
-    let selection = resolver::select_matching_typed_descriptors(descriptors, data)?;
+    let selection = resolver::select_typed_outer_descriptor(descriptors, data)?;
 
-    let outer_descriptor = match selection.matches.len() {
-        1 => &selection.matches[0].descriptor,
-        0 => {
-            if selection.domain_errors.is_empty() && selection.format_misses.len() == 1 {
-                return Err(eip712::find_typed_format(
-                    &selection.format_misses[0].descriptor,
-                    data,
-                )
-                .expect_err("single format miss must still fail exact format lookup"));
+    let selected = match selection {
+        resolver::TypedOuterSelection::Selected(selected) => selected,
+        resolver::TypedOuterSelection::NoMatch(no_match) => {
+            if no_match.domain_errors.is_empty() && no_match.format_misses.len() == 1 {
+                return Err(
+                    eip712::find_typed_format(&no_match.format_misses[0].descriptor, data)
+                        .expect_err("single format miss must still fail exact format lookup"),
+                );
             }
             let mut message = format!(
                 "no EIP-712 descriptor found for chain_id={} verifying_contract={} after domain and encodeType validation",
                 chain_id, verifying_contract
             );
-            if !selection.domain_errors.is_empty() {
+            if !no_match.domain_errors.is_empty() {
                 message.push_str(": ");
-                message.push_str(&selection.domain_errors.join("; "));
-            } else if !selection.format_misses.is_empty() {
+                message.push_str(&no_match.domain_errors.join("; "));
+            } else if !no_match.format_misses.is_empty() {
                 message.push_str(": no descriptor matched the typed-data encodeType");
             }
             return Err(Error::Descriptor(message));
         }
-        _ => {
-            return Err(Error::Descriptor(format!(
-                "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain and encodeType validation",
-                chain_id, verifying_contract
-            )));
-        }
     };
 
-    eip712::format_typed_data(outer_descriptor, data, data_provider, descriptors).await
+    eip712::format_typed_data_with_format(
+        &selected.outer.descriptor,
+        data,
+        selected.format,
+        data_provider,
+        descriptors,
+    )
+    .await
 }
 
 /// Find a format key whose signature matches the calldata selector.

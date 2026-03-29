@@ -25,7 +25,8 @@ use crate::render_shared::{
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
-    DisplayField, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleLiteral, VisibleRule,
+    DisplayField, DisplayFormat, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleLiteral,
+    VisibleRule,
 };
 
 /// Maximum recursion depth for nested calldata in EIP-712 context.
@@ -164,9 +165,18 @@ pub async fn format_typed_data(
     data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
-    let container = TypedContainerContext::from_typed_data(data);
     let format = find_typed_format(descriptor, data)?;
+    format_typed_data_with_format(descriptor, data, format, data_provider, descriptors).await
+}
 
+pub(crate) async fn format_typed_data_with_format(
+    descriptor: &Descriptor,
+    data: &TypedData,
+    format: &DisplayFormat,
+    data_provider: &dyn DataProvider,
+    descriptors: &[ResolvedDescriptor],
+) -> Result<DisplayModel, Error> {
+    let container = TypedContainerContext::from_typed_data(data);
     let mut warnings = Vec::new();
     let expanded_fields =
         crate::engine::expand_display_fields(descriptor, &format.fields, &mut warnings);

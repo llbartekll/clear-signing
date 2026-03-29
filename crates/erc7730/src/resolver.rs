@@ -9,6 +9,7 @@ use std::pin::Pin;
 
 use crate::error::{Error, ResolveError};
 use crate::types::descriptor::Descriptor;
+use crate::types::display::DisplayFormat;
 
 /// A resolved descriptor ready for use.
 #[derive(Debug, Clone)]
@@ -573,29 +574,36 @@ fn resolve_relative_path(base: &str, relative: &str) -> String {
     }
 }
 
-pub(crate) struct TypedOuterSelection<'a> {
-    pub matches: Vec<&'a ResolvedDescriptor>,
+pub(crate) struct SelectedTypedDescriptor<'a> {
+    pub outer: &'a ResolvedDescriptor,
+    pub format: &'a DisplayFormat,
+}
+
+pub(crate) struct TypedOuterNoMatch<'a> {
     pub domain_errors: Vec<String>,
     pub format_misses: Vec<&'a ResolvedDescriptor>,
 }
 
-pub(crate) fn select_matching_typed_descriptors<'a>(
+pub(crate) enum TypedOuterSelection<'a> {
+    Selected(SelectedTypedDescriptor<'a>),
+    NoMatch(TypedOuterNoMatch<'a>),
+}
+
+pub(crate) fn select_typed_outer_descriptor<'a>(
     descriptors: &'a [ResolvedDescriptor],
     data: &crate::eip712::TypedData,
 ) -> Result<TypedOuterSelection<'a>, Error> {
     let Some(chain_id) = data.domain.chain_id else {
-        return Ok(TypedOuterSelection {
-            matches: Vec::new(),
+        return Ok(TypedOuterSelection::NoMatch(TypedOuterNoMatch {
             domain_errors: Vec::new(),
             format_misses: Vec::new(),
-        });
+        }));
     };
     let Some(verifying_contract) = data.domain.verifying_contract.as_deref() else {
-        return Ok(TypedOuterSelection {
-            matches: Vec::new(),
+        return Ok(TypedOuterSelection::NoMatch(TypedOuterNoMatch {
             domain_errors: Vec::new(),
             format_misses: Vec::new(),
-        });
+        }));
     };
 
     let mut matches = Vec::new();
@@ -625,16 +633,25 @@ pub(crate) fn select_matching_typed_descriptors<'a>(
         }
 
         match crate::eip712::find_typed_format_optional(&descriptor.descriptor, data)? {
-            Some(_) => matches.push(descriptor),
+            Some(format) => matches.push(SelectedTypedDescriptor {
+                outer: descriptor,
+                format,
+            }),
             None => format_misses.push(descriptor),
         }
     }
 
-    Ok(TypedOuterSelection {
-        matches,
-        domain_errors,
-        format_misses,
-    })
+    match matches.len() {
+        1 => Ok(TypedOuterSelection::Selected(matches.pop().expect("single match"))),
+        0 => Ok(TypedOuterSelection::NoMatch(TypedOuterNoMatch {
+            domain_errors,
+            format_misses,
+        })),
+        _ => Err(Error::Descriptor(format!(
+            "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain and encodeType validation",
+            chain_id, verifying_contract
+        ))),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1037,27 +1054,23 @@ pub async fn resolve_descriptors_for_typed_data(
         Err(e) => return Err(e),
     };
 
-    let selection = select_matching_typed_descriptors(&candidates, typed_data)
+    let selection = select_typed_outer_descriptor(&candidates, typed_data)
         .map_err(|e| ResolveError::Parse(e.to_string()))?;
-    let outer = match selection.matches.len() {
-        1 => selection.matches[0].clone(),
-        0 => return Ok(results),
-        _ => {
-            return Err(ResolveError::Parse(format!(
-                "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain and encodeType validation",
-                chain_id, verifying_contract
-            )))
-        }
+    let selected = match selection {
+        TypedOuterSelection::Selected(selected) => selected,
+        TypedOuterSelection::NoMatch(_) => return Ok(results),
     };
 
-    let format = crate::eip712::find_typed_format(&outer.descriptor, typed_data)
-        .map_err(|e| ResolveError::Parse(e.to_string()))?;
     let mut warnings = Vec::new();
-    let expanded =
-        crate::engine::expand_display_fields(&outer.descriptor, &format.fields, &mut warnings);
-    let calldata_fields = collect_calldata_fields(&expanded, &outer.descriptor.display.definitions);
+    let expanded = crate::engine::expand_display_fields(
+        &selected.outer.descriptor,
+        &selected.format.fields,
+        &mut warnings,
+    );
+    let calldata_fields =
+        collect_calldata_fields(&expanded, &selected.outer.descriptor.display.definitions);
 
-    results.push(outer);
+    results.push(selected.outer.clone());
 
     for field in &calldata_fields {
         let callee_addr = match resolve_typed_nested_callee_for_resolver(
@@ -1378,6 +1391,18 @@ mod tests {
         Descriptor::from_json(&descriptor.to_string()).expect("descriptor")
     }
 
+    fn resolved_permit2_descriptor(
+        owner: &str,
+        format_key: &str,
+        extra_context: Option<serde_json::Value>,
+    ) -> ResolvedDescriptor {
+        ResolvedDescriptor {
+            descriptor: permit2_descriptor(owner, format_key, extra_context),
+            chain_id: 1,
+            address: "0x000000000022d473030f116ddee9f6b43ac78ba3".to_string(),
+        }
+    }
+
     fn exclusive_dutch_order_typed_data() -> TypedData {
         serde_json::from_value(serde_json::json!({
             "types": {
@@ -1623,6 +1648,81 @@ mod tests {
             .await
             .expect("format");
         assert_eq!(model.intent, "Exclusive Dutch Order");
+    }
+
+    #[test]
+    fn test_select_typed_outer_descriptor_returns_selected_format() {
+        let typed_data = exclusive_dutch_order_typed_data();
+        let format_key = "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)";
+        let descriptors = vec![
+            resolved_permit2_descriptor("Wrong Shape", "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,DutchOrder witness)DutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)", None),
+            resolved_permit2_descriptor("Exclusive Dutch Order", format_key, None),
+        ];
+
+        match select_typed_outer_descriptor(&descriptors, &typed_data).expect("selection") {
+            TypedOuterSelection::Selected(selected) => {
+                assert_eq!(
+                    selected.outer.descriptor.metadata.owner.as_deref(),
+                    Some("Exclusive Dutch Order")
+                );
+                assert_eq!(
+                    selected
+                        .format
+                        .intent
+                        .as_ref()
+                        .map(crate::types::display::intent_as_string)
+                        .as_deref(),
+                    Some("Exclusive Dutch Order")
+                );
+            }
+            TypedOuterSelection::NoMatch(_) => panic!("expected selected match"),
+        }
+    }
+
+    #[test]
+    fn test_select_typed_outer_descriptor_reports_single_format_miss() {
+        let typed_data = exclusive_dutch_order_typed_data();
+        let descriptors = vec![resolved_permit2_descriptor(
+            "Wrong Shape",
+            "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,DutchOrder witness)DutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)",
+            None,
+        )];
+
+        match select_typed_outer_descriptor(&descriptors, &typed_data).expect("selection") {
+            TypedOuterSelection::Selected(_) => panic!("expected no match"),
+            TypedOuterSelection::NoMatch(no_match) => {
+                assert!(no_match.domain_errors.is_empty());
+                assert_eq!(no_match.format_misses.len(), 1);
+                let err = crate::eip712::find_typed_format(
+                    &no_match.format_misses[0].descriptor,
+                    &typed_data,
+                )
+                .expect_err("single format miss should produce exact mismatch error");
+                assert!(err.to_string().contains("expected encodeType"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_select_typed_outer_descriptor_retains_domain_errors() {
+        let typed_data = exclusive_dutch_order_typed_data();
+        let format_key = "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)";
+        let descriptors = vec![resolved_permit2_descriptor(
+            "Wrong Domain",
+            format_key,
+            Some(serde_json::json!({
+                "domain": { "name": "Not Permit2" }
+            })),
+        )];
+
+        match select_typed_outer_descriptor(&descriptors, &typed_data).expect("selection") {
+            TypedOuterSelection::Selected(_) => panic!("expected no match"),
+            TypedOuterSelection::NoMatch(no_match) => {
+                assert!(no_match.format_misses.is_empty());
+                assert_eq!(no_match.domain_errors.len(), 1);
+                assert!(no_match.domain_errors[0].contains("domain.name mismatch"));
+            }
+        }
     }
 
     #[tokio::test]
