@@ -1,0 +1,99 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "domain": {
+        "name": "Permit2"
+      },
+      "deployments": [
+        {
+          "chainId": 10,
+          "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "owner": "Uniswap Labs",
+    "info": {
+      "deploymentDate": "2021-12-14T00:00:00Z",
+      "url": "https://uniswap.org/"
+    }
+  },
+  "display": {
+    "formats": {
+      "PermitSingle(PermitDetails details,address spender,uint256 sigDeadline)PermitDetails(address token,uint160 amount,uint48 expiration,uint48 nonce)": {
+        "$id": "Permit2 Permit Single",
+        "intent": "Authorize spending of token",
+        "fields": [
+          {
+            "path": "spender",
+            "label": "Spender",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "path": "details.amount",
+            "label": "Amount allowance",
+            "format": "tokenAmount",
+            "params": {
+              "tokenPath": "details.token"
+            },
+            "visible": "always"
+          },
+          {
+            "path": "details.expiration",
+            "label": "Approval expires",
+            "format": "date",
+            "params": {
+              "encoding": "timestamp"
+            }
+          },
+          {
+            "label": "Sig Deadline",
+            "path": "sigDeadline",
+            "visible": "never"
+          }
+        ]
+      },
+      "PermitBatch(PermitDetails[] details,address spender,uint256 sigDeadline)PermitDetails(address token,uint160 amount,uint48 expiration,uint48 nonce)": {
+        "$id": "Permit2 Permit Batch",
+        "intent": "Authorize spending of tokens",
+        "fields": [
+          {
+            "path": "spender",
+            "label": "Spender",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "path": "details.[]",
+            "fields": [
+              {
+                "path": "amount",
+                "label": "Amount allowance",
+                "format": "tokenAmount",
+                "params": {
+                  "tokenPath": "token"
+                }
+              },
+              {
+                "path": "expiration",
+                "label": "Approval expires",
+                "format": "date",
+                "params": {
+                  "encoding": "timestamp"
+                }
+              }
+            ]
+          },
+          {
+            "label": "Sig Deadline",
+            "path": "sigDeadline",
+            "visible": "never"
+          }
+        ]
+      }
+    }
+  }
+}
