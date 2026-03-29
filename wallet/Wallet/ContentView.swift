@@ -13,6 +13,7 @@ struct ContentView: View {
                 if viewModel.ethereumAddress != nil, viewModel.wcConfigured {
                     walletConnectSection
                     sessionsSection
+                    calldataDiagnosticsSection
                     typedDataDiagnosticsSection
                 } else if viewModel.ethereumAddress != nil, !viewModel.wcConfigured {
                     Section("WalletConnect") {
@@ -43,7 +44,8 @@ struct ContentView: View {
                     displayModel: viewModel.displayModel,
                     error: viewModel.requestError,
                     rawJSON: viewModel.rawRequestJSON,
-                    typedDataCaptureJSON: viewModel.currentTypedDataCapture?.exportJSONString,
+                    diagnosticCaptureJSON: viewModel.currentTypedDataCapture?.exportJSONString
+                        ?? viewModel.currentCalldataCapture?.exportJSONString,
                     onApprove: { viewModel.approveRequest() },
                     onReject: { viewModel.rejectRequest() }
                 )
@@ -143,6 +145,41 @@ struct ContentView: View {
             }
         } header: {
             Text("Typed Data Diagnostics")
+        } footer: {
+            Text("Tap a capture to copy the structured diagnostic JSON.")
+        }
+    }
+
+    private var calldataDiagnosticsSection: some View {
+        Section {
+            if viewModel.recentCalldataCaptures.isEmpty {
+                Text("No calldata captures yet")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+            } else {
+                ForEach(Array(viewModel.recentCalldataCaptures.prefix(5))) { capture in
+                    Button {
+                        UIPasteboard.general.string = capture.exportJSONString
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(capture.clearSigningIntent ?? capture.method)
+                                .font(.subheadline)
+                            Text(capture.outcome.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if let address = capture.matchedAddress ?? capture.to {
+                                Text(address)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        } header: {
+            Text("Calldata Diagnostics")
         } footer: {
             Text("Tap a capture to copy the structured diagnostic JSON.")
         }

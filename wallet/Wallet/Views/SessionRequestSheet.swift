@@ -7,7 +7,7 @@ struct SessionRequestSheet: View {
     let displayModel: DisplayModel?
     let error: String?
     let rawJSON: String?
-    let typedDataCaptureJSON: String?
+    let diagnosticCaptureJSON: String?
     let onApprove: () -> Void
     let onReject: () -> Void
 
@@ -56,12 +56,12 @@ struct SessionRequestSheet: View {
                         }
                     }
 
-                    if let typedDataCaptureJSON {
+                    if let diagnosticCaptureJSON {
                         DisclosureGroup("Diagnostic Capture", isExpanded: $showDiagnostics) {
                             Button {
-                                copyToClipboard(typedDataCaptureJSON)
+                                copyToClipboard(diagnosticCaptureJSON)
                             } label: {
-                                Text(typedDataCaptureJSON)
+                                Text(diagnosticCaptureJSON)
                                     .font(.caption2.monospaced())
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -21,6 +21,35 @@ struct ClearSigningService {
         value: String?,
         from: String?
     ) async -> Result<DisplayModel, Error> {
+        let outcome = await formatCalldataDetailed(
+            chainId: chainId,
+            to: to,
+            calldata: calldata,
+            value: value,
+            from: from
+        )
+        if let model = outcome.model {
+            return .success(model)
+        }
+        return .failure(
+            outcome.error
+                ?? NSError(domain: "ClearSigningService", code: -1, userInfo: nil)
+        )
+    }
+
+    func formatCalldataDetailed(
+        chainId: UInt64,
+        to: String,
+        calldata: String,
+        value: String?,
+        from: String?
+    ) async -> CalldataFormattingOutcome {
+        let implementationAddress = dataProvider.getImplementationAddress(chainId: chainId, address: to)
+        let matchedAddress = implementationAddress ?? to
+        let usedImplementationAddress = implementationAddress.map {
+            $0.caseInsensitiveCompare(to) != .orderedSame
+        } ?? false
+
         do {
             let tx = TransactionInput(
                 chainId: chainId,
@@ -30,21 +59,55 @@ struct ClearSigningService {
                 fromAddress: from
             )
 
-            // Single call resolves outer + any nested descriptors (e.g., Safe → inner contract).
-            // Automatically detects proxies via dataProvider.getImplementationAddress().
+            log.info(
+                "Resolving calldata descriptors to=\(to) matched=\(matchedAddress) chainId=\(chainId)"
+            )
             let descriptors = try await erc7730ResolveDescriptorsForTx(
                 transaction: tx,
                 dataProvider: dataProvider
             )
+            let descriptorOwners = descriptors.compactMap(Self.descriptorOwner)
+            log.info("Resolved \(descriptors.count) calldata descriptors")
 
-            let model = try await erc7730FormatCalldata(
-                descriptorsJson: descriptors,
-                transaction: tx,
-                dataProvider: dataProvider
-            )
-            return .success(model)
+            do {
+                let model = try await erc7730FormatCalldata(
+                    descriptorsJson: descriptors,
+                    transaction: tx,
+                    dataProvider: dataProvider
+                )
+                log.info("Calldata formatting OK: intent=\(model.intent) warnings=\(model.warnings.count)")
+                return CalldataFormattingOutcome(
+                    descriptorOwners: descriptorOwners,
+                    model: model,
+                    error: nil,
+                    failedStage: nil,
+                    implementationAddress: implementationAddress,
+                    matchedAddress: matchedAddress,
+                    usedImplementationAddress: usedImplementationAddress
+                )
+            } catch {
+                log.error("Calldata formatting failed: \(error)")
+                return CalldataFormattingOutcome(
+                    descriptorOwners: descriptorOwners,
+                    model: nil,
+                    error: error,
+                    failedStage: .format,
+                    implementationAddress: implementationAddress,
+                    matchedAddress: matchedAddress,
+                    usedImplementationAddress: usedImplementationAddress
+                )
+            }
         } catch {
-            return .failure(error)
+            log.error("Calldata descriptor resolution failed: \(error)")
+            return CalldataFormattingOutcome(
+                descriptorOwners: [],
+                model: nil,
+                error: error,
+                failedStage: .resolve,
+                implementationAddress: implementationAddress,
+                matchedAddress: matchedAddress,
+                usedImplementationAddress: usedImplementationAddress
+            )
         }
     }
 

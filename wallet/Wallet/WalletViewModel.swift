@@ -30,6 +30,8 @@ final class WalletViewModel: ObservableObject {
     @Published var requestError: String?
     @Published var rawRequestJSON: String?
     @Published var showRequest = false
+    @Published var currentCalldataCapture: CalldataCapture?
+    @Published var recentCalldataCaptures: [CalldataCapture] = []
     @Published var currentTypedDataCapture: TypedDataCapture?
     @Published var recentTypedDataCaptures: [TypedDataCapture] = []
 
@@ -78,6 +80,8 @@ final class WalletViewModel: ObservableObject {
                 displayModel = nil
                 requestError = nil
                 rawRequestJSON = nil
+                currentCalldataCapture = nil
+                currentTypedDataCapture = nil
                 showProposal = false
                 showRequest = false
             }
@@ -178,6 +182,7 @@ final class WalletViewModel: ObservableObject {
         displayModel = nil
         requestError = nil
         rawRequestJSON = nil
+        currentCalldataCapture = nil
         currentTypedDataCapture = nil
 
         let method = request.method
@@ -232,6 +237,12 @@ final class WalletViewModel: ObservableObject {
         Task {
             try? await wc.rejectRequest(request)
             await MainActor.run {
+                if request.method == "eth_sendTransaction" {
+                    self.updateCurrentCalldataCapture { capture in
+                        capture.outcome = .rejected
+                        capture.notes.append("User rejected the request")
+                    }
+                }
                 if request.method == "eth_signTypedData" || request.method == "eth_signTypedData_v4" {
                     self.updateCurrentTypedDataCapture { capture in
                         capture.outcome = .rejected
@@ -267,6 +278,14 @@ final class WalletViewModel: ObservableObject {
                         privateKeyHex: keyManager.privateKeyHex,
                         expectedAddress: expectedAddress
                     )
+                    await MainActor.run {
+                        self.updateCurrentCalldataCapture { capture in
+                            capture.expectedAddress = expectedAddress
+                            capture.outcome = .signingSucceeded
+                            capture.notes.append("Transaction signed and sent successfully")
+                            capture.notes.append("Transaction hash \(txHash)")
+                        }
+                    }
                     responseValue = AnyCodable(txHash)
 
                 case "eth_signTypedData", "eth_signTypedData_v4":
@@ -331,6 +350,14 @@ final class WalletViewModel: ObservableObject {
                 )
 
                 await MainActor.run {
+                    if request.method == "eth_sendTransaction" {
+                        self.updateCurrentCalldataCapture { capture in
+                            capture.outcome = .signingFailed
+                            capture.signingError = error.localizedDescription
+                            capture.expectedAddress = keyManager.ethereumAddress
+                            capture.notes.append("Transaction signing or send failed")
+                        }
+                    }
                     if request.method == "eth_signTypedData" || request.method == "eth_signTypedData_v4" {
                         self.updateCurrentTypedDataCapture { capture in
                             capture.outcome = .signingFailed
@@ -368,18 +395,32 @@ final class WalletViewModel: ObservableObject {
     // MARK: - Private
 
     private func processTransaction(_ request: Request) {
+        let rawParams = prettyJSON(request.params)
+        var capture = CalldataCapture(request: request, rawParamsJson: rawParams)
+        setCurrentCalldataCapture(capture)
+
         guard let paramsArray = try? request.params.get([TransactionParams].self),
               let tx = paramsArray.first else {
             log.error("Could not parse transaction params")
             requestError = "Could not parse transaction params"
-            rawRequestJSON = prettyJSON(request.params)
+            rawRequestJSON = rawParams
+            updateCurrentCalldataCapture { current in
+                current.outcome = .paramsExtractionFailed
+                current.signingError = "Could not parse transaction params"
+                current.notes.append("Transaction params parsing failed")
+            }
             return
         }
 
-        rawRequestJSON = prettyJSON(request.params)
+        rawRequestJSON = rawParams
 
         guard let to = tx.to else {
             requestError = "Transaction has no recipient (contract creation)"
+            updateCurrentCalldataCapture { current in
+                current.outcome = .paramsExtractionFailed
+                current.signingError = "Transaction has no recipient (contract creation)"
+                current.notes.append("Contract creation transaction is unsupported for clear signing")
+            }
             return
         }
 
@@ -387,10 +428,17 @@ final class WalletViewModel: ObservableObject {
         let chainId = UInt64(chainRef.reference) ?? 1
 
         let calldata = tx.data ?? tx.input ?? "0x"
+        capture.to = to
+        capture.from = tx.from
+        capture.value = tx.value
+        capture.calldata = calldata
+        capture.outcome = .paramsExtracted
+        capture.notes.append("Parsed transaction params for \(to)")
+        setCurrentCalldataCapture(capture)
         log.info("Processing tx: to=\(to) chainId=\(chainId) calldata=\(calldata.prefix(10))...")
 
         Task {
-            let result = await clearSigning.formatCalldata(
+            let result = await clearSigning.formatCalldataDetailed(
                 chainId: chainId,
                 to: to,
                 calldata: calldata,
@@ -398,13 +446,27 @@ final class WalletViewModel: ObservableObject {
                 from: tx.from
             )
             await MainActor.run {
-                switch result {
-                case .success(let model):
+                if let model = result.model {
                     log.info("Clear signing OK: intent=\(model.intent) entries=\(model.entries.count)")
                     displayModel = model
-                case .failure(let error):
+                    self.updateCurrentCalldataCapture { current in
+                        current.applyClearSigningSuccess(result)
+                        if result.usedImplementationAddress, let implementationAddress = result.implementationAddress {
+                            current.notes.append("Matched implementation address \(implementationAddress)")
+                        }
+                    }
+                } else if let error = result.error {
                     log.error("Clear signing failed: \(error)")
                     requestError = error.localizedDescription
+                    self.updateCurrentCalldataCapture { current in
+                        current.applyClearSigningFailure(result)
+                        if let stage = result.failedStage {
+                            current.notes.append("Clear signing failed during \(stage.rawValue)")
+                        }
+                        if result.usedImplementationAddress, let implementationAddress = result.implementationAddress {
+                            current.notes.append("Resolved proxy implementation \(implementationAddress)")
+                        }
+                    }
                 }
             }
         }
@@ -533,11 +595,23 @@ final class WalletViewModel: ObservableObject {
         mergeTypedDataCapture(capture)
     }
 
+    private func setCurrentCalldataCapture(_ capture: CalldataCapture) {
+        currentCalldataCapture = capture
+        mergeCalldataCapture(capture)
+    }
+
     private func updateCurrentTypedDataCapture(_ update: (inout TypedDataCapture) -> Void) {
         guard var capture = currentTypedDataCapture else { return }
         update(&capture)
         currentTypedDataCapture = capture
         mergeTypedDataCapture(capture)
+    }
+
+    private func updateCurrentCalldataCapture(_ update: (inout CalldataCapture) -> Void) {
+        guard var capture = currentCalldataCapture else { return }
+        update(&capture)
+        currentCalldataCapture = capture
+        mergeCalldataCapture(capture)
     }
 
     private func mergeTypedDataCapture(_ capture: TypedDataCapture) {
@@ -547,6 +621,17 @@ final class WalletViewModel: ObservableObject {
             recentTypedDataCaptures.insert(capture, at: 0)
             if recentTypedDataCaptures.count > 25 {
                 recentTypedDataCaptures.removeLast(recentTypedDataCaptures.count - 25)
+            }
+        }
+    }
+
+    private func mergeCalldataCapture(_ capture: CalldataCapture) {
+        if let index = recentCalldataCaptures.firstIndex(where: { $0.id == capture.id }) {
+            recentCalldataCaptures[index] = capture
+        } else {
+            recentCalldataCaptures.insert(capture, at: 0)
+            if recentCalldataCaptures.count > 25 {
+                recentCalldataCaptures.removeLast(recentCalldataCaptures.count - 25)
             }
         }
     }
