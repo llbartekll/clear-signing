@@ -27,6 +27,7 @@
 		D1000001000000000062 /* EvmSigningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000063 /* EvmSigningService.swift */; };
 		D1000001000000000064 /* YttriumUtilsWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000065 /* YttriumUtilsWrapper */; };
 		D1000001000000000069 /* Eip712Signer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000068 /* Eip712Signer.swift */; };
+		D1000001000000000071 /* TypedDataDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000070 /* TypedDataDiagnostics.swift */; };
 		E2000001000000000001 /* WalletMetadataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000011 /* WalletMetadataProvider.swift */; };
 		E2000001000000000002 /* tokens.json in Resources */ = {isa = PBXBuildFile; fileRef = E2000001000000000012 /* tokens.json */; };
 		E2000001000000000003 /* WalletMetadataProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000013 /* WalletMetadataProviderTests.swift */; };
@@ -63,6 +64,7 @@
 		D1000001000000000041 /* Wallet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Wallet.entitlements; sourceTree = "<group>"; };
 		D1000001000000000063 /* EvmSigningService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EvmSigningService.swift; sourceTree = "<group>"; };
 		D1000001000000000068 /* Eip712Signer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Eip712Signer.swift; sourceTree = "<group>"; };
+		D1000001000000000070 /* TypedDataDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedDataDiagnostics.swift; sourceTree = "<group>"; };
 		E2000001000000000011 /* WalletMetadataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletMetadataProvider.swift; sourceTree = "<group>"; };
 		E2000001000000000012 /* tokens.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = tokens.json; path = ../crates/erc7730/src/assets/tokens.json; sourceTree = SOURCE_ROOT; };
 		E2000001000000000013 /* WalletMetadataProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletMetadataProviderTests.swift; sourceTree = "<group>"; };
@@ -149,6 +151,7 @@
 				D1000001000000000014 /* ClearSigningService.swift */,
 				D1000001000000000063 /* EvmSigningService.swift */,
 				D1000001000000000068 /* Eip712Signer.swift */,
+				D1000001000000000070 /* TypedDataDiagnostics.swift */,
 				E2000001000000000011 /* WalletMetadataProvider.swift */,
 				F1000001000000000011 /* TokenMetadata.swift */,
 				F1000001000000000012 /* MetadataCache.swift */,
@@ -305,6 +308,7 @@
 				D1000001000000000004 /* ClearSigningService.swift in Sources */,
 				D1000001000000000062 /* EvmSigningService.swift in Sources */,
 				D1000001000000000069 /* Eip712Signer.swift in Sources */,
+				D1000001000000000071 /* TypedDataDiagnostics.swift in Sources */,
 				E2000001000000000001 /* WalletMetadataProvider.swift in Sources */,
 				F1000001000000000001 /* TokenMetadata.swift in Sources */,
 				F1000001000000000003 /* MetadataCache.swift in Sources */,

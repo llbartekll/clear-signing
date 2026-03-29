@@ -47,20 +47,32 @@ final class EvmSigningService {
     }
 
     func extractTypedDataPayload(from params: AnyCodable) throws -> (address: String?, json: String) {
+        let rawDump: String
+        if let data = try? JSONEncoder().encode(params),
+           let str = String(data: data, encoding: .utf8) {
+            rawDump = str
+        } else {
+            rawDump = String(describing: params.value)
+        }
+        log.info("typed-data raw params: \(rawDump.prefix(800))")
+
         if let array = try? params.get([AnyCodable].self), array.count >= 2 {
             let address = array[0].value as? String
             let payload = array[1].value
             if let payloadString = payload as? String {
+                log.info("typed-data payload extracted from [AnyCodable] as string, address=\(address ?? "nil")")
                 return (address, payloadString)
             }
             let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])
             guard let json = String(data: data, encoding: .utf8) else {
                 throw SigningError.invalidParams("typed data payload not valid utf8")
             }
+            log.info("typed-data payload extracted from [AnyCodable] object, address=\(address ?? "nil")")
             return (address, json)
         }
 
         if let array = try? params.get([String].self), array.count >= 2 {
+            log.info("typed-data payload extracted from [String], address=\(array[0])")
             return (array[0], array[1])
         }
 
@@ -68,6 +80,7 @@ final class EvmSigningService {
         guard let json = String(data: data, encoding: .utf8) else {
             throw SigningError.invalidParams("typed data params not valid utf8")
         }
+        log.info("typed-data payload extracted from raw data representation")
         return (nil, json)
     }
 
@@ -155,12 +168,24 @@ final class EvmSigningService {
 
     func signTypedData(request: Request, privateKeyHex: String, expectedAddress: String) throws -> String {
         let payload = try extractTypedDataPayload(from: request.params)
+        log.info("signTypedData requested address=\(payload.address ?? "nil") expected address=\(expectedAddress)")
         if let requestedAddress = payload.address,
            requestedAddress.lowercased() != expectedAddress.lowercased() {
+            log.error("typed-data address mismatch expected=\(expectedAddress) got=\(requestedAddress)")
             throw SigningError.addressMismatch(expected: expectedAddress, got: requestedAddress)
         }
 
-        return try Eip712Signer.sign(typedDataJson: payload.json, privateKeyHex: privateKeyHex)
+        do {
+            let signature = try Eip712Signer.sign(
+                typedDataJson: payload.json,
+                privateKeyHex: privateKeyHex
+            )
+            log.info("typed-data signing succeeded signature=\(signature.prefix(20))...")
+            return signature
+        } catch {
+            log.error("typed-data signing failed: \(error)")
+            throw error
+        }
     }
 
     func signAndSend(request: Request, privateKeyHex: String, expectedAddress: String) async throws -> String {

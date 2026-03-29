@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import ReownWalletKit
 
 struct ContentView: View {
@@ -12,6 +13,7 @@ struct ContentView: View {
                 if viewModel.ethereumAddress != nil, viewModel.wcConfigured {
                     walletConnectSection
                     sessionsSection
+                    typedDataDiagnosticsSection
                 } else if viewModel.ethereumAddress != nil, !viewModel.wcConfigured {
                     Section("WalletConnect") {
                         Text("WalletConnect not configured. Set WALLETCONNECT_PROJECT_ID in Config.xcconfig.")
@@ -41,6 +43,7 @@ struct ContentView: View {
                     displayModel: viewModel.displayModel,
                     error: viewModel.requestError,
                     rawJSON: viewModel.rawRequestJSON,
+                    typedDataCaptureJSON: viewModel.currentTypedDataCapture?.exportJSONString,
                     onApprove: { viewModel.approveRequest() },
                     onReject: { viewModel.rejectRequest() }
                 )
@@ -107,6 +110,41 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var typedDataDiagnosticsSection: some View {
+        Section {
+            if viewModel.recentTypedDataCaptures.isEmpty {
+                Text("No typed-data captures yet")
+                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+            } else {
+                ForEach(Array(viewModel.recentTypedDataCaptures.prefix(5))) { capture in
+                    Button {
+                        UIPasteboard.general.string = capture.exportJSONString
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(capture.summary?.primaryType ?? capture.method)
+                                .font(.subheadline)
+                            Text(capture.outcome.rawValue)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            if let contract = capture.summary?.verifyingContract {
+                                Text(contract)
+                                    .font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        } header: {
+            Text("Typed Data Diagnostics")
+        } footer: {
+            Text("Tap a capture to copy the structured diagnostic JSON.")
         }
     }
 }

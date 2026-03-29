@@ -30,6 +30,8 @@ final class WalletViewModel: ObservableObject {
     @Published var requestError: String?
     @Published var rawRequestJSON: String?
     @Published var showRequest = false
+    @Published var currentTypedDataCapture: TypedDataCapture?
+    @Published var recentTypedDataCaptures: [TypedDataCapture] = []
 
     // QR
     @Published var showScanner = false
@@ -176,6 +178,7 @@ final class WalletViewModel: ObservableObject {
         displayModel = nil
         requestError = nil
         rawRequestJSON = nil
+        currentTypedDataCapture = nil
 
         let method = request.method
 
@@ -189,6 +192,12 @@ final class WalletViewModel: ObservableObject {
             log.warning("Unsupported method: \(method)")
             rawRequestJSON = prettyJSON(request.params)
             requestError = "Unsupported method: \(method)"
+            if method == "eth_signTypedData" || method == "eth_signTypedData_v4" {
+                var capture = TypedDataCapture(request: request, rawParamsJson: rawRequestJSON)
+                capture.outcome = .unsupportedMethod
+                capture.notes.append("Unsupported typed-data RPC method")
+                setCurrentTypedDataCapture(capture)
+            }
         }
         showRequest = true
     }
@@ -223,6 +232,12 @@ final class WalletViewModel: ObservableObject {
         Task {
             try? await wc.rejectRequest(request)
             await MainActor.run {
+                if request.method == "eth_signTypedData" || request.method == "eth_signTypedData_v4" {
+                    self.updateCurrentTypedDataCapture { capture in
+                        capture.outcome = .rejected
+                        capture.notes.append("User rejected the request")
+                    }
+                }
                 showRequest = false
                 pendingRequest = nil
                 displayModel = nil
@@ -260,6 +275,13 @@ final class WalletViewModel: ObservableObject {
                         privateKeyHex: keyManager.privateKeyHex,
                         expectedAddress: expectedAddress
                     )
+                    await MainActor.run {
+                        self.updateCurrentTypedDataCapture { capture in
+                            capture.expectedAddress = expectedAddress
+                            capture.outcome = .signingSucceeded
+                            capture.notes.append("Signature produced successfully")
+                        }
+                    }
                     responseValue = AnyCodable(signature)
 
                 case "personal_sign":
@@ -309,6 +331,13 @@ final class WalletViewModel: ObservableObject {
                 )
 
                 await MainActor.run {
+                    if request.method == "eth_signTypedData" || request.method == "eth_signTypedData_v4" {
+                        self.updateCurrentTypedDataCapture { capture in
+                            capture.outcome = .signingFailed
+                            capture.signerError = error.localizedDescription
+                            capture.expectedAddress = keyManager.ethereumAddress
+                        }
+                    }
                     requestError = error.localizedDescription
                 }
             }
@@ -401,25 +430,55 @@ final class WalletViewModel: ObservableObject {
     }
 
     private func processTypedData(_ request: Request) {
+        let rawParams = prettyJSON(request.params)
+        var capture = TypedDataCapture(request: request, rawParamsJson: rawParams)
+        setCurrentTypedDataCapture(capture)
         do {
             let payload = try EvmSigningService.shared.extractTypedDataPayload(from: request.params)
             let typedDataJson = payload.json
             rawRequestJSON = typedDataJson
+            capture.requestedAddress = payload.address
+            capture.typedDataJson = typedDataJson
+            capture.summary = TypedDataSummary.from(json: typedDataJson)
+            capture.outcome = .payloadExtracted
+            if let primaryType = capture.summary?.primaryType {
+                capture.notes.append("Extracted typed data for primaryType \(primaryType)")
+            }
+            setCurrentTypedDataCapture(capture)
+            log.info(
+                "Processing typed data primaryType=\(capture.summary?.primaryType ?? "unknown") verifyingContract=\(capture.summary?.verifyingContract ?? "nil")"
+            )
 
             Task {
-                let result = await clearSigning.formatTypedData(typedDataJson: typedDataJson)
+                let result = await clearSigning.formatTypedDataDetailed(typedDataJson: typedDataJson)
                 await MainActor.run {
-                    switch result {
-                    case .success(let model):
+                    if let model = result.model {
                         displayModel = model
-                    case .failure(let error):
+                        self.updateCurrentTypedDataCapture { current in
+                            current.applyClearSigningSuccess(model, descriptorOwners: result.descriptorOwners)
+                        }
+                    } else if let error = result.error {
                         requestError = error.localizedDescription
+                        self.updateCurrentTypedDataCapture { current in
+                            current.applyClearSigningFailure(
+                                error: error.localizedDescription,
+                                descriptorOwners: result.descriptorOwners
+                            )
+                            if let stage = result.failedStage {
+                                current.notes.append("Clear signing failed during \(stage)")
+                            }
+                        }
                     }
                 }
             }
         } catch {
             requestError = error.localizedDescription
             rawRequestJSON = prettyJSON(request.params)
+            updateCurrentTypedDataCapture { current in
+                current.outcome = .payloadExtractionFailed
+                current.signerError = error.localizedDescription
+                current.notes.append("Typed data payload extraction failed")
+            }
         }
     }
 
@@ -467,5 +526,28 @@ final class WalletViewModel: ObservableObject {
             return String(data: data, encoding: .utf8)
         }
         return String(data: pretty, encoding: .utf8)
+    }
+
+    private func setCurrentTypedDataCapture(_ capture: TypedDataCapture) {
+        currentTypedDataCapture = capture
+        mergeTypedDataCapture(capture)
+    }
+
+    private func updateCurrentTypedDataCapture(_ update: (inout TypedDataCapture) -> Void) {
+        guard var capture = currentTypedDataCapture else { return }
+        update(&capture)
+        currentTypedDataCapture = capture
+        mergeTypedDataCapture(capture)
+    }
+
+    private func mergeTypedDataCapture(_ capture: TypedDataCapture) {
+        if let index = recentTypedDataCaptures.firstIndex(where: { $0.id == capture.id }) {
+            recentTypedDataCaptures[index] = capture
+        } else {
+            recentTypedDataCaptures.insert(capture, at: 0)
+            if recentTypedDataCaptures.count > 25 {
+                recentTypedDataCaptures.removeLast(recentTypedDataCaptures.count - 25)
+            }
+        }
     }
 }

@@ -7,11 +7,13 @@ struct SessionRequestSheet: View {
     let displayModel: DisplayModel?
     let error: String?
     let rawJSON: String?
+    let typedDataCaptureJSON: String?
     let onApprove: () -> Void
     let onReject: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var showRaw = true
+    @State private var showDiagnostics = true
 
     var body: some View {
         NavigationStack {
@@ -45,6 +47,21 @@ struct SessionRequestSheet: View {
                                 copyToClipboard(raw)
                             } label: {
                                 Text(raw)
+                                    .font(.caption2.monospaced())
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                        }
+                    }
+
+                    if let typedDataCaptureJSON {
+                        DisclosureGroup("Diagnostic Capture", isExpanded: $showDiagnostics) {
+                            Button {
+                                copyToClipboard(typedDataCaptureJSON)
+                            } label: {
+                                Text(typedDataCaptureJSON)
                                     .font(.caption2.monospaced())
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)

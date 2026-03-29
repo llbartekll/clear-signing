@@ -1,5 +1,8 @@
 import Foundation
 import secp256k1
+import os
+
+private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "Eip712Signer")
 
 enum Eip712Signer {
     enum Error: LocalizedError {
@@ -88,6 +91,7 @@ enum Eip712Signer {
 
     /// Signs an EIP-712 typed data message and returns a 0x-prefixed hex signature (r||s||v)
     static func sign(typedDataJson: String, privateKeyHex: String) throws -> String {
+        log.info("EIP-712 signer starting payload bytes=\(typedDataJson.utf8.count)")
         guard let jsonData = typedDataJson.data(using: .utf8) else {
             throw Error.invalidTypedDataJson("not valid UTF-8")
         }
@@ -101,6 +105,7 @@ enum Eip712Signer {
         let domain = json["domain"] as? [String: Any] ?? [:]
         let message = json["message"] as? [String: Any] ?? [:]
         let primaryType = json["primaryType"] as? String ?? ""
+        log.info("EIP-712 signer parsed primaryType=\(primaryType) domainFields=\(domain.keys.sorted().joined(separator: ","))")
 
         guard !primaryType.isEmpty else {
             throw Error.invalidTypedDataJson("missing primaryType")
@@ -110,22 +115,30 @@ enum Eip712Signer {
         var typesDef = types
         if typesDef["EIP712Domain"] == nil {
             typesDef["EIP712Domain"] = deriveEIP712Domain(from: domain)
+            log.info("EIP-712 signer derived EIP712Domain type from domain object")
+        } else {
+            log.info("EIP-712 signer using provided EIP712Domain type")
         }
 
         // Compute domain separator hash
         let domainHash = try hashStruct("EIP712Domain", domain, typesDef)
+        log.info("EIP-712 signer computed domain hash \(domainHash.hexString.prefix(18))...")
 
         // Compute message hash
         let messageHash = try hashStruct(primaryType, message, typesDef)
+        log.info("EIP-712 signer computed message hash \(messageHash.hexString.prefix(18))...")
 
         // Construct signing hash: keccak256(0x19 || 0x01 || domainSeparatorHash || messageHash)
         var signingInput = Data([0x19, 0x01])
         signingInput.append(domainHash)
         signingInput.append(messageHash)
         let signingHash = KeyManager_keccak256(signingInput)
+        log.info("EIP-712 signer computed final signing hash \(signingHash.hexString.prefix(18))...")
 
         // Sign with secp256k1
-        return try performSignature(signingHash: signingHash, privateKeyHex: privateKeyHex)
+        let signature = try performSignature(signingHash: signingHash, privateKeyHex: privateKeyHex)
+        log.info("EIP-712 signer produced signature \(signature.prefix(20))...")
+        return signature
     }
 
     // MARK: - EIP-712 Algorithm Functions

@@ -1,5 +1,8 @@
 import Foundation
 import Erc7730
+import os
+
+private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "ClearSigningService")
 
 struct ClearSigningService {
 
@@ -49,22 +52,68 @@ struct ClearSigningService {
     /// Resolves all descriptors (outer + nested calldata) from the GitHub registry, then formats.
     /// Automatically detects proxies via dataProvider.getImplementationAddress().
     func formatTypedData(typedDataJson: String) async -> Result<DisplayModel, Error> {
+        let outcome = await formatTypedDataDetailed(typedDataJson: typedDataJson)
+        if let model = outcome.model {
+            return .success(model)
+        }
+        return .failure(
+            outcome.error
+                ?? NSError(domain: "ClearSigningService", code: -1, userInfo: nil)
+        )
+    }
+
+    func formatTypedDataDetailed(typedDataJson: String) async -> TypedDataFormattingOutcome {
         do {
+            log.info("Resolving typed-data descriptors")
             // Single call resolves outer EIP-712 descriptor + any nested calldata descriptors.
             // Automatically detects proxies via dataProvider.getImplementationAddress().
             let descriptors = try await erc7730ResolveDescriptorsForTypedData(
                 typedDataJson: typedDataJson,
                 dataProvider: dataProvider
             )
+            let descriptorOwners = descriptors.compactMap(Self.descriptorOwner)
+            log.info("Resolved \(descriptors.count) typed-data descriptors")
 
-            let model = try await erc7730FormatTypedData(
-                descriptorsJson: descriptors,
-                typedDataJson: typedDataJson,
-                dataProvider: dataProvider
-            )
-            return .success(model)
+            do {
+                log.info("Formatting typed data with resolved descriptors")
+                let model = try await erc7730FormatTypedData(
+                    descriptorsJson: descriptors,
+                    typedDataJson: typedDataJson,
+                    dataProvider: dataProvider
+                )
+                log.info("Typed-data formatting OK: intent=\(model.intent) warnings=\(model.warnings.count)")
+                return TypedDataFormattingOutcome(
+                    descriptorOwners: descriptorOwners,
+                    model: model,
+                    error: nil,
+                    failedStage: nil
+                )
+            } catch {
+                log.error("Typed-data formatting failed: \(error)")
+                return TypedDataFormattingOutcome(
+                    descriptorOwners: descriptorOwners,
+                    model: nil,
+                    error: error,
+                    failedStage: .format
+                )
+            }
         } catch {
-            return .failure(error)
+            log.error("Typed-data descriptor resolution failed: \(error)")
+            return TypedDataFormattingOutcome(
+                descriptorOwners: [],
+                model: nil,
+                error: error,
+                failedStage: .resolve
+            )
         }
+    }
+
+    private static func descriptorOwner(from descriptorJson: String) -> String? {
+        guard let data = descriptorJson.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let metadata = object["metadata"] as? [String: Any] else {
+            return nil
+        }
+        return metadata["owner"] as? String
     }
 }
