@@ -204,7 +204,7 @@ pub async fn resolve_descriptors_for_typed_data(
                 if let Ok(inner_bytes) = hex::decode(hex_str) {
                     let normalized =
                         crate::engine::normalized_nested_calldata(&inner_bytes, selector_override);
-                    let _ = resolve_recursive(
+                    resolve_recursive(
                         inner_chain,
                         &callee_addr,
                         &normalized,
@@ -212,7 +212,7 @@ pub async fn resolve_descriptors_for_typed_data(
                         MAX_RESOLVE_DEPTH - 1,
                         &mut results,
                     )
-                    .await;
+                    .await?;
                     continue;
                 }
             }
@@ -479,7 +479,11 @@ fn resolve_typed_nested_selector_for_resolver(
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::pin::Pin;
+
     use super::*;
+    use crate::types::descriptor::Descriptor;
     use crate::EmptyDataProvider;
 
     use super::super::source::StaticSource;
@@ -487,6 +491,128 @@ mod tests {
         build_erc20_transfer_calldata, build_exec_transaction_calldata, erc20_descriptor,
         exclusive_dutch_order_typed_data, permit2_descriptor, safe_descriptor,
     };
+
+    struct TypedNestedSource {
+        outer: Descriptor,
+        inner_mode: InnerResolveMode,
+    }
+
+    enum InnerResolveMode {
+        NotFound,
+        RegistryDescriptorMissing,
+    }
+
+    impl DescriptorSource for TypedNestedSource {
+        fn resolve_calldata(
+            &self,
+            chain_id: u64,
+            address: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>>
+        {
+            let result = match self.inner_mode {
+                InnerResolveMode::NotFound => Err(ResolveError::NotFound {
+                    chain_id,
+                    address: address.to_string(),
+                }),
+                InnerResolveMode::RegistryDescriptorMissing => {
+                    Err(ResolveError::RegistryDescriptorMissing {
+                        url: format!("https://registry.example/{address}.json"),
+                    })
+                }
+            };
+            Box::pin(async move { result })
+        }
+
+        fn resolve_typed_candidates(
+            &self,
+            lookup: TypedDescriptorLookup,
+        ) -> Pin<Box<dyn Future<Output = Result<Vec<ResolvedDescriptor>, ResolveError>> + Send + '_>>
+        {
+            let resolved = ResolvedDescriptor {
+                descriptor: self.outer.clone(),
+                chain_id: lookup.chain_id,
+                address: lookup.verifying_contract.to_lowercase(),
+            };
+            Box::pin(async move { Ok(vec![resolved]) })
+        }
+    }
+
+    fn nested_typed_descriptor() -> Descriptor {
+        Descriptor::from_json(
+            &serde_json::json!({
+                "context": {
+                    "eip712": {
+                        "deployments": [{
+                            "chainId": 1,
+                            "address": "0x0000000000000000000000000000000000000abc"
+                        }],
+                        "domain": {
+                            "name": "Nested Permit"
+                        }
+                    }
+                },
+                "metadata": {
+                    "owner": "Nested Typed",
+                    "enums": {},
+                    "constants": {},
+                    "addressBook": {},
+                    "maps": {}
+                },
+                "display": {
+                    "definitions": {},
+                    "formats": {
+                        "Permit(address spender,Call call)Call(address to,bytes data)": {
+                            "intent": "Nested typed permit",
+                            "fields": [{
+                                "path": "call.data",
+                                "label": "Inner Call",
+                                "format": "calldata",
+                                "params": {
+                                    "calleePath": "call.to"
+                                }
+                            }]
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("nested typed descriptor")
+    }
+
+    fn nested_typed_data() -> crate::eip712::TypedData {
+        serde_json::from_value(serde_json::json!({
+            "types": {
+                "Permit": [
+                    { "name": "spender", "type": "address" },
+                    { "name": "call", "type": "Call" }
+                ],
+                "Call": [
+                    { "name": "to", "type": "address" },
+                    { "name": "data", "type": "bytes" }
+                ],
+                "EIP712Domain": [
+                    { "name": "name", "type": "string" },
+                    { "name": "chainId", "type": "uint256" },
+                    { "name": "verifyingContract", "type": "address" }
+                ]
+            },
+            "domain": {
+                "name": "Nested Permit",
+                "chainId": "1",
+                "verifyingContract": "0x0000000000000000000000000000000000000abc"
+            },
+            "primaryType": "Permit",
+            "message": {
+                "spender": "0x00000000000000000000000000000000000000ff",
+                "call": {
+                    "to": "0x00000000000000000000000000000000000000aa",
+                    "data": "0xa9059cbb0000000000000000000000000000000000000000000000000000000000000001"
+                }
+            }
+        }))
+        .expect("nested typed data")
+    }
 
     #[tokio::test]
     async fn test_resolve_descriptors_safe_wrapping_erc20() {
@@ -722,5 +848,40 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("multiple EIP-712 descriptors match"));
+    }
+
+    #[tokio::test]
+    async fn test_resolve_typed_data_skips_missing_optional_nested_descriptor() {
+        let source = TypedNestedSource {
+            outer: nested_typed_descriptor(),
+            inner_mode: InnerResolveMode::NotFound,
+        };
+
+        let descriptors = resolve_descriptors_for_typed_data(&nested_typed_data(), &source)
+            .await
+            .expect("resolve");
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(
+            descriptors[0].descriptor.metadata.owner.as_deref(),
+            Some("Nested Typed")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_typed_data_propagates_nested_registry_error() {
+        let source = TypedNestedSource {
+            outer: nested_typed_descriptor(),
+            inner_mode: InnerResolveMode::RegistryDescriptorMissing,
+        };
+
+        let err = resolve_descriptors_for_typed_data(&nested_typed_data(), &source)
+            .await
+            .expect_err("nested registry error should propagate");
+        match err {
+            ResolveError::RegistryDescriptorMissing { url } => {
+                assert!(url.contains("00000000000000000000000000000000000000aa"));
+            }
+            other => panic!("expected RegistryDescriptorMissing, got {other:?}"),
+        }
     }
 }

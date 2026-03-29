@@ -201,8 +201,7 @@ async fn wallet_batch_mixed_known_unknown() {
         },
     );
 
-    let known_descriptors = wrap_rd(descriptor.clone(), 1, usdc_addr);
-    let unknown_descriptors = wrap_rd(descriptor, 1, unknown_addr);
+    let known_descriptors = wrap_rd(descriptor, 1, usdc_addr);
 
     // Known call: ERC-20 transfer — full formatting
     let known_calldata = build_erc20_transfer_calldata(recipient, 2_000_000);
@@ -218,7 +217,8 @@ async fn wallet_batch_mixed_known_unknown() {
         .await
         .unwrap();
 
-    // Unknown call: random selector not in descriptor — graceful degradation
+    // Unknown call: wallet has no matching descriptor for this target, so it
+    // passes an empty slice and still gets graceful raw fallback.
     let unknown_calldata =
         hex::decode("deadbeef000000000000000000000000000000000000000000000000000000000000002a")
             .unwrap();
@@ -230,7 +230,7 @@ async fn wallet_batch_mixed_known_unknown() {
         from: None,
         implementation_address: None,
     };
-    let unknown_result = format_calldata(&unknown_descriptors, &unknown_tx, &EmptyDataProvider)
+    let unknown_result = format_calldata(&[], &unknown_tx, &EmptyDataProvider)
         .await
         .unwrap();
 

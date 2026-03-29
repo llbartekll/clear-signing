@@ -4,6 +4,7 @@
 
 use erc7730::resolver::ResolvedDescriptor;
 use erc7730::token::{CompositeDataProvider, StaticTokenSource, WellKnownTokenSource};
+use erc7730::types::context::{Deployment, DescriptorContext};
 use erc7730::types::descriptor::Descriptor;
 use erc7730::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 
@@ -13,7 +14,14 @@ fn load_descriptor(fixture: &str) -> Descriptor {
     Descriptor::from_json(&json).unwrap_or_else(|e| panic!("parse {path}: {e}"))
 }
 
-fn wrap_rd(descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
+fn wrap_rd(mut descriptor: Descriptor, chain_id: u64, address: &str) -> Vec<ResolvedDescriptor> {
+    if let DescriptorContext::Contract(context) = &mut descriptor.context {
+        context.contract.deployments = vec![Deployment {
+            chain_id,
+            address: address.to_string(),
+        }];
+    }
+
     vec![ResolvedDescriptor {
         descriptor,
         chain_id,

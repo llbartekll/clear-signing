@@ -46,9 +46,15 @@ pub enum ResolveError {
     #[error("descriptor not found for chain_id={chain_id}, address={address}")]
     NotFound { chain_id: u64, address: String },
 
+    #[error("registry index missing: {url}")]
+    RegistryIndexMissing { url: String },
+
+    #[error("registry descriptor missing: {url}")]
+    RegistryDescriptorMissing { url: String },
+
+    #[error("registry io error: {0}")]
+    RegistryIo(String),
+
     #[error("parse error: {0}")]
     Parse(String),
-
-    #[error("io error: {0}")]
-    Io(String),
 }

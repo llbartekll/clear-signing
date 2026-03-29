@@ -27,19 +27,6 @@ pub struct Eip712IndexEntry {
     pub(crate) encode_type_hashes: Vec<String>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct RegistryIndexV2 {
-    calldata: HashMap<String, String>,
-    eip712: HashMap<String, Vec<LegacyEip712IndexEntry>>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct LegacyEip712IndexEntry {
-    #[serde(rename = "primaryType")]
-    primary_type: String,
-    path: String,
-}
-
 impl GitHubRegistrySource {
     /// Create a new source with manually provided indexes.
     ///
@@ -59,36 +46,15 @@ impl GitHubRegistrySource {
         }
     }
 
-    /// Create a source by fetching split V3 index files from the registry.
-    ///
-    /// Falls back to the legacy V2 `index.json` layout when the split files are absent.
+    /// Create a source by fetching the required split V3 index files from the registry.
     pub async fn from_registry(base_url: &str) -> Result<Self, ResolveError> {
         let base = base_url.trim_end_matches('/');
         let calldata_url = format!("{}/index.calldata.json", base);
         let eip712_url = format!("{}/index.eip712.json", base);
-
-        let split_indexes = match (
-            fetch_index::<HashMap<String, String>>(&calldata_url).await,
+        let calldata_index = fetch_index::<HashMap<String, String>>(&calldata_url).await?;
+        let eip712_index =
             fetch_index::<HashMap<String, HashMap<String, Vec<Eip712IndexEntry>>>>(&eip712_url)
-                .await,
-        ) {
-            (Ok(calldata), Ok(eip712)) => Some((calldata, eip712)),
-            (Err(ResolveError::NotFound { .. }), Err(ResolveError::NotFound { .. }))
-            | (Err(ResolveError::NotFound { .. }), Ok(_))
-            | (Ok(_), Err(ResolveError::NotFound { .. })) => None,
-            (Err(err), _) | (_, Err(err)) => return Err(err),
-        };
-
-        let (calldata_index, eip712_index) = if let Some(indexes) = split_indexes {
-            indexes
-        } else {
-            let index_url = format!("{}/index.json", base);
-            let index_v2 = fetch_index::<RegistryIndexV2>(&index_url).await?;
-            (
-                index_v2.calldata,
-                group_legacy_eip712_index(index_v2.eip712),
-            )
-        };
+                .await?;
 
         Ok(Self {
             base_url: base.to_string(),
@@ -107,26 +73,16 @@ impl GitHubRegistrySource {
 
     async fn fetch_raw(&self, rel_path: &str) -> Result<String, ResolveError> {
         let url = format!("{}/{}", self.base_url, rel_path);
-        let response = reqwest::get(&url).await.map_err(|e| {
-            if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
-                ResolveError::NotFound {
-                    chain_id: 0,
-                    address: format!("descriptor at {url}"),
-                }
-            } else {
-                ResolveError::Io(format!("HTTP fetch failed: {e}"))
-            }
-        })?;
+        let response = reqwest::get(&url)
+            .await
+            .map_err(|e| ResolveError::RegistryIo(format!("HTTP fetch failed for {url}: {e}")))?;
         if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(ResolveError::NotFound {
-                chain_id: 0,
-                address: format!("descriptor at {url}"),
-            });
+            return Err(ResolveError::RegistryDescriptorMissing { url });
         }
         response
             .text()
             .await
-            .map_err(|e| ResolveError::Io(format!("read response: {e}")))
+            .map_err(|e| ResolveError::RegistryIo(format!("read response for {url}: {e}")))
     }
 
     async fn fetch_descriptor(&self, rel_path: &str) -> Result<Descriptor, ResolveError> {
@@ -174,7 +130,7 @@ impl GitHubRegistrySource {
 
             if let Some(includes_path) = includes {
                 if depth == 0 {
-                    return Err(ResolveError::Io(
+                    return Err(ResolveError::RegistryIo(
                         "max includes depth exceeded (possible circular reference)".to_string(),
                     ));
                 }
@@ -270,52 +226,19 @@ impl DescriptorSource for GitHubRegistrySource {
 }
 
 async fn fetch_index<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, ResolveError> {
-    let response = reqwest::get(url).await.map_err(|e| {
-        if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
-            ResolveError::NotFound {
-                chain_id: 0,
-                address: format!("index at {url}"),
-            }
-        } else {
-            ResolveError::Io(format!("HTTP fetch index failed: {e}"))
-        }
-    })?;
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| ResolveError::RegistryIo(format!("HTTP fetch index failed for {url}: {e}")))?;
     if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(ResolveError::NotFound {
-            chain_id: 0,
-            address: format!("index at {url}"),
+        return Err(ResolveError::RegistryIndexMissing {
+            url: url.to_string(),
         });
     }
     let body = response
         .text()
         .await
-        .map_err(|e| ResolveError::Io(format!("read index response: {e}")))?;
+        .map_err(|e| ResolveError::RegistryIo(format!("read index response for {url}: {e}")))?;
     serde_json::from_str(&body).map_err(|e| ResolveError::Parse(e.to_string()))
-}
-
-fn group_legacy_eip712_index(
-    legacy: HashMap<String, Vec<LegacyEip712IndexEntry>>,
-) -> HashMap<String, HashMap<String, Vec<Eip712IndexEntry>>> {
-    let mut grouped = HashMap::new();
-
-    for (key, entries) in legacy {
-        let primary_map = grouped.entry(key).or_insert_with(HashMap::new);
-        for entry in entries {
-            let path = entry.path;
-            let bucket: &mut Vec<Eip712IndexEntry> = primary_map
-                .entry(entry.primary_type)
-                .or_insert_with(Vec::new);
-            if bucket.iter().any(|existing| existing.path == path) {
-                continue;
-            }
-            bucket.push(Eip712IndexEntry {
-                path,
-                encode_type_hashes: Vec::new(),
-            });
-        }
-    }
-
-    grouped
 }
 
 fn filter_typed_index_entries<'a>(
@@ -323,29 +246,15 @@ fn filter_typed_index_entries<'a>(
     expected_hash: Option<&str>,
 ) -> Vec<&'a Eip712IndexEntry> {
     match expected_hash {
-        Some(expected_hash) => {
-            let exact = entries
-                .iter()
-                .filter(|entry| {
-                    entry
-                        .encode_type_hashes
-                        .iter()
-                        .any(|hash| hash.eq_ignore_ascii_case(expected_hash))
-                })
-                .collect::<Vec<_>>();
-            if exact.is_empty() {
-                if entries
+        Some(expected_hash) => entries
+            .iter()
+            .filter(|entry| {
+                entry
+                    .encode_type_hashes
                     .iter()
-                    .all(|entry| entry.encode_type_hashes.is_empty())
-                {
-                    entries.iter().collect()
-                } else {
-                    Vec::new()
-                }
-            } else {
-                exact
-            }
-        }
+                    .any(|hash| hash.eq_ignore_ascii_case(expected_hash))
+            })
+            .collect::<Vec<_>>(),
         None => entries.iter().collect(),
     }
 }
@@ -382,8 +291,62 @@ fn resolve_relative_path(base: &str, relative: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
     use super::*;
+
+    fn spawn_test_server(
+        routes: Vec<(&'static str, u16, &'static str)>,
+        requests: usize,
+    ) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = thread::spawn(move || {
+            for _ in 0..requests {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut request = Vec::new();
+                let mut buf = [0u8; 1024];
+                loop {
+                    let n = stream.read(&mut buf).expect("read");
+                    if n == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buf[..n]);
+                    if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+
+                let request = String::from_utf8_lossy(&request);
+                let path = request
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                    .unwrap_or("/");
+                let (status, body) = routes
+                    .iter()
+                    .find(|(route, _, _)| *route == path)
+                    .map(|(_, status, body)| (*status, *body))
+                    .unwrap_or((404, ""));
+                let status_text = match status {
+                    200 => "OK",
+                    404 => "Not Found",
+                    _ => "Error",
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {status_text}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .expect("write response");
+            }
+        });
+        (format!("http://{}", addr), handle)
+    }
 
     #[test]
     fn test_resolve_relative_path_same_dir() {
@@ -410,37 +373,6 @@ mod tests {
     }
 
     #[test]
-    fn test_group_legacy_eip712_index_groups_by_primary_type() {
-        let grouped = group_legacy_eip712_index(HashMap::from([(
-            "eip155:1:0xabc".to_string(),
-            vec![
-                LegacyEip712IndexEntry {
-                    primary_type: "PermitSingle".to_string(),
-                    path: "registry/uniswap/eip712-uniswap-permit2.json".to_string(),
-                },
-                LegacyEip712IndexEntry {
-                    primary_type: "PermitBatch".to_string(),
-                    path: "registry/uniswap/eip712-uniswap-permit2.json".to_string(),
-                },
-            ],
-        )]));
-
-        let bucket = grouped.get("eip155:1:0xabc").expect("bucket");
-        assert_eq!(
-            bucket["PermitSingle"][0].path,
-            "registry/uniswap/eip712-uniswap-permit2.json"
-        );
-        assert_eq!(
-            bucket["PermitSingle"][0].encode_type_hashes,
-            Vec::<String>::new()
-        );
-        assert_eq!(
-            bucket["PermitBatch"][0].path,
-            "registry/uniswap/eip712-uniswap-permit2.json"
-        );
-    }
-
-    #[test]
     fn test_filter_typed_index_entries_requires_exact_hash_for_split_entries() {
         let entries = vec![
             Eip712IndexEntry {
@@ -462,21 +394,70 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_typed_index_entries_keeps_legacy_bucket_fallback() {
+    fn test_filter_typed_index_entries_rejects_empty_hash_entries() {
         let entries = vec![
             Eip712IndexEntry {
-                path: "registry/legacy-a.json".to_string(),
+                path: "registry/a.json".to_string(),
                 encode_type_hashes: Vec::new(),
             },
             Eip712IndexEntry {
-                path: "registry/legacy-b.json".to_string(),
+                path: "registry/b.json".to_string(),
                 encode_type_hashes: Vec::new(),
             },
         ];
 
         let filtered = filter_typed_index_entries(&entries, Some("0xaaaa"));
-        assert_eq!(filtered.len(), 2);
-        assert_eq!(filtered[0].path, "registry/legacy-a.json");
-        assert_eq!(filtered[1].path, "registry/legacy-b.json");
+        assert!(filtered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_from_registry_requires_split_indexes() {
+        let (base_url, handle) = spawn_test_server(
+            vec![
+                ("/index.calldata.json", 404, ""),
+                ("/index.eip712.json", 200, "{}"),
+            ],
+            1,
+        );
+
+        let err = match GitHubRegistrySource::from_registry(&base_url).await {
+            Ok(_) => panic!("missing split index should fail"),
+            Err(err) => err,
+        };
+        match err {
+            ResolveError::RegistryIndexMissing { url } => {
+                assert!(url.ends_with("/index.calldata.json"));
+            }
+            other => panic!("expected RegistryIndexMissing, got {other:?}"),
+        }
+
+        handle.join().expect("server join");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_calldata_reports_missing_descriptor_file() {
+        let (base_url, handle) = spawn_test_server(vec![("/registry/missing.json", 404, "")], 1);
+
+        let source = GitHubRegistrySource::new(
+            &base_url,
+            HashMap::from([(
+                "eip155:1:0xabc".to_string(),
+                "registry/missing.json".to_string(),
+            )]),
+            HashMap::new(),
+        );
+
+        let err = source
+            .resolve_calldata(1, "0xabc")
+            .await
+            .expect_err("missing descriptor file should fail");
+        match err {
+            ResolveError::RegistryDescriptorMissing { url } => {
+                assert!(url.ends_with("/registry/missing.json"));
+            }
+            other => panic!("expected RegistryDescriptorMissing, got {other:?}"),
+        }
+
+        handle.join().expect("server join");
     }
 }

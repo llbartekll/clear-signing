@@ -82,8 +82,10 @@ pub async fn format_calldata(
             if descriptors.is_empty() {
                 return Ok(build_raw_fallback(tx.calldata));
             }
-            // Fallback to first descriptor
-            0
+            return Err(Error::Descriptor(format!(
+                "no outer descriptor matches chain_id={} address={}",
+                tx.chain_id, match_address
+            )));
         }
     };
 
@@ -929,5 +931,53 @@ mod tests {
         if let DisplayEntry::Item(ref item) = result.entries[0] {
             assert_eq!(item.label, "To");
         }
+    }
+
+    #[tokio::test]
+    async fn test_format_calldata_empty_descriptors_returns_raw_fallback() {
+        let calldata =
+            hex::decode("a9059cbb0000000000000000000000000000000000000000000000000000000000000001")
+                .unwrap();
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0x0000000000000000000000000000000000000001",
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: None,
+        };
+
+        let result = format_calldata(&[], &tx, &EmptyDataProvider)
+            .await
+            .expect("empty descriptors should fall back");
+        assert!(result.intent.starts_with("Unknown function 0xa9059cbb"));
+    }
+
+    #[tokio::test]
+    async fn test_format_calldata_errors_when_descriptor_deployment_does_not_match() {
+        let descriptor = Descriptor::from_json(test_descriptor_json()).unwrap();
+        let sig = decoder::parse_signature("transfer(address,uint256)").unwrap();
+
+        let mut calldata = Vec::new();
+        calldata.extend_from_slice(&sig.selector);
+        calldata.extend_from_slice(&[0u8; 32]);
+        calldata.extend_from_slice(&[0u8; 32]);
+
+        let descriptors = wrap_rd(descriptor, 1, "0xdac17f958d2ee523a2206206994597c13d831ec7");
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0x0000000000000000000000000000000000000001",
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: None,
+        };
+
+        let err = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+            .await
+            .expect_err("mismatched deployment should error");
+        assert!(err
+            .to_string()
+            .contains("no outer descriptor matches chain_id=1 address=0x0000000000000000000000000000000000000001"));
     }
 }
