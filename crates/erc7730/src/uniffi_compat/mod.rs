@@ -12,7 +12,7 @@ use crate::resolver::{DescriptorSource, GitHubRegistrySource};
 
 #[cfg(feature = "github-registry")]
 const DEFAULT_REGISTRY_URL: &str =
-    "https://raw.githubusercontent.com/llbartekll/clear-signing-erc7730-registry/index-v2";
+    "https://raw.githubusercontent.com/llbartekll/clear-signing-erc7730-registry/v3";
 
 #[cfg(feature = "github-registry")]
 static REGISTRY_SOURCE: tokio::sync::OnceCell<GitHubRegistrySource> =
@@ -325,56 +325,6 @@ pub async fn erc7730_resolve_descriptor(
     }
 }
 
-/// Resolve an EIP-712 descriptor from the GitHub registry for typed data.
-///
-/// Looks up by `chain_id` + `verifying_contract`. Automatically detects proxy
-/// contracts via `data_provider.get_implementation_address()` as fallback.
-/// Returns the descriptor JSON string, or `None` if no descriptor is found.
-/// Requires the `github-registry` feature.
-#[cfg(feature = "github-registry")]
-#[uniffi::export(async_runtime = "tokio")]
-pub async fn erc7730_resolve_descriptor_for_typed_data(
-    chain_id: u64,
-    verifying_contract: String,
-    primary_type: String,
-    data_provider: Arc<dyn DataProviderFfi>,
-) -> Result<Option<String>, FfiError> {
-    let source = get_registry_source().await?;
-
-    // Try direct lookup by verifying contract, filtered by primary_type
-    match source
-        .resolve_typed_for_primary_type(chain_id, &verifying_contract, &primary_type)
-        .await
-    {
-        Ok(resolved) => {
-            let json = serde_json::to_string(&resolved.descriptor)
-                .map_err(|e| FfiError::Descriptor(e.to_string()))?;
-            return Ok(Some(json));
-        }
-        Err(crate::error::ResolveError::NotFound { .. }) => {}
-        Err(e) => return Err(FfiError::Resolve(e.to_string())),
-    }
-
-    // Proxy detection fallback
-    let impl_addr = data_provider.get_implementation_address(chain_id, verifying_contract.clone());
-    if let Some(impl_addr) = impl_addr {
-        match source
-            .resolve_typed_for_primary_type(chain_id, &impl_addr, &primary_type)
-            .await
-        {
-            Ok(resolved) => {
-                let json = serde_json::to_string(&resolved.descriptor)
-                    .map_err(|e| FfiError::Descriptor(e.to_string()))?;
-                return Ok(Some(json));
-            }
-            Err(crate::error::ResolveError::NotFound { .. }) => {}
-            Err(e) => return Err(FfiError::Resolve(e.to_string())),
-        }
-    }
-
-    Ok(None)
-}
-
 /// Resolve all descriptors needed for EIP-712 typed data, including nested calldata.
 ///
 /// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
@@ -400,10 +350,9 @@ pub async fn erc7730_resolve_descriptors_for_typed_data(
     let source = get_registry_source().await?;
 
     // Try direct lookup
-    let mut descriptors =
-        crate::resolver::resolve_descriptors_for_typed_data_with_types(&typed_data, source)
-            .await
-            .map_err(|e| FfiError::Resolve(e.to_string()))?;
+    let mut descriptors = crate::resolver::resolve_descriptors_for_typed_data(&typed_data, source)
+        .await
+        .map_err(|e| FfiError::Resolve(e.to_string()))?;
 
     // Proxy detection fallback
     if descriptors.is_empty() {
@@ -412,10 +361,9 @@ pub async fn erc7730_resolve_descriptors_for_typed_data(
         if let Some(impl_addr) = impl_addr {
             let mut proxied = typed_data.clone();
             proxied.domain.verifying_contract = Some(impl_addr.clone());
-            descriptors =
-                crate::resolver::resolve_descriptors_for_typed_data_with_types(&proxied, source)
-                    .await
-                    .map_err(|e| FfiError::Resolve(e.to_string()))?;
+            descriptors = crate::resolver::resolve_descriptors_for_typed_data(&proxied, source)
+                .await
+                .map_err(|e| FfiError::Resolve(e.to_string()))?;
         }
     }
 
@@ -617,7 +565,7 @@ mod tests {
             "display": {
                 "definitions": {},
                 "formats": {
-                    "Mail": {
+                    "Mail(address from,string contents)": {
                         "intent": "Sign mail",
                         "fields": [
                             {

@@ -1795,28 +1795,6 @@ public func erc7730ResolveDescriptor(chainId: UInt64, address: String)async thro
         )
 }
 /**
- * Resolve an EIP-712 descriptor from the GitHub registry for typed data.
- *
- * Looks up by `chain_id` + `verifying_contract`. Automatically detects proxy
- * contracts via `data_provider.get_implementation_address()` as fallback.
- * Returns the descriptor JSON string, or `None` if no descriptor is found.
- * Requires the `github-registry` feature.
- */
-public func erc7730ResolveDescriptorForTypedData(chainId: UInt64, verifyingContract: String, primaryType: String, dataProvider: DataProviderFfi)async throws  -> String?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_resolve_descriptor_for_typed_data(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(verifyingContract),FfiConverterString.lower(primaryType),FfiConverterTypeDataProviderFfi_lower(dataProvider)
-                )
-            },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionString.lift,
-            errorHandler: FfiConverterTypeFfiError_lift
-        )
-}
-/**
  * Resolve all descriptors needed for a transaction, including nested calldata.
  *
  * Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
@@ -1886,9 +1864,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor() != 56571) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor_for_typed_data() != 5903) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx() != 7820) {

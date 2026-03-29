@@ -2,6 +2,8 @@
 //! Includes [`StaticSource`] for testing and embedded use cases.
 
 use std::collections::HashMap;
+#[cfg(feature = "github-registry")]
+use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -16,6 +18,15 @@ pub struct ResolvedDescriptor {
     pub address: String,
 }
 
+/// Lookup parameters for EIP-712 descriptor resolution.
+#[derive(Debug, Clone)]
+pub struct TypedDescriptorLookup {
+    pub chain_id: u64,
+    pub verifying_contract: String,
+    pub primary_type: String,
+    pub encode_type_hash: Option<String>,
+}
+
 /// Trait for descriptor sources (embedded, filesystem, GitHub API, etc.).
 pub trait DescriptorSource: Send + Sync {
     /// Resolve a descriptor for contract calldata clear signing.
@@ -25,19 +36,18 @@ pub trait DescriptorSource: Send + Sync {
         address: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>>;
 
-    /// Resolve a descriptor for EIP-712 typed data clear signing.
-    fn resolve_typed(
+    /// Resolve candidate descriptors for EIP-712 typed data clear signing.
+    fn resolve_typed_candidates(
         &self,
-        chain_id: u64,
-        address: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>>;
+        lookup: TypedDescriptorLookup,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ResolvedDescriptor>, ResolveError>> + Send + '_>>;
 }
 
 /// Static in-memory descriptor source for testing.
 pub struct StaticSource {
     /// Map of `"{chain_id}:{address}"` → Descriptor.
     calldata: HashMap<String, Descriptor>,
-    typed: HashMap<String, Descriptor>,
+    typed: HashMap<String, Vec<Descriptor>>,
 }
 
 impl StaticSource {
@@ -61,7 +71,9 @@ impl StaticSource {
     /// Add a typed data descriptor.
     pub fn add_typed(&mut self, chain_id: u64, address: &str, descriptor: Descriptor) {
         self.typed
-            .insert(Self::make_key(chain_id, address), descriptor);
+            .entry(Self::make_key(chain_id, address))
+            .or_default()
+            .push(descriptor);
     }
 
     /// Add a calldata descriptor from JSON.
@@ -120,25 +132,55 @@ impl DescriptorSource for StaticSource {
         Box::pin(async move { result })
     }
 
-    fn resolve_typed(
+    fn resolve_typed_candidates(
         &self,
-        chain_id: u64,
-        address: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>> {
-        let key = Self::make_key(chain_id, address);
+        lookup: TypedDescriptorLookup,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ResolvedDescriptor>, ResolveError>> + Send + '_>>
+    {
+        let key = Self::make_key(lookup.chain_id, &lookup.verifying_contract);
+        let address_lower = lookup.verifying_contract.to_lowercase();
+        let primary_type = lookup.primary_type.clone();
+        let expected_hash = lookup.encode_type_hash.clone();
         let result = self
             .typed
             .get(&key)
-            .cloned()
-            .map(|descriptor| ResolvedDescriptor {
-                descriptor,
-                chain_id,
-                address: address.to_lowercase(),
+            .map(|descriptors| {
+                descriptors
+                    .iter()
+                    .filter(|descriptor| {
+                        descriptor.display.formats.keys().any(|key| {
+                            let primary_matches = key == &primary_type
+                                || key.strip_prefix(&format!("{primary_type}(")).is_some();
+                            if !primary_matches {
+                                return false;
+                            }
+
+                            match expected_hash.as_deref() {
+                                Some(expected) if key.contains('(') => {
+                                    crate::eip712::format_key_hash_hex(key)
+                                        .eq_ignore_ascii_case(expected)
+                                }
+                                _ => true,
+                            }
+                        })
+                    })
+                    .cloned()
+                    .map(|descriptor| ResolvedDescriptor {
+                        descriptor,
+                        chain_id: lookup.chain_id,
+                        address: address_lower.clone(),
+                    })
+                    .collect::<Vec<_>>()
             })
-            .ok_or_else(|| ResolveError::NotFound {
-                chain_id,
-                address: address.to_string(),
-            });
+            .unwrap_or_default();
+        let result = if result.is_empty() {
+            Err(ResolveError::NotFound {
+                chain_id: lookup.chain_id,
+                address: lookup.verifying_contract.clone(),
+            })
+        } else {
+            Ok(result)
+        };
         Box::pin(async move { result })
     }
 }
@@ -151,8 +193,8 @@ pub struct GitHubRegistrySource {
     base_url: String,
     /// Calldata index: `"eip155:{chainId}:{address}"` → single relative path.
     calldata_index: HashMap<String, String>,
-    /// EIP-712 index: `"eip155:{chainId}:{address}"` → list of (primaryType, path) entries.
-    eip712_index: HashMap<String, Vec<Eip712IndexEntry>>,
+    /// EIP-712 index: `"eip155:{chainId}:{address}"` → `primaryType` buckets.
+    eip712_index: HashMap<String, HashMap<String, Vec<Eip712IndexEntry>>>,
     /// In-memory descriptor cache keyed by relative path (tokio Mutex for async safety).
     cache: tokio::sync::Mutex<HashMap<String, Descriptor>>,
 }
@@ -160,16 +202,24 @@ pub struct GitHubRegistrySource {
 #[cfg(feature = "github-registry")]
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Eip712IndexEntry {
-    #[serde(rename = "primaryType")]
-    primary_type: String,
     path: String,
+    #[serde(rename = "encodeTypeHashes", default)]
+    encode_type_hashes: Vec<String>,
 }
 
 #[cfg(feature = "github-registry")]
 #[derive(Debug, serde::Deserialize)]
-struct RegistryIndex {
+struct RegistryIndexV2 {
     calldata: HashMap<String, String>,
-    eip712: HashMap<String, Vec<Eip712IndexEntry>>,
+    eip712: HashMap<String, Vec<LegacyEip712IndexEntry>>,
+}
+
+#[cfg(feature = "github-registry")]
+#[derive(Debug, Clone, serde::Deserialize)]
+struct LegacyEip712IndexEntry {
+    #[serde(rename = "primaryType")]
+    primary_type: String,
+    path: String,
 }
 
 #[cfg(feature = "github-registry")]
@@ -182,7 +232,7 @@ impl GitHubRegistrySource {
     pub fn new(
         base_url: &str,
         calldata_index: HashMap<String, String>,
-        eip712_index: HashMap<String, Vec<Eip712IndexEntry>>,
+        eip712_index: HashMap<String, HashMap<String, Vec<Eip712IndexEntry>>>,
     ) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -192,41 +242,41 @@ impl GitHubRegistrySource {
         }
     }
 
-    /// Create a source by fetching V2 `index.json` from the registry.
+    /// Create a source by fetching split V3 index files from the registry.
     ///
-    /// The V2 index has two top-level keys:
-    /// - `calldata`: `{key: "path"}` (string values, 1:1)
-    /// - `eip712`: `{key: [{primaryType, path}]}` (array values with primaryType metadata)
+    /// Falls back to the legacy V2 `index.json` layout when the split files are absent.
     pub async fn from_registry(base_url: &str) -> Result<Self, ResolveError> {
         let base = base_url.trim_end_matches('/');
-        let index_url = format!("{}/index.json", base);
-        let response = reqwest::get(&index_url).await.map_err(|e| {
-            if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
-                ResolveError::NotFound {
-                    chain_id: 0,
-                    address: format!("index.json at {index_url}"),
-                }
-            } else {
-                ResolveError::Io(format!("HTTP fetch index failed: {e}"))
-            }
-        })?;
-        if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err(ResolveError::NotFound {
-                chain_id: 0,
-                address: format!("index.json at {index_url}"),
-            });
-        }
-        let body = response
-            .text()
-            .await
-            .map_err(|e| ResolveError::Io(format!("read index response: {e}")))?;
-        let index_v2: RegistryIndex =
-            serde_json::from_str(&body).map_err(|e| ResolveError::Parse(e.to_string()))?;
+        let calldata_url = format!("{}/index.calldata.json", base);
+        let eip712_url = format!("{}/index.eip712.json", base);
+
+        let split_indexes = match (
+            fetch_index::<HashMap<String, String>>(&calldata_url).await,
+            fetch_index::<HashMap<String, HashMap<String, Vec<Eip712IndexEntry>>>>(&eip712_url)
+                .await,
+        ) {
+            (Ok(calldata), Ok(eip712)) => Some((calldata, eip712)),
+            (Err(ResolveError::NotFound { .. }), Err(ResolveError::NotFound { .. }))
+            | (Err(ResolveError::NotFound { .. }), Ok(_))
+            | (Ok(_), Err(ResolveError::NotFound { .. })) => None,
+            (Err(err), _) | (_, Err(err)) => return Err(err),
+        };
+
+        let (calldata_index, eip712_index) = if let Some(indexes) = split_indexes {
+            indexes
+        } else {
+            let index_url = format!("{}/index.json", base);
+            let index_v2 = fetch_index::<RegistryIndexV2>(&index_url).await?;
+            (
+                index_v2.calldata,
+                group_legacy_eip712_index(index_v2.eip712),
+            )
+        };
 
         Ok(Self {
             base_url: base.to_string(),
-            calldata_index: index_v2.calldata,
-            eip712_index: index_v2.eip712,
+            calldata_index,
+            eip712_index,
             cache: tokio::sync::Mutex::new(HashMap::new()),
         })
     }
@@ -330,39 +380,129 @@ impl GitHubRegistrySource {
 }
 
 #[cfg(feature = "github-registry")]
+async fn fetch_index<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, ResolveError> {
+    let response = reqwest::get(url).await.map_err(|e| {
+        if e.status() == Some(reqwest::StatusCode::NOT_FOUND) {
+            ResolveError::NotFound {
+                chain_id: 0,
+                address: format!("index at {url}"),
+            }
+        } else {
+            ResolveError::Io(format!("HTTP fetch index failed: {e}"))
+        }
+    })?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Err(ResolveError::NotFound {
+            chain_id: 0,
+            address: format!("index at {url}"),
+        });
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|e| ResolveError::Io(format!("read index response: {e}")))?;
+    serde_json::from_str(&body).map_err(|e| ResolveError::Parse(e.to_string()))
+}
+
+#[cfg(feature = "github-registry")]
+fn group_legacy_eip712_index(
+    legacy: HashMap<String, Vec<LegacyEip712IndexEntry>>,
+) -> HashMap<String, HashMap<String, Vec<Eip712IndexEntry>>> {
+    let mut grouped = HashMap::new();
+
+    for (key, entries) in legacy {
+        let primary_map = grouped.entry(key).or_insert_with(HashMap::new);
+        for entry in entries {
+            let path = entry.path;
+            let bucket: &mut Vec<Eip712IndexEntry> = primary_map
+                .entry(entry.primary_type)
+                .or_insert_with(Vec::new);
+            if bucket.iter().any(|existing| existing.path == path) {
+                continue;
+            }
+            bucket.push(Eip712IndexEntry {
+                path,
+                encode_type_hashes: Vec::new(),
+            });
+        }
+    }
+
+    grouped
+}
+
+#[cfg(feature = "github-registry")]
+fn filter_typed_index_entries<'a>(
+    entries: &'a [Eip712IndexEntry],
+    expected_hash: Option<&str>,
+) -> Vec<&'a Eip712IndexEntry> {
+    match expected_hash {
+        Some(expected_hash) => {
+            let exact = entries
+                .iter()
+                .filter(|entry| {
+                    entry
+                        .encode_type_hashes
+                        .iter()
+                        .any(|hash| hash.eq_ignore_ascii_case(expected_hash))
+                })
+                .collect::<Vec<_>>();
+            if exact.is_empty() {
+                if entries
+                    .iter()
+                    .all(|entry| entry.encode_type_hashes.is_empty())
+                {
+                    entries.iter().collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                exact
+            }
+        }
+        None => entries.iter().collect(),
+    }
+}
+
+#[cfg(feature = "github-registry")]
 impl GitHubRegistrySource {
-    /// Resolve an EIP-712 descriptor filtered by `primary_type`.
-    ///
-    /// Looks up the eip712 index by `(chain_id, address)`, finds the entry matching
-    /// `primary_type`, and fetches that single descriptor.
-    pub async fn resolve_typed_for_primary_type(
+    async fn resolve_typed_candidates_inner(
         &self,
-        chain_id: u64,
-        address: &str,
-        primary_type: &str,
-    ) -> Result<ResolvedDescriptor, ResolveError> {
-        let address_lower = address.to_lowercase();
-        let key = Self::make_key(chain_id, &address_lower);
+        lookup: &TypedDescriptorLookup,
+    ) -> Result<Vec<ResolvedDescriptor>, ResolveError> {
+        let address_lower = lookup.verifying_contract.to_lowercase();
+        let key = Self::make_key(lookup.chain_id, &address_lower);
         let entries = self
             .eip712_index
             .get(&key)
+            .and_then(|bucket| bucket.get(&lookup.primary_type))
             .ok_or_else(|| ResolveError::NotFound {
-                chain_id,
+                chain_id: lookup.chain_id,
                 address: address_lower.clone(),
             })?;
-        let entry = entries
-            .iter()
-            .find(|e| e.primary_type == primary_type)
-            .ok_or_else(|| ResolveError::NotFound {
-                chain_id,
-                address: address_lower.clone(),
-            })?;
-        let descriptor = self.fetch_descriptor_cached(&entry.path).await?;
-        Ok(ResolvedDescriptor {
-            descriptor,
-            chain_id,
-            address: address_lower,
-        })
+
+        let filtered_entries =
+            filter_typed_index_entries(entries, lookup.encode_type_hash.as_deref());
+        if filtered_entries.is_empty() {
+            return Err(ResolveError::NotFound {
+                chain_id: lookup.chain_id,
+                address: address_lower,
+            });
+        }
+
+        let mut seen_paths = HashSet::new();
+        let mut candidates = Vec::new();
+        for entry in filtered_entries {
+            if !seen_paths.insert(entry.path.as_str()) {
+                continue;
+            }
+            let descriptor = self.fetch_descriptor_cached(&entry.path).await?;
+            candidates.push(ResolvedDescriptor {
+                descriptor,
+                chain_id: lookup.chain_id,
+                address: lookup.verifying_contract.to_lowercase(),
+            });
+        }
+        Ok(candidates)
     }
 }
 
@@ -392,32 +532,12 @@ impl DescriptorSource for GitHubRegistrySource {
         })
     }
 
-    fn resolve_typed(
+    fn resolve_typed_candidates(
         &self,
-        chain_id: u64,
-        address: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ResolvedDescriptor, ResolveError>> + Send + '_>> {
-        let addr = address.to_lowercase();
-        Box::pin(async move {
-            let key = Self::make_key(chain_id, &addr);
-            let entries = self
-                .eip712_index
-                .get(&key)
-                .ok_or_else(|| ResolveError::NotFound {
-                    chain_id,
-                    address: addr.clone(),
-                })?;
-            let entry = entries.first().ok_or_else(|| ResolveError::NotFound {
-                chain_id,
-                address: addr.clone(),
-            })?;
-            let descriptor = self.fetch_descriptor_cached(&entry.path).await?;
-            Ok(ResolvedDescriptor {
-                descriptor,
-                chain_id,
-                address: addr,
-            })
-        })
+        lookup: TypedDescriptorLookup,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<ResolvedDescriptor>, ResolveError>> + Send + '_>>
+    {
+        Box::pin(async move { self.resolve_typed_candidates_inner(&lookup).await })
     }
 }
 
@@ -451,6 +571,70 @@ fn resolve_relative_path(base: &str, relative: &str) -> String {
             format!("{}/{}", parts.join("/"), rel_remaining)
         }
     }
+}
+
+pub(crate) struct TypedOuterSelection<'a> {
+    pub matches: Vec<&'a ResolvedDescriptor>,
+    pub domain_errors: Vec<String>,
+    pub format_misses: Vec<&'a ResolvedDescriptor>,
+}
+
+pub(crate) fn select_matching_typed_descriptors<'a>(
+    descriptors: &'a [ResolvedDescriptor],
+    data: &crate::eip712::TypedData,
+) -> Result<TypedOuterSelection<'a>, Error> {
+    let Some(chain_id) = data.domain.chain_id else {
+        return Ok(TypedOuterSelection {
+            matches: Vec::new(),
+            domain_errors: Vec::new(),
+            format_misses: Vec::new(),
+        });
+    };
+    let Some(verifying_contract) = data.domain.verifying_contract.as_deref() else {
+        return Ok(TypedOuterSelection {
+            matches: Vec::new(),
+            domain_errors: Vec::new(),
+            format_misses: Vec::new(),
+        });
+    };
+
+    let mut matches = Vec::new();
+    let mut domain_errors = Vec::new();
+    let mut format_misses = Vec::new();
+
+    for descriptor in descriptors {
+        let deployment_matches = descriptor
+            .descriptor
+            .context
+            .deployments()
+            .iter()
+            .any(|dep| {
+                dep.chain_id == chain_id && dep.address.eq_ignore_ascii_case(verifying_contract)
+            });
+        if !deployment_matches {
+            continue;
+        }
+
+        match crate::eip712::validate_descriptor_domain_binding(&descriptor.descriptor, data) {
+            Ok(()) => {}
+            Err(Error::Descriptor(message)) => {
+                domain_errors.push(message);
+                continue;
+            }
+            Err(err) => return Err(err),
+        }
+
+        match crate::eip712::find_typed_format_optional(&descriptor.descriptor, data)? {
+            Some(_) => matches.push(descriptor),
+            None => format_misses.push(descriptor),
+        }
+    }
+
+    Ok(TypedOuterSelection {
+        matches,
+        domain_errors,
+        format_misses,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -746,7 +930,6 @@ fn resolve_resolver_nested_selector(
         .and_then(|value| crate::engine::selector_from_argument_value(&value)))
 }
 
-#[cfg(feature = "github-registry")]
 fn resolve_typed_nested_callee_for_resolver(
     field: &CalldataFieldInfo,
     message: &serde_json::Value,
@@ -771,7 +954,6 @@ fn resolve_typed_nested_callee_for_resolver(
         .and_then(crate::eip712::coerce_typed_address_string))
 }
 
-#[cfg(feature = "github-registry")]
 fn resolve_typed_nested_chain_id_for_resolver(
     field: &CalldataFieldInfo,
     message: &serde_json::Value,
@@ -798,7 +980,6 @@ fn resolve_typed_nested_chain_id_for_resolver(
         .unwrap_or(chain_id))
 }
 
-#[cfg(feature = "github-registry")]
 fn resolve_typed_nested_selector_for_resolver(
     field: &CalldataFieldInfo,
     message: &serde_json::Value,
@@ -823,17 +1004,13 @@ fn resolve_typed_nested_selector_for_resolver(
         .and_then(crate::eip712::selector_from_typed_value))
 }
 
-// ---------------------------------------------------------------------------
-// Nested descriptor resolution for EIP-712 typed data
-// ---------------------------------------------------------------------------
-
-/// Resolve all descriptors needed to format EIP-712 typed data using the full
-/// typed-data schema, so nested calldata discovery follows the same format
-/// selection rules as rendering.
-#[cfg(feature = "github-registry")]
-pub(crate) async fn resolve_descriptors_for_typed_data_with_types(
+/// Resolve all descriptors needed to format EIP-712 typed data, including nested calldata.
+///
+/// Uses the full typed-data schema so outer descriptor selection follows the same
+/// `domain` / `domainSeparator` / exact `encodeType` rules as rendering.
+pub async fn resolve_descriptors_for_typed_data(
     typed_data: &crate::eip712::TypedData,
-    source: &GitHubRegistrySource,
+    source: &dyn DescriptorSource,
 ) -> Result<Vec<ResolvedDescriptor>, ResolveError> {
     let mut results = Vec::new();
 
@@ -844,24 +1021,41 @@ pub(crate) async fn resolve_descriptors_for_typed_data_with_types(
         return Ok(results);
     };
 
-    let outer = match source
-        .resolve_typed_for_primary_type(chain_id, verifying_contract, &typed_data.primary_type)
-        .await
-    {
+    let lookup = TypedDescriptorLookup {
+        chain_id,
+        verifying_contract: verifying_contract.to_string(),
+        primary_type: typed_data.primary_type.clone(),
+        encode_type_hash: Some(
+            crate::eip712::encode_type_hash_hex_for_primary_type(typed_data)
+                .map_err(|e| ResolveError::Parse(e.to_string()))?,
+        ),
+    };
+
+    let candidates = match source.resolve_typed_candidates(lookup).await {
         Ok(r) => r,
         Err(ResolveError::NotFound { .. }) => return Ok(results),
         Err(e) => return Err(e),
     };
 
-    let format = crate::eip712::find_typed_format(&outer.descriptor, typed_data).ok();
-    let calldata_fields = if let Some(format) = format {
-        let mut warnings = Vec::new();
-        let expanded =
-            crate::engine::expand_display_fields(&outer.descriptor, &format.fields, &mut warnings);
-        collect_calldata_fields(&expanded, &outer.descriptor.display.definitions)
-    } else {
-        Vec::new()
+    let selection = select_matching_typed_descriptors(&candidates, typed_data)
+        .map_err(|e| ResolveError::Parse(e.to_string()))?;
+    let outer = match selection.matches.len() {
+        1 => selection.matches[0].clone(),
+        0 => return Ok(results),
+        _ => {
+            return Err(ResolveError::Parse(format!(
+                "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain and encodeType validation",
+                chain_id, verifying_contract
+            )))
+        }
     };
+
+    let format = crate::eip712::find_typed_format(&outer.descriptor, typed_data)
+        .map_err(|e| ResolveError::Parse(e.to_string()))?;
+    let mut warnings = Vec::new();
+    let expanded =
+        crate::engine::expand_display_fields(&outer.descriptor, &format.fields, &mut warnings);
+    let calldata_fields = collect_calldata_fields(&expanded, &outer.descriptor.display.definitions);
 
     results.push(outer);
 
@@ -940,134 +1134,11 @@ pub(crate) async fn resolve_descriptors_for_typed_data_with_types(
     Ok(results)
 }
 
-/// Resolve all descriptors needed to format EIP-712 typed data, including nested calldata.
-///
-/// 1. Resolves outer EIP-712 descriptor by `(chain_id, verifying_contract, primary_type)`
-/// 2. Finds `FieldFormat::Calldata` fields in the matching format
-/// 3. Reads inner callee addresses from the EIP-712 JSON message via `calleePath`
-/// 4. Resolves inner calldata descriptors from the registry
-/// 5. Returns `[outer, inner1, inner2, ...]` for use with `format_typed_data`
-///
-/// If the outer descriptor is not found, returns an empty vec (graceful degradation).
-/// Inner descriptor resolution failures are silently skipped.
-#[cfg(feature = "github-registry")]
-pub async fn resolve_descriptors_for_typed_data(
-    chain_id: u64,
-    verifying_contract: &str,
-    primary_type: &str,
-    message: &serde_json::Value,
-    source: &GitHubRegistrySource,
-) -> Result<Vec<ResolvedDescriptor>, ResolveError> {
-    let mut results = Vec::new();
-
-    // 1. Resolve outer EIP-712 descriptor (with primary_type filter)
-    let outer = match source
-        .resolve_typed_for_primary_type(chain_id, verifying_contract, primary_type)
-        .await
-    {
-        Ok(r) => r,
-        Err(ResolveError::NotFound { .. }) => return Ok(results),
-        Err(e) => return Err(e),
-    };
-
-    // 2. Find matching format key for this primary type
-    let format = outer
-        .descriptor
-        .display
-        .formats
-        .get(primary_type)
-        .or_else(|| {
-            let prefix = format!("{}(", primary_type);
-            outer
-                .descriptor
-                .display
-                .formats
-                .iter()
-                .find(|(key, _)| key.starts_with(&prefix))
-                .map(|(_, v)| v)
-        });
-
-    // 3. Collect calldata fields from the format
-    let calldata_fields = format
-        .map(|fmt| collect_calldata_fields(&fmt.fields, &outer.descriptor.display.definitions))
-        .unwrap_or_default();
-
-    results.push(outer);
-
-    // 4. For each calldata field, resolve inner callee from JSON message
-    for field in &calldata_fields {
-        let callee_addr = match resolve_typed_nested_callee_for_resolver(
-            field,
-            message,
-            chain_id,
-            verifying_contract,
-        )
-        .map_err(|e| ResolveError::Parse(e.to_string()))?
-        {
-            Some(addr) => addr,
-            None => continue,
-        };
-
-        let inner_chain = resolve_typed_nested_chain_id_for_resolver(
-            field,
-            message,
-            chain_id,
-            verifying_contract,
-        )
-        .map_err(|e| ResolveError::Parse(e.to_string()))?;
-        let selector_override = resolve_typed_nested_selector_for_resolver(
-            field,
-            message,
-            chain_id,
-            verifying_contract,
-        )
-        .map_err(|e| ResolveError::Parse(e.to_string()))?;
-
-        // Try to get inner calldata bytes for deeper nesting via resolve_recursive
-        if let Some(data_path) = &field.data_path {
-            if let Some(inner_hex) = crate::eip712::resolve_typed_path(
-                message,
-                data_path,
-                chain_id,
-                Some(verifying_contract),
-            )
-            .and_then(|v| v.as_str().map(String::from))
-            {
-                let hex_str = inner_hex
-                    .strip_prefix("0x")
-                    .or_else(|| inner_hex.strip_prefix("0X"))
-                    .unwrap_or(&inner_hex);
-                if let Ok(inner_bytes) = hex::decode(hex_str) {
-                    let normalized =
-                        crate::engine::normalized_nested_calldata(&inner_bytes, selector_override);
-                    // Use resolve_recursive for the inner calldata (reuses calldata flow)
-                    let _ = resolve_recursive(
-                        inner_chain,
-                        &callee_addr,
-                        &normalized,
-                        source,
-                        MAX_RESOLVE_DEPTH - 1,
-                        &mut results,
-                    )
-                    .await;
-                    continue;
-                }
-            }
-        }
-
-        // Fallback: resolve inner descriptor without deeper nesting
-        match source.resolve_calldata(inner_chain, &callee_addr).await {
-            Ok(inner_rd) => results.push(inner_rd),
-            Err(_) => continue,
-        }
-    }
-
-    Ok(results)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::eip712::TypedData;
+    use crate::EmptyDataProvider;
 
     #[tokio::test]
     async fn test_static_source_not_found() {
@@ -1101,6 +1172,80 @@ mod tests {
             resolve_relative_path("file.json", "./other.json"),
             "other.json"
         );
+    }
+
+    #[cfg(feature = "github-registry")]
+    #[test]
+    fn test_group_legacy_eip712_index_groups_by_primary_type() {
+        let grouped = group_legacy_eip712_index(HashMap::from([(
+            "eip155:1:0xabc".to_string(),
+            vec![
+                LegacyEip712IndexEntry {
+                    primary_type: "PermitSingle".to_string(),
+                    path: "registry/uniswap/eip712-uniswap-permit2.json".to_string(),
+                },
+                LegacyEip712IndexEntry {
+                    primary_type: "PermitBatch".to_string(),
+                    path: "registry/uniswap/eip712-uniswap-permit2.json".to_string(),
+                },
+            ],
+        )]));
+
+        let bucket = grouped.get("eip155:1:0xabc").expect("bucket");
+        assert_eq!(
+            bucket["PermitSingle"][0].path,
+            "registry/uniswap/eip712-uniswap-permit2.json"
+        );
+        assert_eq!(
+            bucket["PermitSingle"][0].encode_type_hashes,
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            bucket["PermitBatch"][0].path,
+            "registry/uniswap/eip712-uniswap-permit2.json"
+        );
+    }
+
+    #[cfg(feature = "github-registry")]
+    #[test]
+    fn test_filter_typed_index_entries_requires_exact_hash_for_split_entries() {
+        let entries = vec![
+            Eip712IndexEntry {
+                path: "registry/a.json".to_string(),
+                encode_type_hashes: vec!["0xaaaa".to_string()],
+            },
+            Eip712IndexEntry {
+                path: "registry/legacy.json".to_string(),
+                encode_type_hashes: Vec::new(),
+            },
+        ];
+
+        let filtered = filter_typed_index_entries(&entries, Some("0xaaaa"));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].path, "registry/a.json");
+
+        let no_match = filter_typed_index_entries(&entries, Some("0xbbbb"));
+        assert!(no_match.is_empty());
+    }
+
+    #[cfg(feature = "github-registry")]
+    #[test]
+    fn test_filter_typed_index_entries_keeps_legacy_bucket_fallback() {
+        let entries = vec![
+            Eip712IndexEntry {
+                path: "registry/legacy-a.json".to_string(),
+                encode_type_hashes: Vec::new(),
+            },
+            Eip712IndexEntry {
+                path: "registry/legacy-b.json".to_string(),
+                encode_type_hashes: Vec::new(),
+            },
+        ];
+
+        let filtered = filter_typed_index_entries(&entries, Some("0xaaaa"));
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].path, "registry/legacy-a.json");
+        assert_eq!(filtered[1].path, "registry/legacy-b.json");
     }
 
     fn safe_descriptor() -> Descriptor {
@@ -1184,6 +1329,140 @@ mod tests {
         calldata.extend_from_slice(&address_word(to));
         calldata.extend_from_slice(&uint_word(amount));
         calldata
+    }
+
+    fn permit2_descriptor(
+        owner: &str,
+        format_key: &str,
+        extra_context: Option<serde_json::Value>,
+    ) -> Descriptor {
+        let mut eip712 = serde_json::json!({
+            "deployments": [{
+                "chainId": 1,
+                "address": "0x000000000022d473030f116ddee9f6b43ac78ba3"
+            }],
+            "domain": {
+                "name": "Permit2"
+            }
+        });
+
+        if let Some(extra) = extra_context {
+            let target = eip712.as_object_mut().expect("eip712 context object");
+            for (key, value) in extra.as_object().expect("extra context object") {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+
+        let descriptor = serde_json::json!({
+            "context": { "eip712": eip712 },
+            "metadata": {
+                "owner": owner,
+                "enums": {},
+                "constants": {},
+                "maps": {}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    format_key: {
+                        "intent": owner,
+                        "fields": [{
+                            "path": "spender",
+                            "label": "Spender",
+                            "format": "raw"
+                        }]
+                    }
+                }
+            }
+        });
+        Descriptor::from_json(&descriptor.to_string()).expect("descriptor")
+    }
+
+    fn exclusive_dutch_order_typed_data() -> TypedData {
+        serde_json::from_value(serde_json::json!({
+            "types": {
+                "PermitWitnessTransferFrom": [
+                    { "name": "permitted", "type": "TokenPermissions" },
+                    { "name": "spender", "type": "address" },
+                    { "name": "nonce", "type": "uint256" },
+                    { "name": "deadline", "type": "uint256" },
+                    { "name": "witness", "type": "ExclusiveDutchOrder" }
+                ],
+                "TokenPermissions": [
+                    { "name": "token", "type": "address" },
+                    { "name": "amount", "type": "uint256" }
+                ],
+                "ExclusiveDutchOrder": [
+                    { "name": "info", "type": "OrderInfo" },
+                    { "name": "decayStartTime", "type": "uint256" },
+                    { "name": "decayEndTime", "type": "uint256" },
+                    { "name": "exclusiveFiller", "type": "address" },
+                    { "name": "exclusivityOverrideBps", "type": "uint256" },
+                    { "name": "inputToken", "type": "address" },
+                    { "name": "inputStartAmount", "type": "uint256" },
+                    { "name": "inputEndAmount", "type": "uint256" },
+                    { "name": "outputs", "type": "DutchOutput[]" }
+                ],
+                "OrderInfo": [
+                    { "name": "reactor", "type": "address" },
+                    { "name": "swapper", "type": "address" },
+                    { "name": "nonce", "type": "uint256" },
+                    { "name": "deadline", "type": "uint256" },
+                    { "name": "additionalValidationContract", "type": "address" },
+                    { "name": "additionalValidationData", "type": "bytes" }
+                ],
+                "DutchOutput": [
+                    { "name": "token", "type": "address" },
+                    { "name": "startAmount", "type": "uint256" },
+                    { "name": "endAmount", "type": "uint256" },
+                    { "name": "recipient", "type": "address" }
+                ],
+                "EIP712Domain": [
+                    { "name": "name", "type": "string" },
+                    { "name": "chainId", "type": "uint256" },
+                    { "name": "verifyingContract", "type": "address" }
+                ]
+            },
+            "domain": {
+                "name": "Permit2",
+                "chainId": "1",
+                "verifyingContract": "0x000000000022d473030f116ddee9f6b43ac78ba3"
+            },
+            "primaryType": "PermitWitnessTransferFrom",
+            "message": {
+                "permitted": {
+                    "token": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+                    "amount": "100000000000000"
+                },
+                "spender": "0x6000da47483062a0d734ba3dc7576ce6a0b645c4",
+                "nonce": "1993349843209468715141873868895370562722298771555073489698616037339384894721",
+                "deadline": "1774866877",
+                "witness": {
+                    "info": {
+                        "reactor": "0x6000da47483062a0d734ba3dc7576ce6a0b645c4",
+                        "swapper": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+                        "nonce": "1993349843209468715141873868895370562722298771555073489698616037339384894721",
+                        "deadline": "1774866877",
+                        "additionalValidationContract": "0x0000000000000000000000000000000000000000",
+                        "additionalValidationData": "0x"
+                    },
+                    "decayStartTime": "1774780477",
+                    "decayEndTime": "1774780477",
+                    "exclusiveFiller": "0x0000000000000000000000000000000000000000",
+                    "exclusivityOverrideBps": "0",
+                    "inputToken": "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
+                    "inputStartAmount": "100000000000000",
+                    "inputEndAmount": "100000000000000",
+                    "outputs": [{
+                        "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+                        "startAmount": "199179",
+                        "endAmount": "199179",
+                        "recipient": "0xbf01daf454dce008d3e2bfd47d5e186f71477253"
+                    }]
+                }
+            }
+        }))
+        .expect("typed data")
     }
 
     #[tokio::test]
@@ -1297,5 +1576,130 @@ mod tests {
             2,
             "should use implementation_address for outer resolution"
         );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_typed_data_selects_exact_encode_type_candidate() {
+        let typed_data = exclusive_dutch_order_typed_data();
+        let mut source = StaticSource::new();
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor(
+                "Dutch Order",
+                "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,DutchOrder witness)DutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)",
+                None,
+            ),
+        );
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor(
+                "Exclusive Dutch Order",
+                "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)",
+                None,
+            ),
+        );
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor(
+                "Limit Order",
+                "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,LimitOrder witness)LimitOrder(OrderInfo info,address inputToken,uint256 inputAmount,OutputToken[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)OutputToken(address token,uint256 amount,address recipient)TokenPermissions(address token,uint256 amount)",
+                None,
+            ),
+        );
+
+        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source)
+            .await
+            .expect("resolve");
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(
+            descriptors[0].descriptor.metadata.owner.as_deref(),
+            Some("Exclusive Dutch Order")
+        );
+
+        let model = crate::format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+            .await
+            .expect("format");
+        assert_eq!(model.intent, "Exclusive Dutch Order");
+    }
+
+    #[tokio::test]
+    async fn test_resolve_typed_data_returns_empty_when_no_exact_encode_type_candidate_matches() {
+        let typed_data = exclusive_dutch_order_typed_data();
+        let mut source = StaticSource::new();
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor(
+                "Dutch Order",
+                "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,DutchOrder witness)DutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)",
+                None,
+            ),
+        );
+
+        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source)
+            .await
+            .expect("resolve");
+        assert!(descriptors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_typed_data_rejects_domain_separator_mismatch_before_exact_match() {
+        let typed_data = exclusive_dutch_order_typed_data();
+        let mut source = StaticSource::new();
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor(
+                "Wrong Separator",
+                "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)",
+                Some(serde_json::json!({
+                    "domainSeparator": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+                })),
+            ),
+        );
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor(
+                "Correct Candidate",
+                "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)",
+                None,
+            ),
+        );
+
+        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source)
+            .await
+            .expect("resolve");
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(
+            descriptors[0].descriptor.metadata.owner.as_deref(),
+            Some("Correct Candidate")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolve_typed_data_errors_when_multiple_exact_candidates_survive() {
+        let typed_data = exclusive_dutch_order_typed_data();
+        let mut source = StaticSource::new();
+        let format_key = "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)";
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor("Candidate A", format_key, None),
+        );
+        source.add_typed(
+            1,
+            "0x000000000022d473030f116ddee9f6b43ac78ba3",
+            permit2_descriptor("Candidate B", format_key, None),
+        );
+
+        let err = resolve_descriptors_for_typed_data(&typed_data, &source)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("multiple EIP-712 descriptors match"));
     }
 }

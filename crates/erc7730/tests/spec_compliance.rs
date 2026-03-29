@@ -2434,7 +2434,7 @@ async fn test_eip712_encode_type_format_key() {
 }
 
 #[tokio::test]
-async fn test_eip712_bare_primary_type_key_falls_back_for_legacy_descriptor() {
+async fn test_eip712_bare_primary_type_key_rejected() {
     let descriptor = Descriptor::from_json(
         r#"{
             "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
@@ -2460,18 +2460,19 @@ async fn test_eip712_bare_primary_type_key_falls_back_for_legacy_descriptor() {
     }))
     .unwrap();
 
-    let result = format_typed_data(
+    let err = format_typed_data(
         &wrap_rd(descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
-    .unwrap();
-    assert_eq!(result.intent, "Permit");
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("no EIP-712 display format found"));
 }
 
 #[tokio::test]
-async fn test_eip712_real_world_legacy_receive_with_authorization_key_still_formats() {
+async fn test_eip712_real_world_receive_with_authorization_canonical_key_formats() {
     let descriptor = Descriptor::from_json(
         r#"{
             "context": { "eip712": { "deployments": [{"chainId": 42161, "address": "0xaf88d065e77c8cc2239327c5edb3a432268e5831"}] } },
@@ -2479,7 +2480,7 @@ async fn test_eip712_real_world_legacy_receive_with_authorization_key_still_form
             "display": {
                 "definitions": {},
                 "formats": {
-                    "ReceiveWithAuthorization": {
+                    "ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)": {
                         "intent": "Authorize USDC transfer",
                         "fields": [
                             { "path": "from", "label": "From", "format": "addressName" },

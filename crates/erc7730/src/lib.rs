@@ -29,7 +29,9 @@ pub use merge::merge_descriptors;
 pub use provider::{DataProvider, EmptyDataProvider};
 #[cfg(feature = "github-registry")]
 pub use resolver::resolve_descriptors_for_typed_data;
-pub use resolver::{resolve_descriptors_for_tx, DescriptorSource, ResolvedDescriptor};
+pub use resolver::{
+    resolve_descriptors_for_tx, DescriptorSource, ResolvedDescriptor, TypedDescriptorLookup,
+};
 pub use token::{CompositeDataProvider, TokenMeta, WellKnownTokenSource};
 pub use types::descriptor::Descriptor;
 
@@ -244,46 +246,33 @@ pub async fn format_typed_data(
         )
     })?;
 
-    let mut matching_descriptors = Vec::new();
-    let mut domain_errors = Vec::new();
+    let selection = resolver::select_matching_typed_descriptors(descriptors, data)?;
 
-    for descriptor in descriptors {
-        let deployment_matches = descriptor
-            .descriptor
-            .context
-            .deployments()
-            .iter()
-            .any(|dep| {
-                dep.chain_id == chain_id
-                    && dep.address.to_lowercase() == verifying_contract.to_lowercase()
-            });
-        if !deployment_matches {
-            continue;
-        }
-
-        match eip712::validate_descriptor_domain_binding(&descriptor.descriptor, data) {
-            Ok(()) => matching_descriptors.push(&descriptor.descriptor),
-            Err(Error::Descriptor(message)) => domain_errors.push(message),
-            Err(err) => return Err(err),
-        }
-    }
-
-    let outer_descriptor = match matching_descriptors.len() {
-        1 => matching_descriptors[0],
+    let outer_descriptor = match selection.matches.len() {
+        1 => &selection.matches[0].descriptor,
         0 => {
+            if selection.domain_errors.is_empty() && selection.format_misses.len() == 1 {
+                return Err(eip712::find_typed_format(
+                    &selection.format_misses[0].descriptor,
+                    data,
+                )
+                .expect_err("single format miss must still fail exact format lookup"));
+            }
             let mut message = format!(
-                "no EIP-712 descriptor found for chain_id={} verifying_contract={} after domain validation",
+                "no EIP-712 descriptor found for chain_id={} verifying_contract={} after domain and encodeType validation",
                 chain_id, verifying_contract
             );
-            if !domain_errors.is_empty() {
+            if !selection.domain_errors.is_empty() {
                 message.push_str(": ");
-                message.push_str(&domain_errors.join("; "));
+                message.push_str(&selection.domain_errors.join("; "));
+            } else if !selection.format_misses.is_empty() {
+                message.push_str(": no descriptor matched the typed-data encodeType");
             }
             return Err(Error::Descriptor(message));
         }
         _ => {
             return Err(Error::Descriptor(format!(
-                "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain validation",
+                "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain and encodeType validation",
                 chain_id, verifying_contract
             )));
         }

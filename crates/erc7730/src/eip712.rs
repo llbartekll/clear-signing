@@ -874,6 +874,20 @@ pub(crate) fn find_typed_format<'a>(
     descriptor: &'a Descriptor,
     data: &TypedData,
 ) -> Result<&'a crate::types::display::DisplayFormat, Error> {
+    match find_typed_format_optional(descriptor, data)? {
+        Some(format) => Ok(format),
+        None => Err(Error::Descriptor(format!(
+            "no EIP-712 display format found for primaryType '{}' (expected encodeType '{}')",
+            data.primary_type,
+            encode_type_for_primary_type(data)?
+        ))),
+    }
+}
+
+pub(crate) fn find_typed_format_optional<'a>(
+    descriptor: &'a Descriptor,
+    data: &TypedData,
+) -> Result<Option<&'a crate::types::display::DisplayFormat>, Error> {
     let encode_type = encode_type_for_primary_type(data)?;
     let expected_hash = keccak256(encode_type.as_bytes());
     let mut matches = Vec::new();
@@ -885,31 +899,8 @@ pub(crate) fn find_typed_format<'a>(
     }
 
     match matches.len() {
-        1 => Ok(matches[0].1),
-        0 => {
-            // ERC-7730 requires EIP-712 display.format keys to be encodeType(primaryType),
-            // but some production descriptors in the current registry still use the short
-            // primaryType as the key. Keep this exact-name fallback narrow and temporary:
-            // canonical encodeType always wins, and we never do prefix or fuzzy matching.
-            let mut legacy_matches = descriptor
-                .display
-                .formats
-                .iter()
-                .filter(|(key, _)| *key == &data.primary_type)
-                .collect::<Vec<_>>();
-
-            match legacy_matches.len() {
-                1 => Ok(legacy_matches.remove(0).1),
-                0 => Err(Error::Descriptor(format!(
-                    "no EIP-712 display format found for primaryType '{}' (expected encodeType '{}')",
-                    data.primary_type, encode_type
-                ))),
-                _ => Err(Error::Descriptor(format!(
-                    "multiple legacy EIP-712 display formats match primaryType '{}'",
-                    data.primary_type
-                ))),
-            }
-        }
+        1 => Ok(Some(matches[0].1)),
+        0 => Ok(None),
         _ => {
             let keys: Vec<&str> = matches.iter().map(|(key, _)| key.as_str()).collect();
             Err(Error::Descriptor(format!(
@@ -921,8 +912,17 @@ pub(crate) fn find_typed_format<'a>(
     }
 }
 
-fn encode_type_for_primary_type(data: &TypedData) -> Result<String, Error> {
+pub(crate) fn encode_type_for_primary_type(data: &TypedData) -> Result<String, Error> {
     encode_type_for_type(&data.types, &data.primary_type)
+}
+
+pub(crate) fn encode_type_hash_hex_for_primary_type(data: &TypedData) -> Result<String, Error> {
+    let encode_type = encode_type_for_primary_type(data)?;
+    Ok(format_key_hash_hex(&encode_type))
+}
+
+pub(crate) fn format_key_hash_hex(key: &str) -> String {
+    format!("0x{}", hex::encode(keccak256(key.as_bytes())))
 }
 
 pub(crate) fn encode_type_for_type(
@@ -991,7 +991,7 @@ fn base_type_name(field_type: &str) -> &str {
     base_type
 }
 
-fn keccak256(bytes: &[u8]) -> [u8; 32] {
+pub(crate) fn keccak256(bytes: &[u8]) -> [u8; 32] {
     let mut hasher = Keccak::v256();
     hasher.update(bytes);
     let mut output = [0u8; 32];
