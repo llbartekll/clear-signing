@@ -328,6 +328,7 @@ fn render_typed_fields<'a>(
                                     params.as_ref(),
                                     container,
                                     message,
+                                    None,
                                     data_provider,
                                     warnings,
                                 )
@@ -373,6 +374,7 @@ fn render_typed_fields<'a>(
                         params.as_ref(),
                         container,
                         message,
+                        None,
                         data_provider,
                         warnings,
                     )
@@ -460,6 +462,7 @@ fn render_typed_group_field_kind<'a>(
                             if !check_typed_visibility(visible, &val, label, path_str)? {
                                 continue;
                             }
+                            let item_params = item_scoped_typed_params(base, params.as_ref());
                             let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata))
                             {
                                 crate::engine::flatten_display_entry(
@@ -467,7 +470,7 @@ fn render_typed_group_field_kind<'a>(
                                         descriptor,
                                         message,
                                         &val,
-                                        params.as_ref(),
+                                        item_params.as_ref(),
                                         label,
                                         container,
                                         data_provider,
@@ -483,9 +486,10 @@ fn render_typed_group_field_kind<'a>(
                                         descriptor,
                                         &val,
                                         format.as_ref(),
-                                        params.as_ref(),
+                                        item_params.as_ref(),
                                         container,
                                         message,
+                                        Some(item),
                                         data_provider,
                                         warnings,
                                     )
@@ -531,6 +535,7 @@ fn render_typed_group_field_kind<'a>(
                         params.as_ref(),
                         container,
                         message,
+                        None,
                         data_provider,
                         warnings,
                     )
@@ -542,6 +547,36 @@ fn render_typed_group_field_kind<'a>(
             }
         }
     })
+}
+
+fn item_scoped_typed_params(base: &str, params: Option<&FormatParams>) -> Option<FormatParams> {
+    let mut params = params.cloned()?;
+
+    if let Some(token_path) = params.token_path.as_ref() {
+        let prefix = format!("{base}.[].");
+        if let Some(item_relative) = token_path.strip_prefix(&prefix) {
+            params.token_path = Some(item_relative.to_string());
+        }
+    }
+
+    Some(params)
+}
+
+fn resolve_typed_param_path_in_context(
+    message: &serde_json::Value,
+    path: &str,
+    container: TypedContainerContext<'_>,
+    item_scope: Option<&serde_json::Value>,
+) -> Result<Option<serde_json::Value>, Error> {
+    if path.starts_with("#.") || path.starts_with("@.") {
+        return resolve_typed_path_in_context(message, path, container);
+    }
+
+    if let Some(item_scope) = item_scope {
+        return Ok(resolve_typed_message_path(item_scope, path));
+    }
+
+    resolve_typed_path_in_context(message, path, container)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1472,6 +1507,7 @@ async fn format_typed_value(
     params: Option<&FormatParams>,
     container: TypedContainerContext<'_>,
     message: &serde_json::Value,
+    item_scope: Option<&serde_json::Value>,
     data_provider: &dyn DataProvider,
     warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
@@ -1577,7 +1613,9 @@ async fn format_typed_value(
 
             let token_meta = if let Some(params) = params {
                 if let Some(ref token_path) = params.token_path {
-                    let token_addr = resolve_typed_path_in_context(message, token_path, container)?;
+                    let token_addr = resolve_typed_param_path_in_context(
+                        message, token_path, container, item_scope,
+                    )?;
                     let addr_str = token_addr.as_ref().and_then(coerce_typed_address_string);
                     if let Some(addr) = addr_str {
                         if let Some(ref native) = params.native_currency_address {
@@ -1856,6 +1894,7 @@ async fn resolve_and_format_typed_interpolation(
         field.params,
         container,
         message,
+        None,
         data_provider,
         &mut warnings,
     )

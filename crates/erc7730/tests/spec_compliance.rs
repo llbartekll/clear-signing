@@ -1298,7 +1298,7 @@ async fn test_calldata_bundled_group_zips_array_items() {
 #[tokio::test]
 async fn test_eip712_bundled_group_zips_array_items() {
     let descriptor = Descriptor::from_json(
-        r#"{
+        r##"{
             "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
             "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
             "display": {
@@ -1317,7 +1317,7 @@ async fn test_eip712_bundled_group_zips_array_items() {
                     }
                 }
             }
-        }"#,
+        }"##,
     )
     .unwrap();
 
@@ -1410,6 +1410,205 @@ async fn test_eip712_bundled_group_mixed_scalar_child_errors() {
     .unwrap_err()
     .to_string();
     assert!(err.contains("bundled groups cannot mix"));
+}
+
+#[tokio::test]
+async fn test_eip712_grouped_array_token_path_is_scoped_like_calldata() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xpermit2"}] } },
+            "metadata": { "owner": "Uniswap", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)": {
+                        "intent": "UniswapX Exclusive Dutch Order",
+                        "fields": [
+                            {
+                                "path": "witness.outputs.[]",
+                                "fields": [
+                                    { "path": "endAmount", "label": "Minimum amounts to receive", "format": "tokenAmount", "params": { "tokenPath": "token" } },
+                                    { "path": "recipient", "label": "On Address", "format": "raw" }
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "TokenPermissions": [
+                { "name": "token", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+            ],
+            "DutchOutput": [
+                { "name": "token", "type": "address" },
+                { "name": "startAmount", "type": "uint256" },
+                { "name": "endAmount", "type": "uint256" },
+                { "name": "recipient", "type": "address" }
+            ],
+            "OrderInfo": [
+                { "name": "reactor", "type": "address" },
+                { "name": "swapper", "type": "address" },
+                { "name": "nonce", "type": "uint256" },
+                { "name": "deadline", "type": "uint256" },
+                { "name": "additionalValidationContract", "type": "address" },
+                { "name": "additionalValidationData", "type": "bytes" }
+            ],
+            "ExclusiveDutchOrder": [
+                { "name": "info", "type": "OrderInfo" },
+                { "name": "decayStartTime", "type": "uint256" },
+                { "name": "decayEndTime", "type": "uint256" },
+                { "name": "exclusiveFiller", "type": "address" },
+                { "name": "exclusivityOverrideBps", "type": "uint256" },
+                { "name": "inputToken", "type": "address" },
+                { "name": "inputStartAmount", "type": "uint256" },
+                { "name": "inputEndAmount", "type": "uint256" },
+                { "name": "outputs", "type": "DutchOutput[]" }
+            ],
+            "PermitWitnessTransferFrom": [
+                { "name": "permitted", "type": "TokenPermissions" },
+                { "name": "spender", "type": "address" },
+                { "name": "nonce", "type": "uint256" },
+                { "name": "deadline", "type": "uint256" },
+                { "name": "witness", "type": "ExclusiveDutchOrder" }
+            ]
+        },
+        "primaryType": "PermitWitnessTransferFrom",
+        "domain": { "chainId": 1, "verifyingContract": "0xpermit2" },
+        "message": {
+            "permitted": { "token": "0x0000000000000000000000000000000000000001", "amount": "1" },
+            "spender": "0x0000000000000000000000000000000000000002",
+            "nonce": "1",
+            "deadline": "1774866877",
+            "witness": {
+                "info": {
+                    "reactor": "0x0000000000000000000000000000000000000003",
+                    "swapper": "0x0000000000000000000000000000000000000004",
+                    "nonce": "1",
+                    "deadline": "1774866877",
+                    "additionalValidationContract": "0x0000000000000000000000000000000000000000",
+                    "additionalValidationData": "0x"
+                },
+                "decayStartTime": "1774780477",
+                "decayEndTime": "1774780477",
+                "exclusiveFiller": "0x0000000000000000000000000000000000000000",
+                "exclusivityOverrideBps": "0",
+                "inputToken": "0x0000000000000000000000000000000000000005",
+                "inputStartAmount": "100000000000000",
+                "inputEndAmount": "100000000000000",
+                "outputs": [
+                    {
+                        "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+                        "startAmount": "199179",
+                        "endAmount": "200297",
+                        "recipient": "0xbf01daf454dce008d3e2bfd47d5e186f71477253"
+                    }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let result = format_typed_data(&wrap_rd(descriptor, 1, "0xpermit2"), &typed_data, &tokens)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Item(item) => {
+            assert_eq!(item.label, "Minimum amounts to receive");
+            assert_eq!(item.value, "0.200297 USDC");
+        }
+        _ => panic!("expected item output"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_grouped_array_absolute_token_path_is_not_rewritten() {
+    let descriptor = Descriptor::from_json(
+        r##"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Batch(address[] recipients,uint256[] amounts,address token)": {
+                        "intent": "Batch",
+                        "fields": [{
+                            "label": "Transfers",
+                            "iteration": "bundled",
+                            "fields": [
+                                { "path": "recipients.[]", "label": "Recipient", "format": "address" },
+                                { "path": "amounts.[]", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "#.token" } }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"##,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [
+                { "name": "recipients", "type": "address[]" },
+                { "name": "amounts", "type": "uint256[]" },
+                { "name": "token", "type": "address" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "recipients": [
+                "0x0000000000000000000000000000000000000001"
+            ],
+            "amounts": ["200297"],
+            "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+        }
+    }))
+    .unwrap();
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let result = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &tokens)
+        .await
+        .unwrap();
+
+    match &result.entries[0] {
+        DisplayEntry::Group { items, .. } => {
+            assert_eq!(items[0].label, "Recipient");
+            assert_eq!(items[1].label, "Amount");
+            assert_eq!(items[1].value, "0.200297 USDC");
+        }
+        _ => panic!("expected bundled group"),
+    }
 }
 
 // ─── #20: EIP-712 domain completeness ───
