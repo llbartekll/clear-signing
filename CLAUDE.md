@@ -109,7 +109,7 @@ Local Swift package product:
 | `engine.rs` | `DisplayModel`, `DisplayEntry` (Item/Group/Nested), `DisplayItem` | Main formatting pipeline + nested calldata |
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
-| `resolver.rs` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource`, `resolve_descriptors_for_tx` | Descriptor resolution (static, HTTP) + recursive nested calldata resolution |
+| `resolver/` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource`, `resolve_descriptors_for_tx` | Descriptor resolution facade + split source, registry, typed-selection, and nested-resolution submodules |
 | `token.rs` | `TokenSource` (trait), `TokenMeta` | Token metadata trait — resolution is fully the wallet's responsibility via `DataProviderFfi` |
 | `merge.rs` | `merge_descriptor_values`, `merge_descriptors` | JSON-level descriptor merge for `includes` mechanism |
 | `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
@@ -118,6 +118,17 @@ Local Swift package product:
 | `error.rs` | `Error`, `DecodeError`, `ResolveError` | Unified error hierarchy |
 | `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging for local SPM |
 | `wallet/` | SwiftUI smoke-test app | Minimal consumer of local `Erc7730` package |
+
+## Resolver Architecture Guardrails
+
+Keep resolver work split by responsibility.
+
+Rules when editing `crates/erc7730/src/resolver/`:
+1. Keep typed outer-descriptor selection centralized in `typed_selection`; do not duplicate `domain` / `domainSeparator` / exact `encodeType` matching in callers.
+2. Keep registry/index loading, HTTP fetch, and cache behavior in `github_registry`; do not mix transport concerns with typed applicability logic.
+3. Keep recursive nested calldata walking in `nested_resolution`; do not move graph traversal back into source/index code.
+4. Keep `resolver/mod.rs` as a thin facade and re-export layer, not a new implementation dumping ground.
+5. Structural resolver refactors must preserve current behavior and tests unless the user explicitly approves a semantic change.
 
 ## V2 Registry Compatibility
 
