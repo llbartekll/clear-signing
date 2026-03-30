@@ -1,5 +1,5 @@
 import Foundation
-import Erc7730
+import ClearSigning
 import os
 
 private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "ClearSigningService")
@@ -62,7 +62,7 @@ struct ClearSigningService {
             log.info(
                 "Resolving calldata descriptors to=\(to) matched=\(matchedAddress) chainId=\(chainId)"
             )
-            let descriptors = try await erc7730ResolveDescriptorsForTx(
+            let descriptors = try await clearSigningResolveDescriptorsForTx(
                 transaction: tx,
                 dataProvider: dataProvider
             )
@@ -70,7 +70,7 @@ struct ClearSigningService {
             log.info("Resolved \(descriptors.count) calldata descriptors")
 
             do {
-                let model = try await erc7730FormatCalldata(
+                let model = try await clearSigningFormatCalldata(
                     descriptorsJson: descriptors,
                     transaction: tx,
                     dataProvider: dataProvider
@@ -130,7 +130,7 @@ struct ClearSigningService {
             log.info("Resolving typed-data descriptors")
             // Single call resolves outer EIP-712 descriptor + any nested calldata descriptors.
             // Automatically detects proxies via dataProvider.getImplementationAddress().
-            let descriptors = try await erc7730ResolveDescriptorsForTypedData(
+            let descriptors = try await clearSigningResolveDescriptorsForTypedData(
                 typedDataJson: typedDataJson,
                 dataProvider: dataProvider
             )
@@ -139,7 +139,7 @@ struct ClearSigningService {
 
             do {
                 log.info("Formatting typed data with resolved descriptors")
-                let model = try await erc7730FormatTypedData(
+                let model = try await clearSigningFormatTypedData(
                     descriptorsJson: descriptors,
                     typedDataJson: typedDataJson,
                     dataProvider: dataProvider

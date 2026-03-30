@@ -246,10 +246,10 @@ impl From<Error> for FfiError {
 /// Format contract calldata for clear signing display.
 ///
 /// Takes pre-resolved descriptor JSON strings and a `TransactionInput`.
-/// The wallet is responsible for descriptor resolution (via `erc7730_resolve_descriptor`
+/// The wallet is responsible for descriptor resolution (via `clear_signing_resolve_descriptor`
 /// or its own source). Proxy detection is automatic when `data_provider` is provided.
 #[uniffi::export(async_runtime = "tokio")]
-pub async fn erc7730_format_calldata(
+pub async fn clear_signing_format_calldata(
     descriptors_json: Vec<String>,
     transaction: TransactionInput,
     data_provider: Option<Arc<dyn DataProviderFfi>>,
@@ -282,7 +282,7 @@ pub async fn erc7730_format_calldata(
 ///
 /// Takes pre-resolved descriptor JSON strings and the EIP-712 typed data JSON.
 #[uniffi::export(async_runtime = "tokio")]
-pub async fn erc7730_format_typed_data(
+pub async fn clear_signing_format_typed_data(
     descriptors_json: Vec<String>,
     typed_data_json: String,
     data_provider: Option<Arc<dyn DataProviderFfi>>,
@@ -309,7 +309,7 @@ pub async fn erc7730_format_typed_data(
 /// Requires the `github-registry` feature.
 #[cfg(feature = "github-registry")]
 #[uniffi::export(async_runtime = "tokio")]
-pub async fn erc7730_resolve_descriptor(
+pub async fn clear_signing_resolve_descriptor(
     chain_id: u64,
     address: String,
 ) -> Result<Option<String>, FfiError> {
@@ -333,7 +333,7 @@ pub async fn erc7730_resolve_descriptor(
 /// Automatically detects proxy contracts via `data_provider.get_implementation_address`.
 #[cfg(feature = "github-registry")]
 #[uniffi::export(async_runtime = "tokio")]
-pub async fn erc7730_resolve_descriptors_for_typed_data(
+pub async fn clear_signing_resolve_descriptors_for_typed_data(
     typed_data_json: String,
     data_provider: Arc<dyn DataProviderFfi>,
 ) -> Result<Vec<String>, FfiError> {
@@ -383,7 +383,7 @@ pub async fn erc7730_resolve_descriptors_for_typed_data(
 /// Automatically detects proxy contracts via `data_provider.get_implementation_address`.
 #[cfg(feature = "github-registry")]
 #[uniffi::export(async_runtime = "tokio")]
-pub async fn erc7730_resolve_descriptors_for_tx(
+pub async fn clear_signing_resolve_descriptors_for_tx(
     transaction: TransactionInput,
     data_provider: Arc<dyn DataProviderFfi>,
 ) -> Result<Vec<String>, FfiError> {
@@ -430,9 +430,9 @@ pub async fn erc7730_resolve_descriptors_for_tx(
 
 /// Merge two descriptor JSON strings (including + included).
 ///
-/// Returns merged JSON ready for use with `erc7730_format_calldata` / `erc7730_format_typed_data`.
+/// Returns merged JSON ready for use with `clear_signing_format_calldata` / `clear_signing_format_typed_data`.
 #[uniffi::export]
-pub fn erc7730_merge_descriptors(
+pub fn clear_signing_merge_descriptors(
     including_json: String,
     included_json: String,
 ) -> Result<String, FfiError> {
@@ -628,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn format_calldata_success() {
-        let result = erc7730_format_calldata(
+        let result = clear_signing_format_calldata(
             vec![calldata_descriptor_json().to_string()],
             transfer_transaction(),
             None,
@@ -651,7 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn format_typed_success() {
-        let result = erc7730_format_typed_data(
+        let result = clear_signing_format_typed_data(
             vec![typed_descriptor_json().to_string()],
             typed_data_json().to_string(),
             None,
@@ -718,7 +718,7 @@ mod tests {
         }"#;
 
         let mock_provider: Arc<dyn DataProviderFfi> = Arc::new(MockDataProviderFfi);
-        let result = erc7730_format_typed_data(
+        let result = clear_signing_format_typed_data(
             vec![descriptor_json.to_string()],
             typed_data_json.to_string(),
             Some(mock_provider),
@@ -734,7 +734,7 @@ mod tests {
 
     #[tokio::test]
     async fn format_calldata_invalid_descriptor_json() {
-        let err = erc7730_format_calldata(vec!["{".to_string()], transfer_transaction(), None)
+        let err = clear_signing_format_calldata(vec!["{".to_string()], transfer_transaction(), None)
             .await
             .expect_err("invalid descriptor should fail");
 
@@ -743,7 +743,7 @@ mod tests {
 
     #[tokio::test]
     async fn format_typed_invalid_typed_data_json() {
-        let err = erc7730_format_typed_data(
+        let err = clear_signing_format_typed_data(
             vec![typed_descriptor_json().to_string()],
             "{".to_string(),
             None,
@@ -759,7 +759,7 @@ mod tests {
         let mut tx = transfer_transaction();
         tx.calldata_hex = "zz".to_string();
 
-        let err = erc7730_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
+        let err = clear_signing_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
             .await
             .expect_err("invalid calldata hex should fail");
 
@@ -771,7 +771,7 @@ mod tests {
         let mut tx = transfer_transaction();
         tx.value_hex = Some("zz".to_string());
 
-        let err = erc7730_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
+        let err = clear_signing_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
             .await
             .expect_err("invalid value hex should fail");
 
@@ -780,7 +780,7 @@ mod tests {
 
     #[tokio::test]
     async fn format_calldata_accepts_0x_prefix() {
-        let no_prefix = erc7730_format_calldata(
+        let no_prefix = clear_signing_format_calldata(
             vec![calldata_descriptor_json().to_string()],
             transfer_transaction(),
             None,
@@ -792,7 +792,7 @@ mod tests {
         tx_with_prefix.calldata_hex = format!("0x{}", transfer_calldata_hex());
         tx_with_prefix.value_hex = Some("0x00".to_string());
 
-        let with_prefix = erc7730_format_calldata(
+        let with_prefix = clear_signing_format_calldata(
             vec![calldata_descriptor_json().to_string()],
             tx_with_prefix,
             None,
@@ -900,7 +900,7 @@ mod tests {
 
         let mock_provider: Arc<dyn DataProviderFfi> = Arc::new(MockDataProviderFfi);
 
-        let result = erc7730_format_calldata(
+        let result = clear_signing_format_calldata(
             vec![descriptor_json.to_string()],
             transfer_transaction(),
             Some(mock_provider),
@@ -952,7 +952,7 @@ mod tests {
             }
         }"#;
 
-        // Simulate the resolve round-trip: parse → serialize (like erc7730_resolve_descriptor does)
+        // Simulate the resolve round-trip: parse → serialize (like clear_signing_resolve_descriptor does)
         let descriptor: Descriptor = serde_json::from_str(raw_descriptor_json).unwrap();
         let round_tripped_json = serde_json::to_string(&descriptor).unwrap();
 
@@ -1028,7 +1028,7 @@ mod tests {
 
         // Call through the FFI function with the round-tripped descriptor
         let result =
-            erc7730_format_typed_data(vec![round_tripped_json], typed_data_json.to_string(), None)
+            clear_signing_format_typed_data(vec![round_tripped_json], typed_data_json.to_string(), None)
                 .await
                 .expect("typed data formatting should succeed");
 

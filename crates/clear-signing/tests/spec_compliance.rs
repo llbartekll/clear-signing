@@ -1,13 +1,13 @@
 //! Tests for ERC-7730 spec compliance gaps identified in the audit.
 
-use erc7730::decoder;
-use erc7730::eip712::TypedData;
-use erc7730::engine::{DisplayEntry, DisplayModel, GroupIteration};
-use erc7730::merge::merge_descriptor_values;
-use erc7730::provider::{DataProvider, EmptyDataProvider};
-use erc7730::token::{StaticTokenSource, TokenMeta};
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{
+use clear_signing::decoder;
+use clear_signing::eip712::TypedData;
+use clear_signing::engine::{DisplayEntry, DisplayModel, GroupIteration};
+use clear_signing::merge::merge_descriptor_values;
+use clear_signing::provider::{DataProvider, EmptyDataProvider};
+use clear_signing::token::{StaticTokenSource, TokenMeta};
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{
     format_calldata, format_typed_data, merge_descriptors, ResolvedDescriptor, TransactionContext,
 };
 use std::future::Future;
@@ -574,8 +574,8 @@ async fn test_separator_for_array_field() {
         "format": "raw",
         "separator": " | "
     }"#;
-    let field: erc7730::types::display::DisplayField = serde_json::from_str(field_json).unwrap();
-    if let erc7730::types::display::DisplayField::Simple { separator, .. } = &field {
+    let field: clear_signing::types::display::DisplayField = serde_json::from_str(field_json).unwrap();
+    if let clear_signing::types::display::DisplayField::Simple { separator, .. } = &field {
         assert_eq!(separator.as_deref(), Some(" | "));
     } else {
         panic!("expected Simple");
@@ -693,11 +693,11 @@ async fn test_interoperable_address_name_deserialization() {
         "label": "To",
         "format": "interoperableAddressName"
     }"#;
-    let field: erc7730::types::display::DisplayField = serde_json::from_str(field_json).unwrap();
-    if let erc7730::types::display::DisplayField::Simple { format, .. } = &field {
+    let field: clear_signing::types::display::DisplayField = serde_json::from_str(field_json).unwrap();
+    if let clear_signing::types::display::DisplayField::Simple { format, .. } = &field {
         assert!(matches!(
             format.as_ref(),
-            Some(erc7730::types::display::FieldFormat::InteroperableAddressName)
+            Some(clear_signing::types::display::FieldFormat::InteroperableAddressName)
         ));
     } else {
         panic!("expected Simple");
@@ -810,7 +810,7 @@ fn test_domain_separator_parsing() {
         "display": {"definitions": {}, "formats": {}}
     }"#;
     let descriptor = Descriptor::from_json(json).unwrap();
-    if let erc7730::types::context::DescriptorContext::Eip712(ctx) = &descriptor.context {
+    if let clear_signing::types::context::DescriptorContext::Eip712(ctx) = &descriptor.context {
         assert_eq!(
             ctx.eip712.domain_separator.as_deref(),
             Some("0x1234567890abcdef")
@@ -835,8 +835,8 @@ fn test_encryption_full_fields() {
             }
         }
     }"#;
-    let field: erc7730::types::display::DisplayField = serde_json::from_str(json).unwrap();
-    if let erc7730::types::display::DisplayField::Simple { params, .. } = &field {
+    let field: clear_signing::types::display::DisplayField = serde_json::from_str(json).unwrap();
+    if let clear_signing::types::display::DisplayField::Simple { params, .. } = &field {
         let enc = params.as_ref().unwrap().encryption.as_ref().unwrap();
         assert_eq!(enc.scheme.as_deref(), Some("x25519-xsalsa20-poly1305"));
         assert_eq!(enc.plaintext_type.as_deref(), Some("string"));
@@ -864,7 +864,7 @@ fn test_factory_context_parsing() {
         "display": {"definitions": {}, "formats": {}}
     }"#;
     let descriptor = Descriptor::from_json(json).unwrap();
-    if let erc7730::types::context::DescriptorContext::Contract(ctx) = &descriptor.context {
+    if let clear_signing::types::context::DescriptorContext::Contract(ctx) = &descriptor.context {
         let factory = ctx.contract.factory.as_ref().unwrap();
         assert_eq!(
             factory.deploy_event.as_deref(),
@@ -1149,7 +1149,7 @@ fn test_intent_as_object() {
         .formats
         .get("transfer(address,uint256)")
         .unwrap();
-    let intent_str = erc7730::types::display::intent_as_string(format.intent.as_ref().unwrap());
+    let intent_str = clear_signing::types::display::intent_as_string(format.intent.as_ref().unwrap());
     assert_eq!(intent_str, "Action: Transfer tokens, Asset: USDC");
 }
 
@@ -1632,7 +1632,7 @@ fn test_eip712_domain_full_fields() {
         "display": {"definitions": {}, "formats": {}}
     }"#;
     let descriptor = Descriptor::from_json(json).unwrap();
-    if let erc7730::types::context::DescriptorContext::Eip712(ctx) = &descriptor.context {
+    if let clear_signing::types::context::DescriptorContext::Eip712(ctx) = &descriptor.context {
         let domain = ctx.eip712.domain.as_ref().unwrap();
         assert_eq!(domain.name.as_deref(), Some("My App"));
         assert_eq!(domain.version.as_deref(), Some("2"));
@@ -1754,8 +1754,8 @@ fn test_selector_path_parsing() {
             "selectorPath": "selector"
         }
     }"#;
-    let field: erc7730::types::display::DisplayField = serde_json::from_str(json).unwrap();
-    if let erc7730::types::display::DisplayField::Simple { params, .. } = &field {
+    let field: clear_signing::types::display::DisplayField = serde_json::from_str(json).unwrap();
+    if let clear_signing::types::display::DisplayField::Simple { params, .. } = &field {
         let p = params.as_ref().unwrap();
         assert_eq!(p.selector_path.as_deref(), Some("selector"));
         assert_eq!(p.callee_path.as_deref(), Some("to"));
@@ -4738,7 +4738,7 @@ fn test_nested_calldata_constant_params_parse() {
     .unwrap();
 
     let field = descriptor.display.formats["outer(bytes data)"].fields[0].clone();
-    if let erc7730::types::display::DisplayField::Simple { params, .. } = field {
+    if let clear_signing::types::display::DisplayField::Simple { params, .. } = field {
         let params = params.unwrap();
         assert_eq!(
             params.callee.as_deref(),
@@ -5215,7 +5215,7 @@ async fn test_resolver_finds_nested_descriptor_with_constant_callee_and_chain_id
     )
     .unwrap();
 
-    let mut source = erc7730::resolver::StaticSource::new();
+    let mut source = clear_signing::resolver::StaticSource::new();
     source.add_calldata(1, "0xabc", outer);
     source.add_calldata(10, "0x1000000000000000000000000000000000000001", inner);
 
@@ -5228,7 +5228,7 @@ async fn test_resolver_finds_nested_descriptor_with_constant_callee_and_chain_id
         from: None,
         implementation_address: None,
     };
-    let descriptors = erc7730::resolve_descriptors_for_tx(&tx, &source)
+    let descriptors = clear_signing::resolve_descriptors_for_tx(&tx, &source)
         .await
         .unwrap();
     assert_eq!(descriptors.len(), 2);

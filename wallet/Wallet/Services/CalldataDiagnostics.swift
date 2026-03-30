@@ -1,5 +1,5 @@
 import Foundation
-import Erc7730
+import ClearSigning
 import ReownWalletKit
 
 struct CalldataCapture: Identifiable, Codable {

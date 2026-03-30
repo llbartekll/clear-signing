@@ -1,8 +1,8 @@
 # ERC-7730 UniFFI iOS Quickstart
 
 This repository provides:
-- Rust `erc7730` clear-signing library
-- UniFFI Swift wrapper (`bindings/swift/erc7730.swift`)
+- Rust `clear-signing` clear-signing library
+- UniFFI Swift wrapper (`bindings/swift/clear_signing.swift`)
 - Local Swift Package (`Package.swift`) backed by an XCFramework
 - A simple iOS demo app: `wallet/`
 
@@ -27,20 +27,20 @@ From repository root:
 ```
 
 Expected output:
-- `target/ios/liberc7730.xcframework`
+- `target/ios/libclear_signing.xcframework`
 
 This script also regenerates UniFFI Swift bindings and refreshes:
-- `bindings/swift/erc7730.swift`
+- `bindings/swift/clear_signing.swift`
 
 For host-only binding generation without Apple packaging, use `./scripts/generate_uniffi_bindings.sh`.
 
 ## Use via Local SPM
 
 `Package.swift` defines:
-- binary target: `target/ios/liberc7730.xcframework`
+- binary target: `target/ios/libclear_signing.xcframework`
 - Swift wrapper target in `bindings/swift`
 
-You can consume it from local projects as product `Erc7730`.
+You can consume it from local projects as product `ClearSigning`.
 
 ## Run Wallet Demo
 
@@ -62,13 +62,13 @@ open wallet/Wallet.xcodeproj
 ## Collision-Safety Note (Modulemap)
 
 `build-xcframework.sh` stages FFI headers/modulemap under namespaced directories:
-- `Headers/erc7730FFI/module.modulemap`
+- `Headers/clearSigningFFI/module.modulemap`
 
 This avoids flat `Headers/module.modulemap` collisions when multiple Rust XCFrameworks are present in the same app.
 
 ## Troubleshooting
 
-- `No such module 'Erc7730'`:
+- `No such module 'ClearSigning'`:
   - Run `./scripts/build-xcframework.sh` first.
   - Resolve package dependencies again in Xcode.
 - Missing Rust iOS targets:

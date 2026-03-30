@@ -24,7 +24,7 @@ Both platforms share the same semver version (e.g. `0.1.0`). Release Swift first
 
 ```swift
 // Package.swift
-.package(url: "https://github.com/llbartekll/lucid-umbrella", from: "0.1.0")
+.package(url: "https://github.com/llbartekll/clear-signing", from: "0.1.0")
 ```
 
 ### Local development
@@ -47,7 +47,7 @@ USE_LOCAL_RUST_XCFRAMEWORK=1 swift build
    - Strips debug symbols from `.so` files
    - Uploads `kotlin-artifacts.zip` to the GitHub Release
 
-4. JitPack builds automatically on first consumer request, or trigger manually at `jitpack.io/#llbartekll/lucid-umbrella`
+4. JitPack builds automatically on first consumer request, or trigger manually at `jitpack.io/#llbartekll/clear-signing`
 
 ### Consumer integration
 
@@ -61,7 +61,7 @@ dependencyResolutionManagement {
 
 // build.gradle
 dependencies {
-    implementation 'com.github.llbartekll:lucid-umbrella:0.1.0'
+    implementation 'com.github.llbartekll:clear-signing:0.1.0'
 }
 ```
 
@@ -77,7 +77,7 @@ Either platform can be released independently. If only Kotlin is released, it cr
 - No credentials or secrets needed
 - On first dependency request, JitPack downloads the pre-built `.so` files from the GitHub Release
 - It runs `./gradlew assembleRelease` in the `android/` directory to build the AAR
-- Build logs are visible at `jitpack.io/#llbartekll/lucid-umbrella`
+- Build logs are visible at `jitpack.io/#llbartekll/clear-signing`
 
 ## Troubleshooting
 
@@ -93,7 +93,7 @@ Either platform can be released independently. If only Kotlin is released, it cr
 
 ### JitPack build fails
 
-- Check logs at `jitpack.io/#llbartekll/lucid-umbrella` → select version → click "Log"
+- Check logs at `jitpack.io/#llbartekll/clear-signing` → select version → click "Log"
 - Common issues: JDK version mismatch, missing artifacts zip, Gradle configuration errors
 - To rebuild: delete the version on JitPack and re-request
 

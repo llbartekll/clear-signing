@@ -10,7 +10,7 @@
 		A3000001000000000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A3000001000000000002 /* Assets.xcassets */; };
 		C1000001233456780001 /* WalletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000001233456780011 /* WalletApp.swift */; };
 		C1000001233456780002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1000001233456780012 /* ContentView.swift */; };
-		C1000001233456780099 /* Erc7730 in Frameworks */ = {isa = PBXBuildFile; productRef = C1000001233456780098 /* Erc7730 */; };
+		C1000001233456780099 /* ClearSigning in Frameworks */ = {isa = PBXBuildFile; productRef = C1000001233456780098 /* ClearSigning */; };
 		D1000001000000000001 /* WalletViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000011 /* WalletViewModel.swift */; };
 		D1000001000000000002 /* KeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000012 /* KeyManager.swift */; };
 		D1000001000000000003 /* WalletConnectService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000013 /* WalletConnectService.swift */; };
@@ -32,7 +32,7 @@
 		E2000001000000000001 /* WalletMetadataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000011 /* WalletMetadataProvider.swift */; };
 		E2000001000000000002 /* tokens.json in Resources */ = {isa = PBXBuildFile; fileRef = E2000001000000000012 /* tokens.json */; };
 		E2000001000000000003 /* WalletMetadataProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000013 /* WalletMetadataProviderTests.swift */; };
-		E2000001000000000005 /* Erc7730 in Frameworks */ = {isa = PBXBuildFile; productRef = C1000001233456780098 /* Erc7730 */; };
+		E2000001000000000005 /* ClearSigning in Frameworks */ = {isa = PBXBuildFile; productRef = C1000001233456780098 /* ClearSigning */; };
 		E2000001000000000007 /* secp256k1 in Frameworks */ = {isa = PBXBuildFile; productRef = D100000100000000000D /* secp256k1 */; };
 		E200000100000000000B /* KeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000012 /* KeyManager.swift */; };
 		E200000100000000000C /* WalletMetadataProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2000001000000000011 /* WalletMetadataProvider.swift */; };
@@ -68,7 +68,7 @@
 		D1000001000000000070 /* TypedDataDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TypedDataDiagnostics.swift; sourceTree = "<group>"; };
 		D1000001000000000072 /* CalldataDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalldataDiagnostics.swift; sourceTree = "<group>"; };
 		E2000001000000000011 /* WalletMetadataProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletMetadataProvider.swift; sourceTree = "<group>"; };
-		E2000001000000000012 /* tokens.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = tokens.json; path = ../crates/erc7730/src/assets/tokens.json; sourceTree = SOURCE_ROOT; };
+		E2000001000000000012 /* tokens.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = tokens.json; path = ../crates/clear-signing/src/assets/tokens.json; sourceTree = SOURCE_ROOT; };
 		E2000001000000000013 /* WalletMetadataProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletMetadataProviderTests.swift; sourceTree = "<group>"; };
 		E2000001000000000014 /* WalletTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WalletTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1000001000000000011 /* TokenMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenMetadata.swift; sourceTree = "<group>"; };
@@ -82,7 +82,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C1000001233456780099 /* Erc7730 in Frameworks */,
+				C1000001233456780099 /* ClearSigning in Frameworks */,
 				D100000100000000000A /* ReownWalletKit in Frameworks */,
 				D100000100000000000C /* secp256k1 in Frameworks */,
 				D100000100000000000E /* CodeScanner in Frameworks */,
@@ -95,7 +95,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E2000001000000000005 /* Erc7730 in Frameworks */,
+				E2000001000000000005 /* ClearSigning in Frameworks */,
 				E2000001000000000007 /* secp256k1 in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -202,7 +202,7 @@
 			);
 			name = Wallet;
 			packageProductDependencies = (
-				C1000001233456780098 /* Erc7730 */,
+				C1000001233456780098 /* ClearSigning */,
 				D100000100000000000B /* ReownWalletKit */,
 				D100000100000000000D /* secp256k1 */,
 				D100000100000000000F /* CodeScanner */,
@@ -227,7 +227,7 @@
 			);
 			name = WalletTests;
 			packageProductDependencies = (
-				C1000001233456780098 /* Erc7730 */,
+				C1000001233456780098 /* ClearSigning */,
 				D100000100000000000D /* secp256k1 */,
 			);
 			productName = WalletTests;
@@ -552,10 +552,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		C1000001233456780098 /* Erc7730 */ = {
+		C1000001233456780098 /* ClearSigning */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = C1000001233456780097 /* XCLocalSwiftPackageReference ".." */;
-			productName = Erc7730;
+			productName = ClearSigning;
 		};
 		D100000100000000000B /* ReownWalletKit */ = {
 			isa = XCSwiftPackageProductDependency;

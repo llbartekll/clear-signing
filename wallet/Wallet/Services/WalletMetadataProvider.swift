@@ -1,5 +1,5 @@
 import Foundation
-import Erc7730
+import ClearSigning
 
 final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
 

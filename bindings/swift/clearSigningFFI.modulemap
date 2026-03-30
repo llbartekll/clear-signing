@@ -1,5 +1,5 @@
-module erc7730FFI {
-    header "erc7730FFI.h"
+module clearSigningFFI {
+    header "clearSigningFFI.h"
     export *
     use "Darwin"
     use "_Builtin_stdbool"

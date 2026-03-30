@@ -38,7 +38,7 @@ final class EvmSigningService {
         let metadata = PulseMetadata(
             url: nil,
             bundleId: Bundle.main.bundleIdentifier ?? "",
-            sdkVersion: "lucid-umbrella-wallet-1.0",
+            sdkVersion: "clear-signing-wallet-1.0",
             sdkPlatform: "mobile"
         )
         let client = EvmSigningClient(projectId: projectId, pulseMetadata: metadata)

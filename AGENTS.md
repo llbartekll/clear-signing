@@ -6,7 +6,7 @@ UniFFI bindings (Kotlin + Swift) are implemented in the same crate via a statele
 ## Workspace Layout
 
 - Cargo workspace root at `/`
-- Single crate: `crates/erc7730/`
+- Single crate: `crates/clear-signing/`
 - Local Swift package manifest: `Package.swift`
 - iOS demo app: `wallet/Wallet.xcodeproj`
 
@@ -22,9 +22,9 @@ cargo fmt --check    # Format check
 UniFFI checks and binding generation:
 
 ```sh
-cargo check -p erc7730 --features uniffi,github-registry
-cargo test -p erc7730 --features uniffi,github-registry     # 49 unit tests + 101 integration
-cargo clippy -p erc7730 --all-targets --features uniffi,github-registry -- -D warnings
+cargo check -p clear-signing --features uniffi,github-registry
+cargo test -p clear-signing --features uniffi,github-registry     # 49 unit tests + 101 integration
+cargo clippy -p clear-signing --all-targets --features uniffi,github-registry -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
 swift package resolve
@@ -32,18 +32,18 @@ swift package describe
 ```
 
 Generated binding outputs:
-- `bindings/kotlin/uniffi/erc7730/erc7730.kt`
-- `bindings/swift/erc7730.swift`
-- `bindings/swift/erc7730FFI.h`
-- `bindings/swift/erc7730FFI.modulemap`
-- `target/ios/liberc7730.xcframework`
+- `bindings/kotlin/uniffi/clear_signing/clear_signing.kt`
+- `bindings/swift/clear_signing.swift`
+- `bindings/swift/clearSigningFFI.h`
+- `bindings/swift/clearSigningFFI.modulemap`
+- `target/ios/libclear_signing.xcframework`
 
 Repository policy:
 - `bindings/swift/` is kept in-repo for SPM consumption.
 - `bindings/kotlin/` is generated locally and gitignored.
 - XCFramework is generated locally (not committed) and consumed by local `Package.swift`.
 - Local Swift package and `wallet` app deployment baseline is iOS 14+.
-- XCFramework header/modulemap staging is namespaced (`Headers/erc7730FFI/module.modulemap`) to avoid collisions with other Rust XCFrameworks.
+- XCFramework header/modulemap staging is namespaced (`Headers/clearSigningFFI/module.modulemap`) to avoid collisions with other Rust XCFrameworks.
 
 ## Code Conventions
 
@@ -72,7 +72,7 @@ Rules when editing `engine.rs`, `eip712.rs`, `types/display.rs`, or shared forma
 2. For behavior shared by calldata and EIP-712, treat calldata as the reference only after the behavior is confirmed spec-safe by the existing spec tests or the ERC-7730 spec text.
 3. If current calldata behavior and the spec appear to disagree, stop and surface the tradeoff instead of copying the behavior into `eip712.rs`.
 4. Any change to field rendering, visibility, interpolation, token amount formatting, map lookup, or nested calldata handling must consider both calldata and typed-data effects in the same review.
-5. Add or update parity coverage in `crates/erc7730/tests/spec_compliance.rs` for shared calldata/EIP-712 behavior. Do not rewrite spec-compliance assertions just to make parity work pass without explicit approval.
+5. Add or update parity coverage in `crates/clear-signing/tests/spec_compliance.rs` for shared calldata/EIP-712 behavior. Do not rewrite spec-compliance assertions just to make parity work pass without explicit approval.
 
 ## Public API
 
@@ -86,11 +86,11 @@ Entry points in `lib.rs`:
 - `merge_descriptors(including_json, included_json)` — merge two descriptor JSON strings for `includes` mechanism; including file wins on conflicts, field arrays merge by `path`
 
 UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
-- `erc7730_resolve_descriptor(chain_id, address)` — resolve descriptor JSON from GitHub registry; returns `Option<String>` (requires `github-registry` feature)
-- `erc7730_resolve_descriptors_for_tx(transaction, data_provider)` — resolve all descriptors for a transaction including nested calldata; auto-detects proxy contracts via `data_provider.get_implementation_address()`; returns descriptor JSON strings in dependency order (requires `github-registry` feature)
-- `erc7730_format_calldata(descriptors_json, transaction, data_provider)` — format calldata with pre-resolved descriptors; auto-detects proxies via `data_provider.get_implementation_address()` for descriptor matching
-- `erc7730_format_typed_data(descriptors_json, typed_data_json, data_provider)` — format EIP-712 typed data with pre-resolved descriptors
-- `erc7730_merge_descriptors(including_json, included_json)` — merge two descriptor JSONs for `includes` mechanism
+- `clear_signing_resolve_descriptor(chain_id, address)` — resolve descriptor JSON from GitHub registry; returns `Option<String>` (requires `github-registry` feature)
+- `clear_signing_resolve_descriptors_for_tx(transaction, data_provider)` — resolve all descriptors for a transaction including nested calldata; auto-detects proxy contracts via `data_provider.get_implementation_address()`; returns descriptor JSON strings in dependency order (requires `github-registry` feature)
+- `clear_signing_format_calldata(descriptors_json, transaction, data_provider)` — format calldata with pre-resolved descriptors; auto-detects proxies via `data_provider.get_implementation_address()` for descriptor matching
+- `clear_signing_format_typed_data(descriptors_json, typed_data_json, data_provider)` — format EIP-712 typed data with pre-resolved descriptors
+- `clear_signing_merge_descriptors(including_json, included_json)` — merge two descriptor JSONs for `includes` mechanism
 
 UniFFI FFI records:
 - `TransactionInput { chain_id, to, calldata_hex, value_hex, from_address }` — FFI-safe transaction input
@@ -100,7 +100,7 @@ UniFFI FFI traits:
 - `DataProviderFfi` — wallet-implemented trait for token metadata, ENS/local name resolution, NFT collection names, and proxy detection (`get_implementation_address`); methods are synchronous across FFI boundary
 
 Local Swift package product:
-- `Erc7730` (binary target + Swift wrapper target)
+- `ClearSigning` (binary target + Swift wrapper target)
 
 ## Key Modules
 
@@ -117,13 +117,13 @@ Local Swift package product:
 | `types/` | `Descriptor`, `DescriptorContext`, `DescriptorDisplay`, `DisplayField`, `FieldFormat`, `VisibleRule` | Descriptor, display, context, metadata types |
 | `error.rs` | `Error`, `DecodeError`, `ResolveError` | Unified error hierarchy |
 | `scripts/build-xcframework.sh` | XCFramework build + namespaced modulemap staging | iOS packaging for local SPM |
-| `wallet/` | SwiftUI smoke-test app | Minimal consumer of local `Erc7730` package |
+| `wallet/` | SwiftUI smoke-test app | Minimal consumer of local `ClearSigning` package |
 
 ## Resolver Architecture Guardrails
 
 Keep resolver work split by responsibility.
 
-Rules when editing `crates/erc7730/src/resolver/`:
+Rules when editing `crates/clear-signing/src/resolver/`:
 1. Keep typed outer-descriptor selection centralized in `typed_selection`; do not duplicate `domain` / `domainSeparator` / exact `encodeType` matching in callers.
 2. Keep registry/index loading, HTTP fetch, and cache behavior in `github_registry`; do not mix transport concerns with typed applicability logic.
 3. Keep recursive nested calldata walking in `nested_resolution`; do not move graph traversal back into source/index code.

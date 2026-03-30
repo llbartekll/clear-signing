@@ -1,11 +1,12 @@
 [package]
-name = "erc7730"
+name = "clear-signing"
 version = "0.1.0"
 edition = "2021"
 description = "ERC-7730 v2 clear signing library"
 license = "MIT OR Apache-2.0"
 
 [lib]
+name = "clear_signing"
 crate-type = ["lib", "staticlib", "cdylib"]
 
 [[bin]]

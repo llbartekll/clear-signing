@@ -1,10 +1,10 @@
 //! Integration tests using real Aave v2/v3 registry descriptors.
 
-use erc7730::decoder::parse_signature;
-use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
+use clear_signing::decoder::parse_signature;
+use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));

@@ -1,9 +1,9 @@
 //! Integration regression tests for real Permit2 EIP-712 requests.
 
-use erc7730::eip712::TypedData;
-use erc7730::token::{StaticTokenSource, TokenMeta};
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_typed_data, DisplayEntry, ResolvedDescriptor};
+use clear_signing::eip712::TypedData;
+use clear_signing::token::{StaticTokenSource, TokenMeta};
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{format_typed_data, DisplayEntry, ResolvedDescriptor};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));

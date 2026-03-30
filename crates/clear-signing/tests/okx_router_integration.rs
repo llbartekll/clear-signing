@@ -1,10 +1,10 @@
 //! Integration tests for OKX DEX Router v1.0.7 using real Ethereum mainnet transactions.
 //! Covers order-based swaps, beneficiary routing, Uniswap V3 routing, and UNX swaps.
 
-use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
+use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 
 const OKX_ADDR: &str = "0x5E1f62Dac767b0491e3CE72469C217365D5B48cC";
 

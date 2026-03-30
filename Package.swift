@@ -5,29 +5,29 @@ import PackageDescription
 let useLocal = true //ProcessInfo.processInfo.environment["USE_LOCAL_RUST_XCFRAMEWORK"] == "1"
 
 let package = Package(
-    name: "Erc7730",
+    name: "ClearSigning",
     platforms: [
         .iOS(.v16)
     ],
     products: [
-        .library(name: "Erc7730", targets: ["Erc7730"])
+        .library(name: "ClearSigning", targets: ["ClearSigning"])
     ],
     targets: [
         useLocal
             ? .binaryTarget(
-                name: "Erc7730Rust",
-                path: "target/ios/liberc7730.xcframework"
+                name: "ClearSigningRust",
+                path: "target/ios/libclear_signing.xcframework"
             )
             : .binaryTarget(
-                name: "Erc7730Rust",
-                url: "https://github.com/llbartekll/lucid-umbrella/releases/download/0.0.1/liberc7730.xcframework.zip",
+                name: "ClearSigningRust",
+                url: "https://github.com/llbartekll/clear-signing/releases/download/0.0.1/libclear_signing.xcframework.zip",
                 checksum: "1799b2e8afbc5f0237239793767fb9e700527aff10976773caafd3707554d77f"
             ),
         .target(
-            name: "Erc7730",
-            dependencies: ["Erc7730Rust"],
+            name: "ClearSigning",
+            dependencies: ["ClearSigningRust"],
             path: "bindings/swift",
-            exclude: ["erc7730FFI.h", "erc7730FFI.modulemap"],
+            exclude: ["clearSigningFFI.h", "clearSigningFFI.modulemap"],
             publicHeadersPath: "."
         )
     ]

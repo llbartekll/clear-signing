@@ -18,7 +18,7 @@ actor WalletConnectService {
         let metadata = AppMetadata(
             name: "ERC-7730 Wallet Demo",
             description: "Clear signing demo wallet",
-            url: "https://github.com/nicklawls/lucid-umbrella",
+            url: "https://github.com/llbartekll/clear-signing",
             icons: [],
             redirect: redirect
         )

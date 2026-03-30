@@ -3,13 +3,13 @@
 //! Tests the `#.` path prefix, EIP-712 → calldata nesting, and multi-level
 //! UserOp → execute → ERC-20 transfer chains.
 
-use erc7730::decoder::parse_signature;
-use erc7730::eip712::TypedData;
-use erc7730::provider::EmptyDataProvider;
-use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{StaticTokenSource, TokenMeta};
-use erc7730::types::descriptor::Descriptor;
-use erc7730::DisplayEntry;
+use clear_signing::decoder::parse_signature;
+use clear_signing::eip712::TypedData;
+use clear_signing::provider::EmptyDataProvider;
+use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::token::{StaticTokenSource, TokenMeta};
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::DisplayEntry;
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
@@ -152,7 +152,7 @@ async fn userop_with_erc20_transfer_via_execute() {
         address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
     }];
     all_descriptors.extend(descriptors);
-    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &tokens)
+    let result = clear_signing::format_typed_data(&all_descriptors, &typed_data, &tokens)
         .await
         .unwrap();
 
@@ -289,7 +289,7 @@ async fn userop_direct_erc20_transfer() {
         address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
     }];
     all_descriptors.extend(descriptors);
-    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &tokens)
+    let result = clear_signing::format_typed_data(&all_descriptors, &typed_data, &tokens)
         .await
         .unwrap();
 
@@ -334,7 +334,7 @@ async fn userop_no_matching_inner_descriptor() {
         chain_id: 1,
         address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
     }];
-    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
+    let result = clear_signing::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
         .await
         .unwrap();
 
@@ -389,7 +389,7 @@ async fn userop_hash_prefix_resolves_from_message() {
         address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
     }];
     all_descriptors.extend(descriptors);
-    let result = erc7730::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
+    let result = clear_signing::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
         .await
         .unwrap();
 

@@ -1,2 +1,2 @@
-rootProject.name = 'erc7730'
-include ':erc7730'
+rootProject.name = 'clear-signing'
+include ':clear-signing'

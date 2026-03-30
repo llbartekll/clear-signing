@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="release"
-PACKAGE_NAME="erc7730"
-FFI_MODULE="erc7730FFI"
+PACKAGE_NAME="clear_signing"
+FFI_MODULE="clearSigningFFI"
 STAGING_DIR="$ROOT_DIR/target/uniffi-xcframework-staging"
 IOS_OUT_DIR="$ROOT_DIR/target/ios"
 FAT_SIM_LIB_DIR="$ROOT_DIR/target/ios-simulator-fat/$PROFILE"
@@ -28,11 +28,11 @@ build_rust_libraries() {
     ensure_target "x86_64-apple-ios"
     ensure_target "aarch64-apple-ios-sim"
 
-    cargo build --lib --release --features uniffi,github-registry --target aarch64-apple-ios -p erc7730
-    cargo build --lib --release --features uniffi,github-registry --target x86_64-apple-ios -p erc7730
-    cargo build --lib --release --features uniffi,github-registry --target aarch64-apple-ios-sim -p erc7730
+    cargo build --lib --release --features uniffi,github-registry --target aarch64-apple-ios -p clear-signing
+    cargo build --lib --release --features uniffi,github-registry --target x86_64-apple-ios -p clear-signing
+    cargo build --lib --release --features uniffi,github-registry --target aarch64-apple-ios-sim -p clear-signing
 
-    cargo build --release --features uniffi,github-registry -p erc7730
+    cargo build --release --features uniffi,github-registry -p clear-signing
 }
 
 generate_swift_bindings() {
@@ -46,7 +46,7 @@ generate_swift_bindings() {
         exit 1
     fi
 
-    cargo run -p erc7730 --features uniffi,github-registry --bin uniffi-bindgen -- generate \
+    cargo run -p clear-signing --features uniffi,github-registry --bin uniffi-bindgen -- generate \
         --library "$host_library" \
         --language swift \
         --out-dir "$STAGING_DIR"
@@ -63,6 +63,31 @@ patch_swift_for_swift6() {
     sed -i '' 's/init(bytes: \[UInt8\])/init(byteArray: [UInt8])/g' "$swift_file"
     sed -i '' 's/let rbuf = bytes\.withUnsafeBufferPointer/let rbuf = byteArray.withUnsafeBufferPointer/g' "$swift_file"
     sed -i '' 's/RustBuffer(bytes: writer)/RustBuffer(byteArray: writer)/g' "$swift_file"
+
+    if [[ -f "$STAGING_DIR/${PACKAGE_NAME}FFI.h" ]]; then
+        mv "$STAGING_DIR/${PACKAGE_NAME}FFI.h" "$STAGING_DIR/${FFI_MODULE}.h"
+    fi
+    if [[ -f "$STAGING_DIR/${PACKAGE_NAME}FFI.modulemap" ]]; then
+        mv "$STAGING_DIR/${PACKAGE_NAME}FFI.modulemap" "$STAGING_DIR/${FFI_MODULE}.modulemap"
+    fi
+    if [[ -d "$STAGING_DIR/${PACKAGE_NAME}FFI" ]]; then
+        mv "$STAGING_DIR/${PACKAGE_NAME}FFI" "$STAGING_DIR/${FFI_MODULE}"
+        if [[ -f "$STAGING_DIR/${FFI_MODULE}/${PACKAGE_NAME}FFI.h" ]]; then
+            mv "$STAGING_DIR/${FFI_MODULE}/${PACKAGE_NAME}FFI.h" "$STAGING_DIR/${FFI_MODULE}/${FFI_MODULE}.h"
+        fi
+        if [[ -f "$STAGING_DIR/${FFI_MODULE}/${PACKAGE_NAME}FFI.modulemap" ]]; then
+            mv "$STAGING_DIR/${FFI_MODULE}/${PACKAGE_NAME}FFI.modulemap" "$STAGING_DIR/${FFI_MODULE}/${FFI_MODULE}.modulemap"
+        fi
+    fi
+
+    perl -0pi -e 's/clear_signingFFI/clearSigningFFI/g' "$swift_file"
+    if [[ -f "$STAGING_DIR/${FFI_MODULE}.modulemap" ]]; then
+        sed -i '' 's/clear_signingFFI.h/clearSigningFFI.h/g' "$STAGING_DIR/${FFI_MODULE}.modulemap"
+        sed -i '' 's/module clear_signingFFI/module clearSigningFFI/g' "$STAGING_DIR/${FFI_MODULE}.modulemap"
+    fi
+    if [[ -f "$STAGING_DIR/${FFI_MODULE}.h" ]]; then
+        perl -0pi -e 's/clear_signingFFI/clearSigningFFI/g' "$STAGING_DIR/${FFI_MODULE}.h"
+    fi
 }
 
 create_fat_simulator_lib() {
@@ -103,6 +128,9 @@ stage_namespaced_headers() {
         echo "Header staging failed for $platform" >&2
         exit 1
     fi
+
+    sed -i '' 's/clear_signingFFI.h/clearSigningFFI.h/g' "$out_dir/module.modulemap"
+    sed -i '' 's/module clear_signingFFI/module clearSigningFFI/g' "$out_dir/module.modulemap"
 }
 
 build_xcframework() {
@@ -125,6 +153,8 @@ build_xcframework() {
 copy_swift_wrapper() {
     echo "Refreshing committed Swift wrapper..."
     cp "$STAGING_DIR/${PACKAGE_NAME}.swift" "$ROOT_DIR/bindings/swift/${PACKAGE_NAME}.swift"
+    cp "$STAGING_DIR/${FFI_MODULE}.h" "$ROOT_DIR/bindings/swift/${FFI_MODULE}.h"
+    cp "$STAGING_DIR/${FFI_MODULE}.modulemap" "$ROOT_DIR/bindings/swift/${FFI_MODULE}.modulemap"
 }
 
 build_rust_libraries

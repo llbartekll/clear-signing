@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace 'com.erc7730.uniffi'
+    namespace 'com.clearsigning.uniffi'
     compileSdk 35
 
     defaultConfig {
@@ -24,14 +24,14 @@ android {
 
     sourceSets {
         main {
-            kotlin.srcDirs = ["${rootProject.buildDir}/generated/erc7730/kotlin"]
-            jniLibs.srcDirs = ["${rootProject.buildDir}/generated/erc7730/jniLibs"]
+            kotlin.srcDirs = ["${rootProject.buildDir}/generated/clear-signing/kotlin"]
+            jniLibs.srcDirs = ["${rootProject.buildDir}/generated/clear-signing/jniLibs"]
         }
     }
 
     packaging {
         jniLibs {
-            doNotStrip '**/liberc7730.so'
+            doNotStrip '**/libclear_signing.so'
         }
     }
 }
@@ -47,7 +47,7 @@ afterEvaluate {
             release(MavenPublication) {
                 from components.release
                 groupId = 'com.github.llbartekll'
-                artifactId = 'lucid-umbrella'
+                artifactId = 'clear-signing'
                 version = project.findProperty('version') ?: '0.0.0'
 
                 pom.withXml {

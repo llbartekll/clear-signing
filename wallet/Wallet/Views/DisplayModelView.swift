@@ -1,6 +1,6 @@
 import SwiftUI
 import UIKit
-import Erc7730
+import ClearSigning
 
 struct DisplayModelView: View {
     let model: DisplayModel

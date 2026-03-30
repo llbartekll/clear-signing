@@ -37,12 +37,12 @@ jobs:
         run: |
           mkdir -p Output
           cd target/ios
-          zip -r ../../Output/liberc7730.xcframework.zip liberc7730.xcframework
+          zip -r ../../Output/libclear_signing.xcframework.zip libclear_signing.xcframework
 
       - name: Compute checksum
         id: checksum
         run: |
-          CHECKSUM=$(swift package compute-checksum Output/liberc7730.xcframework.zip)
+          CHECKSUM=$(swift package compute-checksum Output/libclear_signing.xcframework.zip)
           echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
 
       - name: Update Package.swift
@@ -50,7 +50,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           CHECKSUM: ${{ steps.checksum.outputs.checksum }}
         run: |
-          sed -i '' "s|/download/[^/]*/liberc7730|/download/$VERSION/liberc7730|" Package.swift
+          sed -i '' "s|/download/[^/]*/libclear_signing|/download/$VERSION/libclear_signing|" Package.swift
           sed -i '' "s|checksum: \"[^\"]*\"|checksum: \"$CHECKSUM\"|" Package.swift
           echo "Updated Package.swift:"
           grep -A1 'url:' Package.swift
@@ -74,4 +74,4 @@ jobs:
           tag_name: ${{ inputs.version }}
           name: ${{ inputs.version }}
           generate_release_notes: true
-          files: Output/liberc7730.xcframework.zip
+          files: Output/libclear_signing.xcframework.zip

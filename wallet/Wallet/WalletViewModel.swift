@@ -1,6 +1,6 @@
 import Foundation
 import os
-import Erc7730
+import ClearSigning
 import ReownWalletKit
 
 private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "WalletViewModel")

@@ -2,11 +2,11 @@
 //! Covers owner management, threshold changes, hash approval, and setup.
 //! Note: execTransaction nesting is covered by safe_integration.rs.
 
-use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{CompositeDataProvider, StaticTokenSource, WellKnownTokenSource};
-use erc7730::types::context::{Deployment, DescriptorContext};
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
+use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::token::{CompositeDataProvider, StaticTokenSource, WellKnownTokenSource};
+use clear_signing::types::context::{Deployment, DescriptorContext};
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));

@@ -1,9 +1,9 @@
 //! Integration test for Hyperliquid CCTP descriptor byte-slice paths.
 
-use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::WellKnownTokenSource;
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, DisplayEntry, TransactionContext};
+use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::token::WellKnownTokenSource;
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{format_calldata, DisplayEntry, TransactionContext};
 
 fn load_descriptor() -> Descriptor {
     Descriptor::from_json(

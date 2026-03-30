@@ -1,9 +1,9 @@
 //! Integration tests for Celo Accounts (Celo mainnet) using real on-chain transactions.
 
-use erc7730::provider::EmptyDataProvider;
-use erc7730::resolver::ResolvedDescriptor;
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, DisplayEntry, TransactionContext};
+use clear_signing::provider::EmptyDataProvider;
+use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{format_calldata, DisplayEntry, TransactionContext};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));
@@ -60,7 +60,7 @@ async fn run_celo_accounts_test(
     calldata_hex: &str,
     value_hex: &str,
     from: &str,
-) -> erc7730::DisplayModel {
+) -> clear_signing::DisplayModel {
     let descriptor = load_descriptor("calldata-celo_accounts.json");
     let descriptors = wrap_rd(descriptor, 42220, CELO_ACCOUNTS_ADDR);
     let calldata = decode_hex(calldata_hex);

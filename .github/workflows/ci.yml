@@ -24,7 +24,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy -p erc7730 --all-targets --features uniffi,github-registry -- -D warnings
+        run: cargo clippy -p clear-signing --all-targets --features uniffi,github-registry -- -D warnings
 
       - name: Test
-        run: cargo test -p erc7730 --features uniffi,github-registry
+        run: cargo test -p clear-signing --features uniffi,github-registry

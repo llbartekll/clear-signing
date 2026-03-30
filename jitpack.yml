@@ -8,18 +8,18 @@ before_install:
     TAG="${TAG#v}"
 
     # Download pre-built Kotlin artifacts from GitHub Release
-    RELEASE_URL="https://github.com/llbartekll/lucid-umbrella/releases/download/${TAG}/kotlin-artifacts.zip"
+    RELEASE_URL="https://github.com/llbartekll/clear-signing/releases/download/${TAG}/kotlin-artifacts.zip"
     echo "Downloading artifacts from $RELEASE_URL"
     curl -fsSL -o kotlin-artifacts.zip "$RELEASE_URL"
 
     # Extract to Gradle's expected locations
     unzip -o kotlin-artifacts.zip
 
-    GENERATED_DIR="android/build/generated/erc7730"
+    GENERATED_DIR="android/build/generated/clear-signing"
     mkdir -p "$GENERATED_DIR/jniLibs" "$GENERATED_DIR/kotlin"
 
     cp -r libs/* "$GENERATED_DIR/jniLibs/"
     cp -r kotlin-bindings/* "$GENERATED_DIR/kotlin/"
 
 install:
-  - cd android && ./gradlew :erc7730:assembleRelease :erc7730:publishReleasePublicationToMavenLocal -Pversion="$TAG"
+  - cd android && ./gradlew :clear-signing:assembleRelease :clear-signing:publishReleasePublicationToMavenLocal -Pversion="$TAG"

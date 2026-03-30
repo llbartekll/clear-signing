@@ -1,11 +1,11 @@
 //! Integration tests for nested calldata (Safe execTransaction wrapping inner calls).
 
-use erc7730::decoder::parse_signature;
-use erc7730::provider::EmptyDataProvider;
-use erc7730::resolver::ResolvedDescriptor;
-use erc7730::token::{StaticTokenSource, TokenMeta};
-use erc7730::types::descriptor::Descriptor;
-use erc7730::{format_calldata, DisplayEntry, TransactionContext};
+use clear_signing::decoder::parse_signature;
+use clear_signing::provider::EmptyDataProvider;
+use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::token::{StaticTokenSource, TokenMeta};
+use clear_signing::types::descriptor::Descriptor;
+use clear_signing::{format_calldata, DisplayEntry, TransactionContext};
 
 fn load_descriptor(fixture: &str) -> Descriptor {
     let path = format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"));

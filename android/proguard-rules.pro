@@ -1,5 +1,5 @@
 -keep class uniffi.** { *; }
--keep class com.erc7730.uniffi.** { *; }
+-keep class com.clearsigning.uniffi.** { *; }
 -keepclassmembers class * {
     native <methods>;
 }

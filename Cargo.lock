@@ -176,6 +176,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
+name = "clear-signing"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "num-bigint",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "time",
+ "tiny-keccak",
+ "tokio",
+ "uniffi",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -241,22 +257,6 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
-
-[[package]]
-name = "erc7730"
-version = "0.1.0"
-dependencies = [
- "hex",
- "num-bigint",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror",
- "time",
- "tiny-keccak",
- "tokio",
- "uniffi",
-]
 
 [[package]]
 name = "errno"

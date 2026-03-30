@@ -7,8 +7,8 @@ import Foundation
 // Depending on the consumer's build setup, the low-level FFI code
 // might be in a separate module, or it might be compiled inline into
 // this module. This is a bit of light hackery to work with both.
-#if canImport(erc7730FFI)
-import erc7730FFI
+#if canImport(clearSigningFFI)
+import clearSigningFFI
 #endif
 
 fileprivate extension RustBuffer {
@@ -25,13 +25,13 @@ fileprivate extension RustBuffer {
     }
 
     static func from(_ ptr: UnsafeBufferPointer<UInt8>) -> RustBuffer {
-        try! rustCall { ffi_erc7730_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
+        try! rustCall { ffi_clear_signing_rustbuffer_from_bytes(ForeignBytes(bufferPointer: ptr), $0) }
     }
 
     // Frees the buffer in place.
     // The buffer must not be used after this is called.
     func deallocate() {
-        try! rustCall { ffi_erc7730_rustbuffer_free(self, $0) }
+        try! rustCall { ffi_clear_signing_rustbuffer_free(self, $0) }
     }
 }
 
@@ -281,7 +281,7 @@ private func makeRustCall<T, E: Swift.Error>(
     _ callback: (UnsafeMutablePointer<RustCallStatus>) -> T,
     errorHandler: ((RustBuffer) throws -> E)?
 ) throws -> T {
-    uniffiEnsureErc7730Initialized()
+    uniffiEnsureClearSigningInitialized()
     var callStatus = RustCallStatus.init()
     let returnedVal = callback(&callStatus)
     try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: errorHandler)
@@ -573,7 +573,7 @@ open class DataProviderFfiImpl: DataProviderFfi, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_erc7730_fn_clone_dataproviderffi(self.handle, $0) }
+        return try! rustCall { uniffi_clear_signing_fn_clone_dataproviderffi(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
@@ -583,7 +583,7 @@ open class DataProviderFfiImpl: DataProviderFfi, @unchecked Sendable {
             return
         }
 
-        try! rustCall { uniffi_erc7730_fn_free_dataproviderffi(handle, $0) }
+        try! rustCall { uniffi_clear_signing_fn_free_dataproviderffi(handle, $0) }
     }
 
     
@@ -591,7 +591,7 @@ open class DataProviderFfiImpl: DataProviderFfi, @unchecked Sendable {
     
 open func resolveToken(chainId: UInt64, address: String) -> TokenMetaFfi?  {
     return try!  FfiConverterOptionTypeTokenMetaFfi.lift(try! rustCall() {
-    uniffi_erc7730_fn_method_dataproviderffi_resolve_token(
+    uniffi_clear_signing_fn_method_dataproviderffi_resolve_token(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(chainId),
         FfiConverterString.lower(address),$0
@@ -601,7 +601,7 @@ open func resolveToken(chainId: UInt64, address: String) -> TokenMetaFfi?  {
     
 open func resolveEnsName(address: String, chainId: UInt64, types: [String]?) -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
-    uniffi_erc7730_fn_method_dataproviderffi_resolve_ens_name(
+    uniffi_clear_signing_fn_method_dataproviderffi_resolve_ens_name(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(address),
         FfiConverterUInt64.lower(chainId),
@@ -612,7 +612,7 @@ open func resolveEnsName(address: String, chainId: UInt64, types: [String]?) -> 
     
 open func resolveLocalName(address: String, chainId: UInt64, types: [String]?) -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
-    uniffi_erc7730_fn_method_dataproviderffi_resolve_local_name(
+    uniffi_clear_signing_fn_method_dataproviderffi_resolve_local_name(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(address),
         FfiConverterUInt64.lower(chainId),
@@ -623,7 +623,7 @@ open func resolveLocalName(address: String, chainId: UInt64, types: [String]?) -
     
 open func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
-    uniffi_erc7730_fn_method_dataproviderffi_resolve_nft_collection_name(
+    uniffi_clear_signing_fn_method_dataproviderffi_resolve_nft_collection_name(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(collectionAddress),
         FfiConverterUInt64.lower(chainId),$0
@@ -633,7 +633,7 @@ open func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -
     
 open func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64) -> UInt64?  {
     return try!  FfiConverterOptionUInt64.lift(try! rustCall() {
-    uniffi_erc7730_fn_method_dataproviderffi_resolve_block_timestamp(
+    uniffi_clear_signing_fn_method_dataproviderffi_resolve_block_timestamp(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(chainId),
         FfiConverterUInt64.lower(blockNumber),$0
@@ -650,7 +650,7 @@ open func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64) -> UInt64?
      */
 open func getImplementationAddress(chainId: UInt64, address: String) -> String?  {
     return try!  FfiConverterOptionString.lift(try! rustCall() {
-    uniffi_erc7730_fn_method_dataproviderffi_get_implementation_address(
+    uniffi_clear_signing_fn_method_dataproviderffi_get_implementation_address(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(chainId),
         FfiConverterString.lower(address),$0
@@ -851,7 +851,7 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
 }
 
 private func uniffiCallbackInitDataProviderFfi() {
-    uniffi_erc7730_fn_init_callback_vtable_dataproviderffi(UniffiCallbackInterfaceDataProviderFfi.vtable)
+    uniffi_clear_signing_fn_init_callback_vtable_dataproviderffi(UniffiCallbackInterfaceDataProviderFfi.vtable)
 }
 
 #if swift(>=5.8)
@@ -1688,7 +1688,7 @@ fileprivate func uniffiRustCallAsync<F, T>(
 ) async throws -> T {
     // Make sure to call the ensure init function since future creation doesn't have a
     // RustCallStatus param, so doesn't use makeRustCall()
-    uniffiEnsureErc7730Initialized()
+    uniffiEnsureClearSigningInitialized()
     let rustFuture = rustFutureFunc()
     defer {
         freeFunc(rustFuture)
@@ -1725,19 +1725,19 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
  * Format contract calldata for clear signing display.
  *
  * Takes pre-resolved descriptor JSON strings and a `TransactionInput`.
- * The wallet is responsible for descriptor resolution (via `erc7730_resolve_descriptor`
+ * The wallet is responsible for descriptor resolution (via `clear_signing_resolve_descriptor`
  * or its own source). Proxy detection is automatic when `data_provider` is provided.
  */
-public func erc7730FormatCalldata(descriptorsJson: [String], transaction: TransactionInput, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+public func clearSigningFormatCalldata(descriptorsJson: [String], transaction: TransactionInput, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format_calldata(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterTypeTransactionInput_lower(transaction),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
+                uniffi_clear_signing_fn_func_clear_signing_format_calldata(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterTypeTransactionInput_lower(transaction),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
                 )
             },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
+            completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
+            freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeDisplayModel_lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
@@ -1747,16 +1747,16 @@ public func erc7730FormatCalldata(descriptorsJson: [String], transaction: Transa
  *
  * Takes pre-resolved descriptor JSON strings and the EIP-712 typed data JSON.
  */
-public func erc7730FormatTypedData(descriptorsJson: [String], typedDataJson: String, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+public func clearSigningFormatTypedData(descriptorsJson: [String], typedDataJson: String, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_format_typed_data(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterString.lower(typedDataJson),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
+                uniffi_clear_signing_fn_func_clear_signing_format_typed_data(FfiConverterSequenceString.lower(descriptorsJson),FfiConverterString.lower(typedDataJson),FfiConverterOptionTypeDataProviderFfi.lower(dataProvider)
                 )
             },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
+            completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
+            freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
             liftFunc: FfiConverterTypeDisplayModel_lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
@@ -1764,11 +1764,11 @@ public func erc7730FormatTypedData(descriptorsJson: [String], typedDataJson: Str
 /**
  * Merge two descriptor JSON strings (including + included).
  *
- * Returns merged JSON ready for use with `erc7730_format_calldata` / `erc7730_format_typed_data`.
+ * Returns merged JSON ready for use with `clear_signing_format_calldata` / `clear_signing_format_typed_data`.
  */
-public func erc7730MergeDescriptors(includingJson: String, includedJson: String)throws  -> String  {
+public func clearSigningMergeDescriptors(includingJson: String, includedJson: String)throws  -> String  {
     return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
-    uniffi_erc7730_fn_func_erc7730_merge_descriptors(
+    uniffi_clear_signing_fn_func_clear_signing_merge_descriptors(
         FfiConverterString.lower(includingJson),
         FfiConverterString.lower(includedJson),$0
     )
@@ -1780,16 +1780,16 @@ public func erc7730MergeDescriptors(includingJson: String, includedJson: String)
  * Returns the descriptor JSON string, or `None` if no descriptor is found.
  * Requires the `github-registry` feature.
  */
-public func erc7730ResolveDescriptor(chainId: UInt64, address: String)async throws  -> String?  {
+public func clearSigningResolveDescriptor(chainId: UInt64, address: String)async throws  -> String?  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_resolve_descriptor(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(address)
+                uniffi_clear_signing_fn_func_clear_signing_resolve_descriptor(FfiConverterUInt64.lower(chainId),FfiConverterString.lower(address)
                 )
             },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
+            completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
+            freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionString.lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
@@ -1802,16 +1802,16 @@ public func erc7730ResolveDescriptor(chainId: UInt64, address: String)async thro
  * Returns empty vec if no descriptor is found for the outer address.
  * Automatically detects proxy contracts via `data_provider.get_implementation_address`.
  */
-public func erc7730ResolveDescriptorsForTx(transaction: TransactionInput, dataProvider: DataProviderFfi)async throws  -> [String]  {
+public func clearSigningResolveDescriptorsForTx(transaction: TransactionInput, dataProvider: DataProviderFfi)async throws  -> [String]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_resolve_descriptors_for_tx(FfiConverterTypeTransactionInput_lower(transaction),FfiConverterTypeDataProviderFfi_lower(dataProvider)
+                uniffi_clear_signing_fn_func_clear_signing_resolve_descriptors_for_tx(FfiConverterTypeTransactionInput_lower(transaction),FfiConverterTypeDataProviderFfi_lower(dataProvider)
                 )
             },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
+            completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
+            freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceString.lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
@@ -1824,16 +1824,16 @@ public func erc7730ResolveDescriptorsForTx(transaction: TransactionInput, dataPr
  * Returns empty vec if no descriptor is found for the outer verifying contract.
  * Automatically detects proxy contracts via `data_provider.get_implementation_address`.
  */
-public func erc7730ResolveDescriptorsForTypedData(typedDataJson: String, dataProvider: DataProviderFfi)async throws  -> [String]  {
+public func clearSigningResolveDescriptorsForTypedData(typedDataJson: String, dataProvider: DataProviderFfi)async throws  -> [String]  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
-                uniffi_erc7730_fn_func_erc7730_resolve_descriptors_for_typed_data(FfiConverterString.lower(typedDataJson),FfiConverterTypeDataProviderFfi_lower(dataProvider)
+                uniffi_clear_signing_fn_func_clear_signing_resolve_descriptors_for_typed_data(FfiConverterString.lower(typedDataJson),FfiConverterTypeDataProviderFfi_lower(dataProvider)
                 )
             },
-            pollFunc: ffi_erc7730_rust_future_poll_rust_buffer,
-            completeFunc: ffi_erc7730_rust_future_complete_rust_buffer,
-            freeFunc: ffi_erc7730_rust_future_free_rust_buffer,
+            pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
+            completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
+            freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
             liftFunc: FfiConverterSequenceString.lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
@@ -1850,44 +1850,44 @@ private let initializationResult: InitializationResult = {
     // Get the bindings contract version from our ComponentInterface
     let bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
-    let scaffolding_contract_version = ffi_erc7730_uniffi_contract_version()
+    let scaffolding_contract_version = ffi_clear_signing_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_calldata() != 9410) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_format_calldata() != 17729) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_format_typed_data() != 64635) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_format_typed_data() != 29131) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_merge_descriptors() != 26679) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_merge_descriptors() != 42834) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptor() != 56571) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptor() != 48535) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_tx() != 7820) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptors_for_tx() != 34604) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_func_erc7730_resolve_descriptors_for_typed_data() != 46885) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptors_for_typed_data() != 54303) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_token() != 7230) {
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_token() != 12923) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_ens_name() != 65412) {
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_ens_name() != 5919) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_local_name() != 45774) {
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_local_name() != 60031) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_nft_collection_name() != 61037) {
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_nft_collection_name() != 29329) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_resolve_block_timestamp() != 26839) {
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_block_timestamp() != 18212) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_erc7730_checksum_method_dataproviderffi_get_implementation_address() != 1230) {
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_get_implementation_address() != 349) {
         return InitializationResult.apiChecksumMismatch
     }
 
@@ -1897,7 +1897,7 @@ private let initializationResult: InitializationResult = {
 
 // Make the ensure init function public so that other modules which have external type references to
 // our types can call it.
-public func uniffiEnsureErc7730Initialized() {
+public func uniffiEnsureClearSigningInitialized() {
     switch initializationResult {
     case .ok:
         break
