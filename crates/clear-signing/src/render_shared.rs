@@ -2,6 +2,7 @@
 
 use num_bigint::BigUint;
 
+use crate::decoder::ArgumentValue;
 use crate::error::Error;
 use crate::provider::DataProvider;
 use crate::token::TokenMeta;
@@ -127,6 +128,58 @@ pub(crate) fn format_duration_seconds(secs: u64) -> String {
     let minutes = (secs % 3600) / 60;
     let seconds = secs % 60;
     format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+pub(crate) fn coerce_unsigned_biguint_from_argument_value(val: &ArgumentValue) -> Option<BigUint> {
+    match val {
+        ArgumentValue::Uint(bytes)
+        | ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes) => Some(BigUint::from_bytes_be(bytes)),
+        _ => None,
+    }
+}
+
+pub(crate) fn coerce_unsigned_decimal_string_from_argument_value(
+    val: &ArgumentValue,
+) -> Option<String> {
+    coerce_unsigned_biguint_from_argument_value(val).map(|n| n.to_string())
+}
+
+pub(crate) fn coerce_unsigned_biguint_from_typed_value(
+    val: &serde_json::Value,
+) -> Option<BigUint> {
+    match val {
+        serde_json::Value::Number(n) => n.as_u64().map(BigUint::from),
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if let Some(hex_str) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
+                let bytes = hex::decode(hex_str).ok()?;
+                Some(BigUint::from_bytes_be(&bytes))
+            } else if trimmed.starts_with('-') {
+                None
+            } else {
+                trimmed.parse::<BigUint>().ok()
+            }
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn coerce_unsigned_decimal_string_from_typed_value(
+    val: &serde_json::Value,
+) -> Option<String> {
+    coerce_unsigned_biguint_from_typed_value(val).map(|n| n.to_string())
+}
+
+pub(crate) fn parse_unsigned_biguint_from_typed_value(
+    val: &serde_json::Value,
+    format_name: &str,
+) -> Result<BigUint, Error> {
+    coerce_unsigned_biguint_from_typed_value(val)
+        .ok_or_else(|| Error::Render(format!("{format_name} field must be an unsigned integer")))
 }
 
 pub(crate) fn format_unit_biguint(raw_val: &BigUint, params: Option<&FormatParams>) -> String {
@@ -434,6 +487,43 @@ mod tests {
         let rendered =
             format_token_amount_output(&descriptor, &BigUint::from(42u64), Some(&params), None);
         assert_eq!(rendered, "42");
+    }
+
+    #[test]
+    fn test_unsigned_numeric_coercion_from_argument_value() {
+        assert_eq!(
+            coerce_unsigned_decimal_string_from_argument_value(&ArgumentValue::Bytes(vec![
+                0x01, 0xf4
+            ]))
+            .as_deref(),
+            Some("500")
+        );
+        assert_eq!(
+            coerce_unsigned_decimal_string_from_argument_value(&ArgumentValue::Int(vec![0x01])),
+            None
+        );
+    }
+
+    #[test]
+    fn test_unsigned_numeric_coercion_from_typed_value() {
+        assert_eq!(
+            coerce_unsigned_decimal_string_from_typed_value(&json!("0x01f4")).as_deref(),
+            Some("500")
+        );
+        assert_eq!(
+            coerce_unsigned_decimal_string_from_typed_value(&json!("500")).as_deref(),
+            Some("500")
+        );
+        assert_eq!(
+            coerce_unsigned_decimal_string_from_typed_value(&json!(500)).as_deref(),
+            Some("500")
+        );
+        assert_eq!(
+            parse_unsigned_biguint_from_typed_value(&json!("not-a-number"), "amount")
+                .unwrap_err()
+                .to_string(),
+            "render error: amount field must be an unsigned integer"
+        );
     }
 
     #[test]

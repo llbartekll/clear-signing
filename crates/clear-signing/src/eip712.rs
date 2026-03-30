@@ -18,9 +18,11 @@ use crate::error::Error;
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
-    chain_name, format_blockheight_timestamp, format_duration_seconds, format_timestamp,
+    chain_name, coerce_unsigned_decimal_string_from_typed_value,
+    format_blockheight_timestamp, format_duration_seconds, format_timestamp,
     format_token_amount_output, format_unit_biguint, is_excluded_path, lookup_map_entry,
-    native_token_meta, resolve_interpolation_field_spec, resolve_metadata_constant_str,
+    native_token_meta, parse_unsigned_biguint_from_typed_value, resolve_interpolation_field_spec,
+    resolve_metadata_constant_str,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -1212,50 +1214,14 @@ fn check_typed_visibility(
 }
 
 pub(crate) fn coerce_typed_numeric_string(val: &serde_json::Value) -> Option<String> {
-    match val {
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::String(s) => {
-            if let Some(hex_str) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-                let bytes = hex::decode(hex_str).ok()?;
-                Some(num_bigint::BigUint::from_bytes_be(&bytes).to_string())
-            } else if s.trim_start().starts_with('-') {
-                None
-            } else {
-                s.trim().parse::<BigUint>().ok().map(|n| n.to_string())
-            }
-        }
-        _ => None,
-    }
+    coerce_unsigned_decimal_string_from_typed_value(val)
 }
 
 pub(crate) fn parse_typed_biguint_value(
     val: &serde_json::Value,
     format_name: &str,
 ) -> Result<BigUint, Error> {
-    match val {
-        serde_json::Value::Number(n) => n.as_u64().map(BigUint::from).ok_or_else(|| {
-            Error::Render(format!("{format_name} field must be an unsigned integer"))
-        }),
-        serde_json::Value::String(s) => {
-            let trimmed = s.trim();
-            if let Some(hex_str) = trimmed
-                .strip_prefix("0x")
-                .or_else(|| trimmed.strip_prefix("0X"))
-            {
-                let bytes = hex::decode(hex_str).map_err(|_| {
-                    Error::Render(format!("{format_name} field must be an unsigned integer"))
-                })?;
-                Ok(BigUint::from_bytes_be(&bytes))
-            } else {
-                trimmed.parse::<BigUint>().map_err(|_| {
-                    Error::Render(format!("{format_name} field must be an unsigned integer"))
-                })
-            }
-        }
-        _ => Err(Error::Render(format!(
-            "{format_name} field must be an unsigned integer"
-        ))),
-    }
+    parse_unsigned_biguint_from_typed_value(val, format_name)
 }
 
 fn parse_typed_u64_value(val: &serde_json::Value, format_name: &str) -> Result<u64, Error> {
@@ -1703,7 +1669,8 @@ async fn format_typed_value(
             }
             Ok(raw)
         }
-        FieldFormat::Number => Ok(json_value_to_string(val)),
+        FieldFormat::Number => Ok(coerce_unsigned_decimal_string_from_typed_value(val)
+            .unwrap_or_else(|| json_value_to_string(val))),
         FieldFormat::TokenTicker => {
             let lookup_chain = resolve_typed_chain_id(params, container, message)?;
             let addr =
@@ -1721,15 +1688,15 @@ async fn format_typed_value(
         }
         FieldFormat::Raw => Ok(json_value_to_string(val)),
         FieldFormat::Amount => {
-            // For EIP-712, amounts are plain numeric strings
-            Ok(json_value_to_string(val))
+            Ok(coerce_unsigned_decimal_string_from_typed_value(val)
+                .unwrap_or_else(|| json_value_to_string(val)))
         }
         FieldFormat::Duration => {
             let secs = parse_typed_u64_value(val, "duration")?;
             Ok(format_duration_seconds(secs))
         }
         FieldFormat::Unit => {
-            let amount = parse_typed_biguint_value(val, "unit")?;
+            let amount = parse_unsigned_biguint_from_typed_value(val, "unit")?;
             Ok(format_unit_biguint(&amount, params))
         }
         FieldFormat::NftName => {
@@ -2112,6 +2079,87 @@ mod tests {
         }
         match &result.entries[2] {
             DisplayEntry::Item(item) => assert_eq!(item.value, "1.5 USDC"),
+            _ => panic!("expected Item"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_typed_byte_slice_numeric_formatters_match_calldata_semantics() {
+        let descriptor_json = r#"{
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {
+                "owner": "test",
+                "enums": {},
+                "constants": {},
+                "maps": {}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "SliceTest(bytes32 tokenWord,bytes32 amountWord)": {
+                        "intent": "Slice test",
+                        "fields": [
+                            {"path": "amountWord.[-2:]", "label": "Token Amount", "format": "tokenAmount", "params": {"tokenPath": "tokenWord.[-20:]"}},
+                            {"path": "amountWord.[-2:]", "label": "Number", "format": "number"},
+                            {"path": "amountWord.[-2:]", "label": "Amount", "format": "amount"},
+                            {"path": "amountWord.[-2:]", "label": "Unit", "format": "unit", "params": {"base": "bps"}}
+                        ]
+                    }
+                }
+            }
+        }"#;
+
+        let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+            "types": {
+                "EIP712Domain": [],
+                "SliceTest": [
+                    {"name": "tokenWord", "type": "bytes32"},
+                    {"name": "amountWord", "type": "bytes32"}
+                ]
+            },
+            "primaryType": "SliceTest",
+            "domain": {"chainId": 1, "verifyingContract": "0xabc"},
+            "message": {
+                "tokenWord": "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+                "amountWord": "0x00000000000000000000000000000000000000000000000000000000000001f4"
+            }
+        }))
+        .unwrap();
+
+        let descriptor = Descriptor::from_json(descriptor_json).unwrap();
+        let mut tokens = StaticTokenSource::new();
+        tokens.insert(
+            1,
+            "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            TokenMeta {
+                symbol: "USDC".to_string(),
+                decimals: 6,
+                name: "USD Coin".to_string(),
+            },
+        );
+
+        let result = format_typed_data(&descriptor, &typed_data, &tokens, &[])
+            .await
+            .unwrap();
+
+        match &result.entries[0] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "0.0005 USDC"),
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[1] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "500"),
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[2] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "500"),
+            _ => panic!("expected Item"),
+        }
+        match &result.entries[3] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "500bps"),
             _ => panic!("expected Item"),
         }
     }
