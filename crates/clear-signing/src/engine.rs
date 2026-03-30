@@ -1695,7 +1695,9 @@ fn eip55_checksum(addr: &[u8; 20]) -> String {
 
 fn format_number(val: &ArgumentValue) -> String {
     match val {
-        ArgumentValue::Uint(bytes) => BigUint::from_bytes_be(bytes).to_string(),
+        ArgumentValue::Uint(bytes)
+        | ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes) => BigUint::from_bytes_be(bytes).to_string(),
         ArgumentValue::Int(bytes) => int_to_bigint(bytes).to_string(),
         _ => format_raw(val),
     }
@@ -1740,7 +1742,10 @@ async fn format_token_amount(
     warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
     let raw_amount = match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
+        ArgumentValue::Uint(bytes)
+        | ArgumentValue::Int(bytes)
+        | ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes) => BigUint::from_bytes_be(bytes),
         _ => return Ok(format_raw(val)),
     };
 
@@ -1869,7 +1874,10 @@ fn format_amount(
     path: &str,
 ) -> Result<String, Error> {
     match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
+        ArgumentValue::Uint(bytes)
+        | ArgumentValue::Int(bytes)
+        | ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes) => {
             let n = BigUint::from_bytes_be(bytes);
             if path.starts_with("@.value") {
                 let meta = native_token_meta(ctx.chain_id);
@@ -2082,7 +2090,10 @@ fn format_duration(val: &ArgumentValue) -> Result<String, Error> {
 /// Format a unit value (e.g., percentage, bps) with optional decimals and SI prefix.
 fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> Result<String, Error> {
     let raw_val = match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
+        ArgumentValue::Uint(bytes)
+        | ArgumentValue::Int(bytes)
+        | ArgumentValue::Bytes(bytes)
+        | ArgumentValue::FixedBytes(bytes) => BigUint::from_bytes_be(bytes),
         _ => return Ok(format_raw(val)),
     };
 

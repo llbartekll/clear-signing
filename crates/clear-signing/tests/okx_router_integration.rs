@@ -316,6 +316,7 @@ async fn okx_swap_wrap() {
     assert_eq!(result.owner.as_deref(), Some("OKX Labs"));
     assert_eq!(get_entry_value(&result, "Order ID"), "17047945215486016");
     assert_eq!(get_entry_value(&result, "Direction"), "WETH --> ETH");
+    assert_eq!(get_entry_value(&result, "Amount"), "0.037 WETH");
     assert!(result.warnings.is_empty());
 }
 
