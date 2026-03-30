@@ -147,7 +147,24 @@ Report:
 
 If the user wants permanent coverage, promote the strongest cases into explicit integration tests in `crates/erc7730/tests/` with concrete assertions on intent and key rendered fields.
 
-### 8. Diagnose whether the issue is in the engine
+### 8. Formatting analysis
+
+After presenting results, analyze the formatting output for issues:
+
+- **Intent consistency**: Are intent strings consistently cased? (e.g., "claim withdrawal" vs "Claim Withdrawal")
+- **Token resolution**: Were all token amounts formatted with symbols and decimals, or are any showing raw wei values?
+- **Address display**: Are addresses showing checksummed (EIP-55) format?
+- **Missing labels**: Are any fields showing generic labels like "Param 0" instead of descriptive names?
+- **Warnings**: Flag any warnings emitted by the library (e.g., "token metadata not found")
+- **Value formatting**: Are large numbers human-readable? Are decimals reasonable?
+- **Nested calldata**: If any functions have nested calls, are they rendered with proper inner intent?
+
+Present issues as a checklist:
+- [ ] Issue description — which function, which field, what's wrong
+
+If no issues found, state: "No formatting issues detected."
+
+### 9. Diagnose whether the issue is in the engine
 
 After every run, do a short root-cause pass on any failures, warnings, or `<unresolved>` fields.
 

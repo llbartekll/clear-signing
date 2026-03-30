@@ -267,7 +267,32 @@ the pattern in `tests/morpho_blue_integration.rs` or `tests/aave_integration.rs`
 that they can copy-paste and customize with explicit assertions. This is a
 convenience feature — the skill does not write test files.
 
-### Step 7 — Self-diagnostics + improvement suggestions
+### Step 7 — Diagnose whether the issue is in the engine
+
+After every run, do a short root-cause pass on any failures, warnings, or `<unresolved>` fields.
+
+Classify each issue as one of:
+
+- Descriptor issue
+- Data-provider or metadata issue
+- Engine limitation or bug
+
+Treat it as an engine issue when the descriptor intent and core decoding succeed but fields fail because the library cannot navigate or format the requested value shape. Common examples:
+
+- path syntax accepted by the descriptor but unsupported in the current resolver
+- byte or tuple slicing that the engine does not currently handle
+- values that resolve, but cannot be coerced into the formatter's expected type
+
+When you conclude it is likely an engine issue:
+
+- say so explicitly in the final report
+- cite the relevant Rust file and function
+- explain the mismatch between descriptor expectation and current engine behavior
+- distinguish "engine limitation" from "descriptor typo" if the path looks internally consistent
+
+Do not stop at saying a field is `<unresolved>`; explain why it became unresolved when the code makes that diagnosable.
+
+### Step 8 — Self-diagnostics + improvement suggestions
 
 After the run completes, review all issues encountered during execution and suggest
 concrete, actionable fixes:
