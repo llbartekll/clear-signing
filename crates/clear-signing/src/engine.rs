@@ -1553,9 +1553,6 @@ pub(crate) fn address_bytes_from_raw_bytes(bytes: &[u8]) -> Option<[u8; 20]> {
         32 => &bytes[12..32],
         _ => return None,
     };
-    if addr_bytes.iter().all(|&b| b == 0) {
-        return None;
-    }
     let mut addr = [0u8; 20];
     addr.copy_from_slice(addr_bytes);
     Some(addr)

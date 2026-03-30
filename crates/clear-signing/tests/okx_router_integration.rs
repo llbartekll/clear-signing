@@ -432,7 +432,12 @@ async fn okx_unxswap_to_with_base_request() {
         "2287.662090428641808489 SAIYAN"
     );
     assert_eq!(
+        get_entry_value(&result, "Amount to Send"),
+        "0.049575 ETH"
+    );
+    assert_eq!(
         get_entry_value(&result, "Deadline"),
         "2026-03-30 11:13:23 UTC"
     );
+    assert!(result.warnings.is_empty());
 }
