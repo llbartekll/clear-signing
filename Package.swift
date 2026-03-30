@@ -20,8 +20,8 @@ let package = Package(
             )
             : .binaryTarget(
                 name: "ClearSigningRust",
-                url: "https://github.com/llbartekll/clear-signing/releases/download/0.0.1/libclear_signing.xcframework.zip",
-                checksum: "1799b2e8afbc5f0237239793767fb9e700527aff10976773caafd3707554d77f"
+                url: "https://github.com/llbartekll/clear-signing/releases/download/0.0.2/libclear_signing.xcframework.zip",
+                checksum: "410090d2b29ace5d4540b037d5c4c9fc517bf7222fc9d23885a9b23d07a27a80"
             ),
         .target(
             name: "ClearSigning",
