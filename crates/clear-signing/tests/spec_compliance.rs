@@ -2190,6 +2190,115 @@ async fn test_eip712_token_amount_native_currency_matches_calldata() {
     assert_semantic_parity(&calldata_result, &typed_result);
 }
 
+#[tokio::test]
+async fn test_eip712_sliced_numeric_formats_match_calldata() {
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "contract": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "slice(bytes32,bytes32)": {
+                        "intent": "Slice",
+                        "fields": [
+                            {"path": "@.1.[-2:]", "label": "Token Amount", "format": "tokenAmount", "params": {"tokenPath": "@.0.[-20:]"}},
+                            {"path": "@.1.[-2:]", "label": "Number", "format": "number"},
+                            {"path": "@.1.[-2:]", "label": "Amount", "format": "amount"},
+                            {"path": "@.1.[-2:]", "label": "Unit", "format": "unit", "params": {"base": "bps"}}
+                        ]
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": {
+                "eip712": {
+                    "deployments": [{"chainId": 1, "address": "0xabc"}]
+                }
+            },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "SliceTest(bytes32 tokenWord,bytes32 amountWord)": {
+                        "intent": "Slice",
+                        "fields": [
+                            {"path": "amountWord.[-2:]", "label": "Token Amount", "format": "tokenAmount", "params": {"tokenPath": "tokenWord.[-20:]"}},
+                            {"path": "amountWord.[-2:]", "label": "Number", "format": "number"},
+                            {"path": "amountWord.[-2:]", "label": "Amount", "format": "amount"},
+                            {"path": "amountWord.[-2:]", "label": "Unit", "format": "unit", "params": {"base": "bps"}}
+                        ]
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "slice(bytes32,bytes32)",
+        &[
+            addr_word("0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"),
+            uint_word(500),
+        ],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "SliceTest": [
+                {"name": "tokenWord", "type": "bytes32"},
+                {"name": "amountWord", "type": "bytes32"}
+            ]
+        },
+        "primaryType": "SliceTest",
+        "domain": {"chainId": 1, "verifyingContract": "0xabc"},
+        "message": {
+            "tokenWord": "0x000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "amountWord": "0x00000000000000000000000000000000000000000000000000000000000001f4"
+        }
+    }))
+    .unwrap();
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
+        .await
+        .unwrap();
+    let typed_result = format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+        .await
+        .unwrap();
+
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
 // ─── #17: Includes mechanism ───
 
 #[test]

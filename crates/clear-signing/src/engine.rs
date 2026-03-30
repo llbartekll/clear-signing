@@ -11,10 +11,11 @@ use crate::error::Error;
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
-    chain_name, format_blockheight_timestamp, format_duration_seconds, format_timestamp,
-    format_token_amount_output, format_unit_biguint, format_with_decimals, is_excluded_path,
-    lookup_map_entry, native_token_meta, resolve_interpolation_field_spec,
-    resolve_metadata_constant_str,
+    chain_name, coerce_unsigned_biguint_from_argument_value,
+    coerce_unsigned_decimal_string_from_argument_value, format_blockheight_timestamp,
+    format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
+    format_with_decimals, is_excluded_path, lookup_map_entry, native_token_meta,
+    resolve_interpolation_field_spec, resolve_metadata_constant_str,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -1559,9 +1560,6 @@ pub(crate) fn address_bytes_from_raw_bytes(bytes: &[u8]) -> Option<[u8; 20]> {
         32 => &bytes[12..32],
         _ => return None,
     };
-    if addr_bytes.iter().all(|&b| b == 0) {
-        return None;
-    }
     let mut addr = [0u8; 20];
     addr.copy_from_slice(addr_bytes);
     Some(addr)
@@ -1701,23 +1699,28 @@ fn eip55_checksum(addr: &[u8; 20]) -> String {
 
 fn format_number(val: &ArgumentValue) -> String {
     match val {
-        ArgumentValue::Uint(bytes) => BigUint::from_bytes_be(bytes).to_string(),
         ArgumentValue::Int(bytes) => int_to_bigint(bytes).to_string(),
-        _ => format_raw(val),
+        _ => coerce_unsigned_decimal_string_from_argument_value(val)
+            .unwrap_or_else(|| format_raw(val)),
     }
 }
 
-fn numeric_string_from_argument_value(val: &ArgumentValue) -> Option<String> {
+fn unsigned_biguint_from_argument_value_including_int(val: &ArgumentValue) -> Option<BigUint> {
     match val {
-        ArgumentValue::Uint(bytes)
-        | ArgumentValue::Int(bytes)
-        | ArgumentValue::Bytes(bytes)
-        | ArgumentValue::FixedBytes(bytes)
-            if bytes.len() <= 32 =>
-        {
-            Some(BigUint::from_bytes_be(bytes).to_string())
-        }
+        ArgumentValue::Int(bytes) => Some(BigUint::from_bytes_be(bytes)),
         _ => None,
+    }
+    .or_else(|| coerce_unsigned_biguint_from_argument_value(val))
+}
+
+fn unsigned_decimal_string_from_argument_value_including_int(val: &ArgumentValue) -> Option<String> {
+    unsigned_biguint_from_argument_value_including_int(val).map(|n| n.to_string())
+}
+
+fn unsigned_biguint_from_argument_value_for_amount(val: &ArgumentValue) -> Option<BigUint> {
+    match val {
+        ArgumentValue::Int(bytes) => Some(BigUint::from_bytes_be(bytes)),
+        _ => coerce_unsigned_biguint_from_argument_value(val),
     }
 }
 
@@ -1745,9 +1748,8 @@ async fn format_token_amount(
     path: &str,
     warnings: &mut Vec<String>,
 ) -> Result<String, Error> {
-    let raw_amount = match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
-        _ => return Ok(format_raw(val)),
+    let Some(raw_amount) = unsigned_biguint_from_argument_value_including_int(val) else {
+        return Ok(format_raw(val));
     };
 
     // Determine chain ID for token lookup (cross-chain support)
@@ -1874,18 +1876,16 @@ fn format_amount(
     val: &ArgumentValue,
     path: &str,
 ) -> Result<String, Error> {
-    match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
-            let n = BigUint::from_bytes_be(bytes);
-            if path.starts_with("@.value") {
-                let meta = native_token_meta(ctx.chain_id);
-                let formatted = format_with_decimals(&n, meta.decimals);
-                Ok(format!("{} {}", formatted, meta.symbol))
-            } else {
-                Ok(n.to_string())
-            }
-        }
-        _ => Ok(format_raw(val)),
+    let Some(n) = unsigned_biguint_from_argument_value_for_amount(val) else {
+        return Ok(format_raw(val));
+    };
+
+    if path.starts_with("@.value") {
+        let meta = native_token_meta(ctx.chain_id);
+        let formatted = format_with_decimals(&n, meta.decimals);
+        Ok(format!("{} {}", formatted, meta.symbol))
+    } else {
+        Ok(n.to_string())
     }
 }
 
@@ -1918,7 +1918,8 @@ fn format_enum(
     val: &ArgumentValue,
     params: Option<&FormatParams>,
 ) -> Result<String, Error> {
-    let raw = numeric_string_from_argument_value(val).unwrap_or_else(|| format_raw(val));
+    let raw = unsigned_decimal_string_from_argument_value_including_int(val)
+        .unwrap_or_else(|| format_raw(val));
 
     if let Some(params) = params {
         // Try direct enumPath first
@@ -2087,9 +2088,8 @@ fn format_duration(val: &ArgumentValue) -> Result<String, Error> {
 
 /// Format a unit value (e.g., percentage, bps) with optional decimals and SI prefix.
 fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> Result<String, Error> {
-    let raw_val = match val {
-        ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => BigUint::from_bytes_be(bytes),
-        _ => return Ok(format_raw(val)),
+    let Some(raw_val) = unsigned_biguint_from_argument_value_including_int(val) else {
+        return Ok(format_raw(val));
     };
 
     Ok(format_unit_biguint(&raw_val, params))
