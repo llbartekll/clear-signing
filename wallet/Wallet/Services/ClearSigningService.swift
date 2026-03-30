@@ -78,22 +78,26 @@ struct ClearSigningService {
                 log.info("Calldata formatting OK: intent=\(model.intent) warnings=\(model.warnings.count)")
                 return CalldataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
+                    resolvedDescriptorsJson: descriptors,
                     model: model,
                     error: nil,
                     failedStage: nil,
                     implementationAddress: implementationAddress,
                     matchedAddress: matchedAddress,
+                    selectedDescriptorAddress: matchedAddress,
                     usedImplementationAddress: usedImplementationAddress
                 )
             } catch {
                 log.error("Calldata formatting failed: \(error)")
                 return CalldataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
+                    resolvedDescriptorsJson: descriptors,
                     model: nil,
                     error: error,
                     failedStage: .format,
                     implementationAddress: implementationAddress,
                     matchedAddress: matchedAddress,
+                    selectedDescriptorAddress: matchedAddress,
                     usedImplementationAddress: usedImplementationAddress
                 )
             }
@@ -101,11 +105,13 @@ struct ClearSigningService {
             log.error("Calldata descriptor resolution failed: \(error)")
             return CalldataFormattingOutcome(
                 descriptorOwners: [],
+                resolvedDescriptorsJson: [],
                 model: nil,
                 error: error,
                 failedStage: .resolve,
                 implementationAddress: implementationAddress,
                 matchedAddress: matchedAddress,
+                selectedDescriptorAddress: matchedAddress,
                 usedImplementationAddress: usedImplementationAddress
             )
         }
@@ -147,6 +153,7 @@ struct ClearSigningService {
                 log.info("Typed-data formatting OK: intent=\(model.intent) warnings=\(model.warnings.count)")
                 return TypedDataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
+                    resolvedDescriptorsJson: descriptors,
                     model: model,
                     error: nil,
                     failedStage: nil
@@ -155,6 +162,7 @@ struct ClearSigningService {
                 log.error("Typed-data formatting failed: \(error)")
                 return TypedDataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
+                    resolvedDescriptorsJson: descriptors,
                     model: nil,
                     error: error,
                     failedStage: .format
@@ -164,6 +172,7 @@ struct ClearSigningService {
             log.error("Typed-data descriptor resolution failed: \(error)")
             return TypedDataFormattingOutcome(
                 descriptorOwners: [],
+                resolvedDescriptorsJson: [],
                 model: nil,
                 error: error,
                 failedStage: .resolve

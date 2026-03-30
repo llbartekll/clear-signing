@@ -62,6 +62,7 @@ struct TypedDataCapture: Identifiable, Codable {
     let chainId: String
 
     var outcome: Outcome
+    var failedStage: TypedDataFormattingOutcome.Stage?
     var rawParamsJson: String?
     var typedDataJson: String?
     var requestedAddress: String?
@@ -69,12 +70,14 @@ struct TypedDataCapture: Identifiable, Codable {
     var summary: TypedDataSummary?
     var descriptorCount: Int?
     var descriptorOwners: [String]?
+    var resolvedDescriptorsJson: [String]?
     var selectedDescriptorOwner: String?
     var clearSigningIntent: String?
     var clearSigningInterpolatedIntent: String?
     var clearSigningWarnings: [String]?
     var clearSigningEntryPreview: [String]?
     var clearSigningError: String?
+    var errorDescription: String?
     var signerError: String?
     var notes: [String]
 
@@ -86,6 +89,7 @@ struct TypedDataCapture: Identifiable, Codable {
         self.requestId = String(describing: request.id)
         self.chainId = request.chainId.absoluteString
         self.outcome = .received
+        self.failedStage = nil
         self.rawParamsJson = rawParamsJson
         self.typedDataJson = nil
         self.requestedAddress = nil
@@ -93,12 +97,48 @@ struct TypedDataCapture: Identifiable, Codable {
         self.summary = nil
         self.descriptorCount = nil
         self.descriptorOwners = nil
+        self.resolvedDescriptorsJson = nil
         self.selectedDescriptorOwner = nil
         self.clearSigningIntent = nil
         self.clearSigningInterpolatedIntent = nil
         self.clearSigningWarnings = nil
         self.clearSigningEntryPreview = nil
         self.clearSigningError = nil
+        self.errorDescription = nil
+        self.signerError = nil
+        self.notes = []
+    }
+
+    init(
+        method: String,
+        topic: String,
+        requestId: String,
+        chainId: String,
+        rawParamsJson: String?
+    ) {
+        self.id = UUID()
+        self.timestamp = Date()
+        self.method = method
+        self.topic = topic
+        self.requestId = requestId
+        self.chainId = chainId
+        self.outcome = .received
+        self.failedStage = nil
+        self.rawParamsJson = rawParamsJson
+        self.typedDataJson = nil
+        self.requestedAddress = nil
+        self.expectedAddress = nil
+        self.summary = nil
+        self.descriptorCount = nil
+        self.descriptorOwners = nil
+        self.resolvedDescriptorsJson = nil
+        self.selectedDescriptorOwner = nil
+        self.clearSigningIntent = nil
+        self.clearSigningInterpolatedIntent = nil
+        self.clearSigningWarnings = nil
+        self.clearSigningEntryPreview = nil
+        self.clearSigningError = nil
+        self.errorDescription = nil
         self.signerError = nil
         self.notes = []
     }
@@ -114,15 +154,48 @@ struct TypedDataCapture: Identifiable, Codable {
         return string
     }
 
-    mutating func applyClearSigningSuccess(_ model: DisplayModel, descriptorOwners: [String]) {
+    mutating func applyClearSigningSuccess(_ formattingOutcome: TypedDataFormattingOutcome) {
         outcome = .clearSigningSucceeded
-        descriptorCount = descriptorOwners.count
-        self.descriptorOwners = descriptorOwners
+        failedStage = nil
+        descriptorCount = formattingOutcome.descriptorOwners.count
+        descriptorOwners = formattingOutcome.descriptorOwners
+        resolvedDescriptorsJson = formattingOutcome.resolvedDescriptorsJson
+        selectedDescriptorOwner = nil
+        clearSigningIntent = nil
+        clearSigningInterpolatedIntent = nil
+        clearSigningWarnings = nil
+        clearSigningEntryPreview = nil
+        clearSigningError = nil
+        errorDescription = nil
+
+        guard let model = formattingOutcome.model else {
+            return
+        }
+
         selectedDescriptorOwner = model.owner
         clearSigningIntent = model.intent
         clearSigningInterpolatedIntent = model.interpolatedIntent
         clearSigningWarnings = model.warnings
-        clearSigningEntryPreview = model.entries.prefix(8).compactMap { entry in
+        clearSigningEntryPreview = previewEntries(from: model)
+    }
+
+    mutating func applyClearSigningFailure(_ formattingOutcome: TypedDataFormattingOutcome) {
+        outcome = .clearSigningFailed
+        failedStage = formattingOutcome.failedStage
+        descriptorCount = formattingOutcome.descriptorOwners.count
+        descriptorOwners = formattingOutcome.descriptorOwners
+        resolvedDescriptorsJson = formattingOutcome.resolvedDescriptorsJson
+        selectedDescriptorOwner = nil
+        clearSigningIntent = nil
+        clearSigningInterpolatedIntent = nil
+        clearSigningWarnings = nil
+        clearSigningEntryPreview = nil
+        clearSigningError = formattingOutcome.error?.localizedDescription
+        errorDescription = formattingOutcome.error?.localizedDescription
+    }
+
+    private func previewEntries(from model: DisplayModel) -> [String] {
+        model.entries.prefix(8).compactMap { entry in
             switch entry {
             case .item(let item):
                 return "\(item.label): \(item.value)"
@@ -133,24 +206,16 @@ struct TypedDataCapture: Identifiable, Codable {
             }
         }
     }
-
-    mutating func applyClearSigningFailure(error: String, descriptorOwners: [String]?) {
-        outcome = .clearSigningFailed
-        clearSigningError = error
-        if let descriptorOwners {
-            descriptorCount = descriptorOwners.count
-            self.descriptorOwners = descriptorOwners
-        }
-    }
 }
 
 struct TypedDataFormattingOutcome {
-    enum Stage {
+    enum Stage: String, Codable {
         case resolve
         case format
     }
 
     let descriptorOwners: [String]
+    let resolvedDescriptorsJson: [String]
     let model: DisplayModel?
     let error: Error?
     let failedStage: Stage?

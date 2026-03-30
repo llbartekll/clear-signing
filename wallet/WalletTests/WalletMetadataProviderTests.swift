@@ -338,6 +338,97 @@ final class WalletMetadataProviderTests: XCTestCase {
     }
 }
 
+final class DiagnosticCaptureTests: XCTestCase {
+    func testCalldataCaptureExportIncludesFailureStageDescriptorsAndSelector() throws {
+        var capture = CalldataCapture(
+            method: "eth_sendTransaction",
+            topic: "topic",
+            requestId: "1",
+            chainId: "eip155:1",
+            rawParamsJson: "{}"
+        )
+        capture.outcome = .clearSigningFailed
+        capture.to = "0x1111111111111111111111111111111111111111"
+        capture.calldata = "0xa9059cbb0000000000000000000000001111111111111111111111111111111111111111"
+        capture.selector = CalldataCapture.selectorHex(from: capture.calldata)
+        capture.failedStage = .format
+        capture.selectedDescriptorAddress = "0x2222222222222222222222222222222222222222"
+        capture.resolvedDescriptorsJson = [#"{ "metadata": { "owner": "Example" } }"#]
+        capture.clearSigningError = "format failed"
+        capture.errorDescription = "format failed"
+
+        let object = try XCTUnwrap(exportedObject(from: capture.exportJSONString))
+        XCTAssertEqual(object["failedStage"] as? String, "format")
+        XCTAssertEqual(object["selector"] as? String, "0xa9059cbb")
+        XCTAssertEqual(
+            object["selectedDescriptorAddress"] as? String,
+            "0x2222222222222222222222222222222222222222"
+        )
+        XCTAssertEqual(object["errorDescription"] as? String, "format failed")
+        XCTAssertEqual((object["resolvedDescriptorsJson"] as? [String])?.count, 1)
+    }
+
+    func testTypedDataCaptureExportIncludesFailureStageAndEmbeddedDescriptors() throws {
+        var capture = TypedDataCapture(
+            method: "eth_signTypedData_v4",
+            topic: "topic",
+            requestId: "2",
+            chainId: "eip155:1",
+            rawParamsJson: "{}"
+        )
+        capture.outcome = .clearSigningFailed
+        capture.typedDataJson = #"{"primaryType":"PermitSingle"}"#
+        capture.failedStage = .resolve
+        capture.resolvedDescriptorsJson = []
+        capture.clearSigningError = "resolve failed"
+        capture.errorDescription = "resolve failed"
+
+        let object = try XCTUnwrap(exportedObject(from: capture.exportJSONString))
+        XCTAssertEqual(object["failedStage"] as? String, "resolve")
+        XCTAssertEqual(object["errorDescription"] as? String, "resolve failed")
+        XCTAssertEqual(object["resolvedDescriptorsJson"] as? [String], [])
+    }
+
+    func testCalldataCaptureSuccessExportRetainsEmbeddedDescriptors() throws {
+        var capture = CalldataCapture(
+            method: "eth_sendTransaction",
+            topic: "topic",
+            requestId: "3",
+            chainId: "eip155:10",
+            rawParamsJson: nil
+        )
+        capture.outcome = .clearSigningSucceeded
+        capture.resolvedDescriptorsJson = [#"{ "metadata": { "owner": "Example" } }"#]
+        capture.selector = "0x12345678"
+
+        let object = try XCTUnwrap(exportedObject(from: capture.exportJSONString))
+        XCTAssertEqual(object["selector"] as? String, "0x12345678")
+        XCTAssertEqual((object["resolvedDescriptorsJson"] as? [String])?.count, 1)
+    }
+
+    func testTypedDataCaptureSuccessExportAllowsEmptyDescriptorList() throws {
+        var capture = TypedDataCapture(
+            method: "eth_signTypedData_v4",
+            topic: "topic",
+            requestId: "4",
+            chainId: "eip155:8453",
+            rawParamsJson: nil
+        )
+        capture.outcome = .clearSigningSucceeded
+        capture.resolvedDescriptorsJson = []
+
+        let object = try XCTUnwrap(exportedObject(from: capture.exportJSONString))
+        XCTAssertEqual(object["resolvedDescriptorsJson"] as? [String], [])
+    }
+
+    private func exportedObject(from json: String) -> [String: Any]? {
+        guard let data = json.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+}
+
 final class MockURLProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
     static private(set) var requests: [URLRequest] = []

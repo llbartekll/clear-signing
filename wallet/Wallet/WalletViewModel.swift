@@ -432,6 +432,7 @@ final class WalletViewModel: ObservableObject {
         capture.from = tx.from
         capture.value = tx.value
         capture.calldata = calldata
+        capture.selector = CalldataCapture.selectorHex(from: calldata)
         capture.outcome = .paramsExtracted
         capture.notes.append("Parsed transaction params for \(to)")
         setCurrentCalldataCapture(capture)
@@ -517,17 +518,14 @@ final class WalletViewModel: ObservableObject {
                     if let model = result.model {
                         displayModel = model
                         self.updateCurrentTypedDataCapture { current in
-                            current.applyClearSigningSuccess(model, descriptorOwners: result.descriptorOwners)
+                            current.applyClearSigningSuccess(result)
                         }
                     } else if let error = result.error {
                         requestError = error.localizedDescription
                         self.updateCurrentTypedDataCapture { current in
-                            current.applyClearSigningFailure(
-                                error: error.localizedDescription,
-                                descriptorOwners: result.descriptorOwners
-                            )
+                            current.applyClearSigningFailure(result)
                             if let stage = result.failedStage {
-                                current.notes.append("Clear signing failed during \(stage)")
+                                current.notes.append("Clear signing failed during \(stage.rawValue)")
                             }
                         }
                     }
