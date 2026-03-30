@@ -130,6 +130,29 @@ fn bytes32_word(hex_value: &str) -> [u8; 32] {
     word
 }
 
+fn assert_interpolation_warning(result: &DisplayModel, expected_detail: &str) {
+    assert!(
+        result.interpolated_intent.is_none(),
+        "expected interpolated intent to be skipped"
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("interpolated intent skipped")),
+        "missing interpolation skip warning: {:?}",
+        result.warnings
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains(expected_detail)),
+        "missing interpolation warning detail '{expected_detail}': {:?}",
+        result.warnings
+    );
+}
+
 fn domain_separator_hex(
     type_signature: &str,
     name: &str,
@@ -574,7 +597,8 @@ async fn test_separator_for_array_field() {
         "format": "raw",
         "separator": " | "
     }"#;
-    let field: clear_signing::types::display::DisplayField = serde_json::from_str(field_json).unwrap();
+    let field: clear_signing::types::display::DisplayField =
+        serde_json::from_str(field_json).unwrap();
     if let clear_signing::types::display::DisplayField::Simple { separator, .. } = &field {
         assert_eq!(separator.as_deref(), Some(" | "));
     } else {
@@ -693,7 +717,8 @@ async fn test_interoperable_address_name_deserialization() {
         "label": "To",
         "format": "interoperableAddressName"
     }"#;
-    let field: clear_signing::types::display::DisplayField = serde_json::from_str(field_json).unwrap();
+    let field: clear_signing::types::display::DisplayField =
+        serde_json::from_str(field_json).unwrap();
     if let clear_signing::types::display::DisplayField::Simple { format, .. } = &field {
         assert!(matches!(
             format.as_ref(),
@@ -1149,7 +1174,8 @@ fn test_intent_as_object() {
         .formats
         .get("transfer(address,uint256)")
         .unwrap();
-    let intent_str = clear_signing::types::display::intent_as_string(format.intent.as_ref().unwrap());
+    let intent_str =
+        clear_signing::types::display::intent_as_string(format.intent.as_ref().unwrap());
     assert_eq!(intent_str, "Action: Transfer tokens, Asset: USDC");
 }
 
@@ -4136,11 +4162,86 @@ async fn test_calldata_interpolation_placeholder_without_field_spec_errors() {
         implementation_address: None,
     };
 
-    let err = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
         .await
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("does not match any display field"));
+        .unwrap();
+    assert_eq!(result.intent, "Foo");
+    assert_interpolation_warning(&result, "does not match any display field");
+}
+
+#[tokio::test]
+async fn test_calldata_interpolation_excluded_field_skips_interpolated_intent() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "foo(uint256)": {
+                        "intent": "Foo",
+                        "interpolatedIntent": "Value {value}",
+                        "excluded": ["value"],
+                        "fields": [{ "path": "value", "label": "Value", "format": "number" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let calldata = build_calldata("foo(uint256)", &[uint_word(42)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(result.intent, "Foo");
+    assert_interpolation_warning(&result, "refers to an excluded field");
+}
+
+#[tokio::test]
+async fn test_calldata_interpolation_unresolved_value_skips_interpolated_intent() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "foo(uint256)": {
+                        "intent": "Foo",
+                        "interpolatedIntent": "Missing {missing}",
+                        "fields": [{ "path": "missing", "label": "Missing", "format": "number", "visible": "never" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let calldata = build_calldata("foo(uint256)", &[uint_word(42)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(result.intent, "Foo");
+    assert_interpolation_warning(&result, "could not be resolved from calldata");
 }
 
 #[tokio::test]
@@ -4183,15 +4284,15 @@ async fn test_eip712_interpolation_placeholder_for_calldata_field_errors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(
+    let result = format_typed_data(
         &wrap_rd(descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("non-stringable calldata field"));
+    .unwrap();
+    assert_eq!(result.intent, "Relay");
+    assert_interpolation_warning(&result, "non-stringable calldata field");
 }
 
 #[tokio::test]
@@ -4231,15 +4332,59 @@ async fn test_eip712_group_only_interpolation_path_errors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(
+    let result = format_typed_data(
         &wrap_rd(descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("does not match any display field"));
+    .unwrap();
+    assert_eq!(result.intent, "Quote");
+    assert_interpolation_warning(&result, "does not match any display field");
+}
+
+#[tokio::test]
+async fn test_eip712_interpolation_unresolved_value_skips_interpolated_intent() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Quote(uint256 amount)": {
+                        "intent": "Quote",
+                        "interpolatedIntent": "Quote {missing}",
+                        "fields": [
+                            { "path": "missing", "label": "Missing", "format": "number", "visible": "never" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Quote": [{ "name": "amount", "type": "uint256" }]
+        },
+        "primaryType": "Quote",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "amount": 1250 }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.intent, "Quote");
+    assert_interpolation_warning(&result, "could not be resolved from typed data");
 }
 
 #[tokio::test]

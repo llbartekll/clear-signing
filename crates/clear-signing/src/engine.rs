@@ -111,7 +111,13 @@ pub async fn format_calldata(
 
     let interpolated = match format.interpolated_intent.as_ref() {
         Some(template) => {
-            Some(interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await?)
+            match interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await {
+                Ok(rendered) => Some(rendered),
+                Err(err) => {
+                    warnings.push(format!("interpolated intent skipped: {err}"));
+                    None
+                }
+            }
         }
         None => None,
     };

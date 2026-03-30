@@ -200,18 +200,23 @@ pub(crate) async fn format_typed_data_with_format(
             .map(crate::types::display::intent_as_string)
             .unwrap_or_else(|| data.primary_type.clone()),
         interpolated_intent: match format.interpolated_intent.as_ref() {
-            Some(template) => Some(
-                interpolate_typed_intent(
-                    template,
-                    descriptor,
-                    &data.message,
-                    container,
-                    &expanded_fields,
-                    &format.excluded,
-                    data_provider,
-                )
-                .await?,
-            ),
+            Some(template) => match interpolate_typed_intent(
+                template,
+                descriptor,
+                &data.message,
+                container,
+                &expanded_fields,
+                &format.excluded,
+                data_provider,
+            )
+            .await
+            {
+                Ok(rendered) => Some(rendered),
+                Err(err) => {
+                    warnings.push(format!("interpolated intent skipped: {err}"));
+                    None
+                }
+            },
             None => None,
         },
         entries,
