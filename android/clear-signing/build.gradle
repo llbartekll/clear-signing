@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace 'com.clearsigning.uniffi'
+    namespace 'com.clearsigning'
     compileSdk 35
 
     defaultConfig {
@@ -24,7 +24,10 @@ android {
 
     sourceSets {
         main {
-            kotlin.srcDirs = ["${rootProject.buildDir}/generated/clear-signing/kotlin"]
+            kotlin.srcDirs = [
+                "src/main/kotlin",
+                "${rootProject.buildDir}/generated/clear-signing/kotlin",
+            ]
             jniLibs.srcDirs = ["${rootProject.buildDir}/generated/clear-signing/jniLibs"]
         }
     }

@@ -65,6 +65,19 @@ dependencies {
 }
 ```
 
+Kotlin consumers should integrate through the handwritten `com.clearsigning.ClearSigningClient`.
+
+```kotlin
+import com.clearsigning.ClearSigningClient
+
+val client = ClearSigningClient(dataProvider)
+val model = client.formatCalldata(
+    chainId = 1uL,
+    to = "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    calldataHex = "0xa9059cbb000000000000000000000000..."
+)
+```
+
 ## Recommended Release Order
 
 1. **Swift first** — the Swift workflow creates the git tag and GitHub Release
@@ -77,6 +90,7 @@ Either platform can be released independently. If only Kotlin is released, it cr
 - No credentials or secrets needed
 - On first dependency request, JitPack downloads the pre-built `.so` files from the GitHub Release
 - It runs `./gradlew assembleRelease` in the `android/` directory to build the AAR
+- The AAR bundles handwritten Kotlin SDK classes from the repo together with generated UniFFI bindings and native `.so` files
 - Build logs are visible at `jitpack.io/#llbartekll/clear-signing`
 
 ## Troubleshooting

@@ -28,3 +28,55 @@ jobs:
 
       - name: Test
         run: cargo test -p clear-signing --features uniffi,github-registry
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK + NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: sdkmanager "ndk;27.0.12077973"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build Android native libraries
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+        run: |
+          cargo ndk -t aarch64-linux-android    build --release --features uniffi,github-registry -p clear-signing
+          cargo ndk -t armv7-linux-androideabi   build --release --features uniffi,github-registry -p clear-signing
+          cargo ndk -t x86_64-linux-android      build --release --features uniffi,github-registry -p clear-signing
+
+      - name: Generate Kotlin bindings for Android build
+        run: |
+          GENERATED_DIR="android/build/generated/clear-signing"
+          mkdir -p "$GENERATED_DIR/kotlin" "$GENERATED_DIR/jniLibs/arm64-v8a" "$GENERATED_DIR/jniLibs/armeabi-v7a" "$GENERATED_DIR/jniLibs/x86_64"
+
+          cargo run -p clear-signing --features uniffi,github-registry --bin uniffi-bindgen -- generate \
+              --library target/aarch64-linux-android/release/libclear_signing.so \
+              --language kotlin --out-dir "$GENERATED_DIR/kotlin"
+
+          cp target/aarch64-linux-android/release/libclear_signing.so "$GENERATED_DIR/jniLibs/arm64-v8a/"
+          cp target/armv7-linux-androideabi/release/libclear_signing.so "$GENERATED_DIR/jniLibs/armeabi-v7a/"
+          cp target/x86_64-linux-android/release/libclear_signing.so "$GENERATED_DIR/jniLibs/x86_64/"
+
+      - name: Build and publish Android AAR locally
+        run: cd android && ./gradlew :clear-signing:assembleRelease :clear-signing:publishReleasePublicationToMavenLocal
