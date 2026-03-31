@@ -7,9 +7,11 @@ private let log = Logger(subsystem: "com.lucidumbrella.wallet", category: "Clear
 struct ClearSigningService {
 
     private let dataProvider: DataProviderFfi
+    private let client: ClearSigningClient
 
     init(dataProvider: DataProviderFfi) {
         self.dataProvider = dataProvider
+        self.client = ClearSigningClient(dataProvider: dataProvider)
     }
 
     /// Format a contract call using the ERC-7730 library.
@@ -21,20 +23,18 @@ struct ClearSigningService {
         value: String?,
         from: String?
     ) async -> Result<DisplayModel, Error> {
-        let outcome = await formatCalldataDetailed(
-            chainId: chainId,
-            to: to,
-            calldata: calldata,
-            value: value,
-            from: from
-        )
-        if let model = outcome.model {
+        do {
+            let model = try await client.formatCalldata(
+                chainId: chainId,
+                to: to,
+                calldataHex: calldata,
+                valueHex: value,
+                fromAddress: from
+            )
             return .success(model)
+        } catch {
+            return .failure(error)
         }
-        return .failure(
-            outcome.error
-                ?? NSError(domain: "ClearSigningService", code: -1, userInfo: nil)
-        )
     }
 
     func formatCalldataDetailed(
@@ -62,9 +62,12 @@ struct ClearSigningService {
             log.info(
                 "Resolving calldata descriptors to=\(to) matched=\(matchedAddress) chainId=\(chainId)"
             )
-            let descriptors = try await clearSigningResolveDescriptorsForTx(
-                transaction: tx,
-                dataProvider: dataProvider
+            let descriptors = try await client.resolveDescriptorsForTx(
+                chainId: chainId,
+                to: to,
+                calldataHex: calldata,
+                valueHex: value,
+                fromAddress: from
             )
             let descriptorOwners = descriptors.compactMap(Self.descriptorOwner)
             log.info("Resolved \(descriptors.count) calldata descriptors")
@@ -121,14 +124,12 @@ struct ClearSigningService {
     /// Resolves all descriptors (outer + nested calldata) from the GitHub registry, then formats.
     /// Automatically detects proxies via dataProvider.getImplementationAddress().
     func formatTypedData(typedDataJson: String) async -> Result<DisplayModel, Error> {
-        let outcome = await formatTypedDataDetailed(typedDataJson: typedDataJson)
-        if let model = outcome.model {
+        do {
+            let model = try await client.formatTypedData(typedDataJson: typedDataJson)
             return .success(model)
+        } catch {
+            return .failure(error)
         }
-        return .failure(
-            outcome.error
-                ?? NSError(domain: "ClearSigningService", code: -1, userInfo: nil)
-        )
     }
 
     func formatTypedDataDetailed(typedDataJson: String) async -> TypedDataFormattingOutcome {
@@ -136,9 +137,8 @@ struct ClearSigningService {
             log.info("Resolving typed-data descriptors")
             // Single call resolves outer EIP-712 descriptor + any nested calldata descriptors.
             // Automatically detects proxies via dataProvider.getImplementationAddress().
-            let descriptors = try await clearSigningResolveDescriptorsForTypedData(
-                typedDataJson: typedDataJson,
-                dataProvider: dataProvider
+            let descriptors = try await client.resolveDescriptorsForTypedData(
+                typedDataJson: typedDataJson
             )
             let descriptorOwners = descriptors.compactMap(Self.descriptorOwner)
             log.info("Resolved \(descriptors.count) typed-data descriptors")

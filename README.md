@@ -42,6 +42,28 @@ For host-only binding generation without Apple packaging, use `./scripts/generat
 
 You can consume it from local projects as product `ClearSigning`.
 
+## Swift Client
+
+The Swift package includes a handwritten `ClearSigningClient` on top of the
+generated UniFFI surface:
+
+```swift
+import ClearSigning
+
+let client = ClearSigningClient(dataProvider: myDataProvider)
+
+let model = try await client.formatCalldata(
+    chainId: 1,
+    to: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    calldataHex: "0xa9059cbb000000000000000000000000...",
+    valueHex: nil,
+    fromAddress: "0x1234..."
+)
+```
+
+For diagnostic-heavy integrations, the package also exposes public descriptor
+resolution helpers through `ClearSigningClient`.
+
 ## Run Wallet Demo
 
 1. Build XCFramework first:
