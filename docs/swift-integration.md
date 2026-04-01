@@ -36,7 +36,7 @@ Then add the `ClearSigning` product to your target dependencies.
 Current repo caveat:
 - The checked-in [Package.swift](../Package.swift) defaults to the release XCFramework URL.
 - Set `USE_LOCAL_RUST_XCFRAMEWORK=1` to make SwiftPM resolve the local XCFramework instead.
-- The checked-in `Package.swift` currently declares `.iOS(.v16)`.
+- The checked-in `Package.swift` currently declares `.iOS(.v14)`.
 - The release workflow updates the manifest URL and checksum when cutting a Swift release tag.
 
 ### Local Repo Development

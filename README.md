@@ -62,7 +62,7 @@ Android local packaging follows the same steps used in CI: build native librarie
 
 ## Repo Notes
 
-- The checked-in [Package.swift](Package.swift) defaults to the release XCFramework URL and currently declares `.iOS(.v16)`.
+- The checked-in [Package.swift](Package.swift) defaults to the release XCFramework URL and currently declares `.iOS(.v14)`.
 - Set `USE_LOCAL_RUST_XCFRAMEWORK=1` to make SwiftPM resolve the local XCFramework at `target/ios/libclear_signing.xcframework`.
 - The Swift release workflow rewrites `Package.swift` to point at the tagged release artifact and checksum during release.
 - The Android SDK consumes generated bindings and native libraries from `android/build/generated/clear-signing/`.

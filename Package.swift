@@ -12,7 +12,7 @@ private let useLocalRustXCFramework = {
 let package = Package(
     name: "ClearSigning",
     platforms: [
-        .iOS(.v16)
+        .iOS(.v14)
     ],
     products: [
         .library(name: "ClearSigning", targets: ["ClearSigning"])
