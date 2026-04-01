@@ -78,6 +78,9 @@ val model = client.formatCalldata(
 )
 ```
 
+CI also builds a separate `android-consumer-smoke/` app against the Maven-published
+artifact from `mavenLocal` to validate downstream Kotlin/Android integration.
+
 ## Recommended Release Order
 
 1. **Swift first** — the Swift workflow creates the git tag and GitHub Release
@@ -91,6 +94,8 @@ Either platform can be released independently. If only Kotlin is released, it cr
 - On first dependency request, JitPack downloads the pre-built `.so` files from the GitHub Release
 - It runs `./gradlew assembleRelease` in the `android/` directory to build the AAR
 - The AAR bundles handwritten Kotlin SDK classes from the repo together with generated UniFFI bindings and native `.so` files
+- Pull requests additionally build `android-consumer-smoke/` in CI to verify a
+  separate Android app can import the published SDK artifact
 - Build logs are visible at `jitpack.io/#llbartekll/clear-signing`
 
 ## Troubleshooting

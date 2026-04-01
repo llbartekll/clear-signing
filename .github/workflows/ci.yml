@@ -80,3 +80,6 @@ jobs:
 
       - name: Build and publish Android AAR locally
         run: cd android && ./gradlew :clear-signing:assembleRelease :clear-signing:publishReleasePublicationToMavenLocal
+
+      - name: Build Android consumer smoke app
+        run: cd android-consumer-smoke && ../android/gradlew -p . :app:assembleDebug
