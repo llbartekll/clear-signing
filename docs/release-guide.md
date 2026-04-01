@@ -40,7 +40,8 @@ What the workflow does:
 9. Creates a GitHub Release and uploads `Output/libclear_signing.xcframework.zip`.
 
 Current packaging note:
-- The checked-in `Package.swift` is local-development oriented and currently points at the local XCFramework path when `useLocal = true`.
+- The checked-in `Package.swift` defaults to the release XCFramework URL.
+- Local Swift development is enabled explicitly with `USE_LOCAL_RUST_XCFRAMEWORK=1`.
 - The release workflow is what turns the manifest into a release-consumable package definition for the tagged version.
 
 ### Consumer Shape

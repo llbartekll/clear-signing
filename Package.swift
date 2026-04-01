@@ -2,7 +2,12 @@
 import Foundation
 import PackageDescription
 
-let useLocal = true //ProcessInfo.processInfo.environment["USE_LOCAL_RUST_XCFRAMEWORK"] == "1"
+private let useLocalRustXCFramework = {
+    let value = ProcessInfo.processInfo.environment["USE_LOCAL_RUST_XCFRAMEWORK"]?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    return ["1", "true", "yes"].contains(value)
+}()
 
 let package = Package(
     name: "ClearSigning",
@@ -13,7 +18,7 @@ let package = Package(
         .library(name: "ClearSigning", targets: ["ClearSigning"])
     ],
     targets: [
-        useLocal
+        useLocalRustXCFramework
             ? .binaryTarget(
                 name: "ClearSigningRust",
                 path: "target/ios/libclear_signing.xcframework"
