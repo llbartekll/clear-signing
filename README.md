@@ -1,99 +1,65 @@
-# ERC-7730 UniFFI iOS Quickstart
+# Clear Signing SDK
 
-This repository provides:
-- Rust `clear-signing` clear-signing library
-- UniFFI Swift wrapper (`bindings/swift/clear_signing.swift`)
-- Local Swift Package (`Package.swift`) backed by an XCFramework
-- A simple iOS demo app: `wallet/`
+Rust ERC-7730 v2 clear-signing library with SDK surfaces for Swift and Kotlin.
 
-SPM/package baseline: iOS 14+.
+The repository contains:
+- A Rust engine that resolves descriptors and formats contract calldata and EIP-712 typed data into a display model.
+- A Swift package surface built on UniFFI bindings plus a handwritten `ClearSigningClient`.
+- An Android/Kotlin SDK module built on UniFFI bindings plus a handwritten `ClearSigningClient`.
+- Local demo and smoke-test consumers for validating the SDK integrations.
 
-## Prerequisites
+## What The SDK Does
 
-- macOS with Xcode installed
-- Rust toolchain (`rustup`)
-- Installed iOS Rust targets:
+- Formats calldata into a `DisplayModel` for wallet UI rendering.
+- Formats EIP-712 typed data into the same display model shape.
+- Resolves descriptors for direct calls and nested calldata flows.
+- Supports proxy-aware descriptor resolution through wallet-provided `DataProviderFfi`.
+- Delegates token, name, NFT, and block metadata lookups to the host wallet.
+
+## SDK Surfaces
+
+### Swift
+
+- Package product: `ClearSigning`
+- Integration style: Swift Package Manager
+- Main API: `ClearSigningClient`
+- Local development packaging: `target/ios/libclear_signing.xcframework`
+
+See [docs/swift-integration.md](docs/swift-integration.md).
+
+### Kotlin
+
+- Android library module: `android/clear-signing`
+- Published consumption: JitPack-backed Maven dependency
+- Main API: `com.clearsigning.ClearSigningClient`
+- Local development packaging: generated Kotlin bindings plus Android `jniLibs`
+
+See [docs/kotlin-integration.md](docs/kotlin-integration.md).
+
+## Release Docs
+
+- [docs/release-guide.md](docs/release-guide.md)
+
+## Local Development
+
+Build and test the Rust crate from repo root:
 
 ```sh
-rustup target add aarch64-apple-ios x86_64-apple-ios aarch64-apple-ios-sim
+cargo build
+cargo test
+cargo clippy -p clear-signing --all-targets --features uniffi,github-registry -- -D warnings
 ```
 
-## Build XCFramework
-
-From repository root:
-
-```sh
-./scripts/build-xcframework.sh
-```
-
-Expected output:
-- `target/ios/libclear_signing.xcframework`
-
-This script also regenerates UniFFI Swift bindings and refreshes:
-- `bindings/swift/clear_signing.swift`
-
-For host-only binding generation without Apple packaging, use `./scripts/generate_uniffi_bindings.sh`.
-
-## Use via Local SPM
-
-`Package.swift` defines:
-- binary target: `target/ios/libclear_signing.xcframework`
-- Swift wrapper target in `bindings/swift`
-
-You can consume it from local projects as product `ClearSigning`.
-
-## Swift Client
-
-The Swift package includes a handwritten `ClearSigningClient` on top of the
-generated UniFFI surface:
-
-```swift
-import ClearSigning
-
-let client = ClearSigningClient(dataProvider: myDataProvider)
-
-let model = try await client.formatCalldata(
-    chainId: 1,
-    to: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-    calldataHex: "0xa9059cbb000000000000000000000000...",
-    valueHex: nil,
-    fromAddress: "0x1234..."
-)
-```
-
-For diagnostic-heavy integrations, the package also exposes public descriptor
-resolution helpers through `ClearSigningClient`.
-
-## Run Wallet Demo
-
-1. Build XCFramework first:
+Swift local packaging:
 
 ```sh
 ./scripts/build-xcframework.sh
 ```
 
-2. Open the demo project:
+Android local packaging follows the same steps used in CI: build native libraries, generate Kotlin bindings, then assemble/publish the Android artifact. See the Kotlin integration guide for the exact local flow.
 
-```sh
-open wallet/Wallet.xcodeproj
-```
+## Repo Notes
 
-3. Build and run scheme `Wallet` on iOS simulator.
-4. Tap **Run smoke test**. You should see an `OK:` status with formatted intent.
-
-## Collision-Safety Note (Modulemap)
-
-`build-xcframework.sh` stages FFI headers/modulemap under namespaced directories:
-- `Headers/clearSigningFFI/module.modulemap`
-
-This avoids flat `Headers/module.modulemap` collisions when multiple Rust XCFrameworks are present in the same app.
-
-## Troubleshooting
-
-- `No such module 'ClearSigning'`:
-  - Run `./scripts/build-xcframework.sh` first.
-  - Resolve package dependencies again in Xcode.
-- Missing Rust iOS targets:
-  - Run the `rustup target add ...` command from prerequisites.
-- Module/header conflicts with other native libs:
-  - Ensure XCFramework was produced by `scripts/build-xcframework.sh` (namespaced header staging).
+- The checked-in [Package.swift](Package.swift) is currently configured for local XCFramework development and currently declares `.iOS(.v16)`.
+- The Swift release workflow rewrites `Package.swift` to point at the tagged release artifact and checksum during release.
+- The Android SDK consumes generated bindings and native libraries from `android/build/generated/clear-signing/`.

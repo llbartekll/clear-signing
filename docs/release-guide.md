@@ -1,122 +1,138 @@
 # Release Guide
 
-Both iOS (Swift/SPM) and Android (Kotlin/Maven) releases are automated via GitHub Actions workflows with manual dispatch.
+This document describes the current release workflows as implemented in:
+- [.github/workflows/release-swift.yml](../.github/workflows/release-swift.yml)
+- [.github/workflows/release-kotlin.yml](../.github/workflows/release-kotlin.yml)
 
-## Versioning
+It intentionally documents the repo as it exists today, including the distinction between local development packaging and published release packaging.
 
-Both platforms share the same semver version (e.g. `0.1.0`). Release Swift first when releasing both platforms.
+## Shared Versioning
 
-## iOS (Swift/SPM)
+- Swift and Kotlin releases use the same semver tag, such as `0.1.0`.
+- The Swift workflow creates the git tag.
+- The Kotlin workflow uploads Android artifacts to the GitHub Release for that tag.
 
-### How to release
+Recommended order:
+1. Run the Swift release workflow first.
+2. Run the Kotlin release workflow second.
 
-1. Go to **Actions → Release Swift (iOS) → Run workflow**
-2. Enter the version (e.g. `0.1.0`)
-3. The workflow:
-   - Builds the XCFramework (arm64 device + arm64/x86_64 simulator)
-   - Zips it and computes the Swift package checksum
-   - Updates `Package.swift` with the new URL and checksum
-   - Commits and pushes to main
-   - Creates a git tag
-   - Creates a GitHub Release with the XCFramework zip attached
+## Swift Release
 
-### Consumer integration
+Workflow:
+- `Release Swift (iOS)`
+- Trigger: manual `workflow_dispatch`
+- Input: `version`
 
-```swift
-// Package.swift
-.package(url: "https://github.com/llbartekll/clear-signing", from: "0.1.0")
-```
+What the workflow does:
+1. Checks out the repo with full git history.
+2. Installs the Rust toolchain with Apple targets:
+   - `aarch64-apple-ios`
+   - `x86_64-apple-ios`
+   - `aarch64-apple-ios-sim`
+3. Runs [scripts/build-xcframework.sh](../scripts/build-xcframework.sh).
+4. Zips `target/ios/libclear_signing.xcframework` into `Output/libclear_signing.xcframework.zip`.
+5. Computes the Swift package checksum with `swift package compute-checksum`.
+6. Rewrites [Package.swift](../Package.swift):
+   - release URL changed to `/download/<version>/libclear_signing.xcframework.zip`
+   - `checksum` updated to the newly computed value
+7. Commits the `Package.swift` change to `main`.
+8. Creates and pushes the git tag.
+9. Creates a GitHub Release and uploads `Output/libclear_signing.xcframework.zip`.
 
-### Local development
+Current packaging note:
+- The checked-in `Package.swift` is local-development oriented and currently points at the local XCFramework path when `useLocal = true`.
+- The release workflow is what turns the manifest into a release-consumable package definition for the tagged version.
 
-Use the local XCFramework instead of the remote one:
+### Consumer Shape
 
-```sh
-USE_LOCAL_RUST_XCFRAMEWORK=1 swift build
-```
+Swift consumers integrate through the `ClearSigning` package product from the tagged repository release.
 
-## Android (Kotlin/Maven via JitPack)
+### Local Development vs Release
 
-### How to release
+Local development:
+- Build the XCFramework locally with `./scripts/build-xcframework.sh`.
+- The package resolves against `target/ios/libclear_signing.xcframework`.
 
-1. Go to **Actions → Release Kotlin (Android) → Run workflow**
-2. Enter the version (e.g. `0.1.0`)
-3. The workflow:
-   - Cross-compiles native `.so` files for arm64-v8a, armeabi-v7a, x86_64
-   - Generates Kotlin bindings via uniffi-bindgen
-   - Strips debug symbols from `.so` files
-   - Uploads `kotlin-artifacts.zip` to the GitHub Release
+Published release:
+- Use the tagged repository version after the workflow has updated `Package.swift` and attached the XCFramework zip to the GitHub Release.
 
-4. JitPack builds automatically on first consumer request, or trigger manually at `jitpack.io/#llbartekll/clear-signing`
+## Kotlin Release
 
-### Consumer integration
+Workflow:
+- `Release Kotlin (Android)`
+- Trigger: manual `workflow_dispatch`
+- Input: `version`
+
+What the workflow does:
+1. Checks out the repo.
+2. Installs the Rust toolchain with Android targets:
+   - `aarch64-linux-android`
+   - `armv7-linux-androideabi`
+   - `x86_64-linux-android`
+3. Installs Java 17 and the Android SDK/NDK.
+4. Installs `cargo-ndk`.
+5. Builds `libclear_signing.so` for the three Android targets.
+6. Generates Kotlin UniFFI bindings from the Android `.so` into `kotlin-bindings/`.
+7. Strips the Android shared libraries.
+8. Arranges release artifacts into:
+   - `libs/arm64-v8a/`
+   - `libs/armeabi-v7a/`
+   - `libs/x86_64/`
+   - `kotlin-bindings/`
+9. Packages those files into `kotlin-artifacts.zip`.
+10. Uploads `kotlin-artifacts.zip` to the GitHub Release for the specified tag.
+
+### Consumer Shape
+
+Android consumers currently integrate through JitPack:
 
 ```groovy
-// settings.gradle
 dependencyResolutionManagement {
     repositories {
         maven { url 'https://jitpack.io' }
     }
 }
 
-// build.gradle
 dependencies {
     implementation 'com.github.llbartekll:clear-signing:0.1.0'
 }
 ```
 
-Kotlin consumers should integrate through the handwritten `com.clearsigning.ClearSigningClient`.
+Current model:
+- The GitHub Release stores `kotlin-artifacts.zip`.
+- JitPack builds the Android artifact from the repo and release assets on first consumer request.
+- The Android library surface is the handwritten `com.clearsigning.ClearSigningClient` plus types exposed from `android/clear-signing`.
 
-```kotlin
-import com.clearsigning.ClearSigningClient
+### Local Development vs Release
 
-val client = ClearSigningClient(dataProvider)
-val model = client.formatCalldata(
-    chainId = 1uL,
-    to = "0xdAC17F958D2ee523a2206206994597C13D831ec7",
-    calldataHex = "0xa9059cbb000000000000000000000000..."
-)
+Local development:
+- Use the same generated-artifact flow as CI, targeting `android/build/generated/clear-signing/`.
+- Then run:
+
+```sh
+cd android
+./gradlew :clear-signing:assembleRelease :clear-signing:publishReleasePublicationToMavenLocal
 ```
 
-CI also builds a separate `android-consumer-smoke/` app against the Maven-published
-artifact from `mavenLocal` to validate downstream Kotlin/Android integration.
-
-## Recommended Release Order
-
-1. **Swift first** — the Swift workflow creates the git tag and GitHub Release
-2. **Kotlin second** — uploads artifacts to the existing release
-
-Either platform can be released independently. If only Kotlin is released, it creates its own release (JitPack works from the release asset, not the tag content).
-
-## How JitPack Works
-
-- No credentials or secrets needed
-- On first dependency request, JitPack downloads the pre-built `.so` files from the GitHub Release
-- It runs `./gradlew assembleRelease` in the `android/` directory to build the AAR
-- The AAR bundles handwritten Kotlin SDK classes from the repo together with generated UniFFI bindings and native `.so` files
-- Pull requests additionally build `android-consumer-smoke/` in CI to verify a
-  separate Android app can import the published SDK artifact
-- Build logs are visible at `jitpack.io/#llbartekll/clear-signing`
+Published release:
+- Use the GitHub Release tag plus the JitPack dependency coordinate.
 
 ## Troubleshooting
 
-### Swift workflow fails mid-release
+### Swift Workflow Fails
 
-- If it fails **before** the tag is created: fix and re-run, no cleanup needed
-- If it fails **after** the tag: delete the tag (`git push --delete origin VERSION && git tag -d VERSION`), delete the draft release on GitHub, then re-run
+- If the workflow fails before the tag is pushed, fix the issue and rerun.
+- If the workflow fails after pushing the tag or creating the release, clean up the tag/release before rerunning so the workflow can recreate them cleanly.
+- If the XCFramework zip is missing or the checksum is wrong, inspect the `Build XCFramework`, `Zip XCFramework`, and `Compute checksum` steps.
 
-### Kotlin workflow fails
+### Kotlin Workflow Fails
 
-- Re-run the workflow — it uploads to the existing release (or creates one if needed)
-- If the release asset already exists, delete it from the GitHub Release page first
+- Verify the Android NDK installation succeeded and `cargo-ndk` built all three targets.
+- If `kotlin-artifacts.zip` already exists on the GitHub Release, delete the existing asset before rerunning the workflow.
+- If binding generation fails, inspect the `Generate Kotlin bindings` step and verify the Android `.so` exists at the expected target path.
 
-### JitPack build fails
+### JitPack Build Fails
 
-- Check logs at `jitpack.io/#llbartekll/clear-signing` → select version → click "Log"
-- Common issues: JDK version mismatch, missing artifacts zip, Gradle configuration errors
-- To rebuild: delete the version on JitPack and re-request
-
-### Cache invalidation
-
-- Rust builds are cached via `Swatinem/rust-cache@v2` — cache is keyed by `Cargo.lock`
-- To force a clean build, bump the cache key or clear the Actions cache
+- Inspect the build logs on JitPack for the requested version.
+- Confirm the GitHub Release for that tag includes `kotlin-artifacts.zip`.
+- Confirm the Android Gradle module still expects generated sources and `jniLibs` in the paths used by the repo workflows.

@@ -1,0 +1,234 @@
+# Swift Integration
+
+This guide covers the checked-in Swift SDK surface exposed by the `ClearSigning` package.
+
+The primary integration API is the handwritten [bindings/swift/ClearSigningClient.swift](../bindings/swift/ClearSigningClient.swift), which wraps descriptor resolution and formatting around the generated UniFFI layer.
+
+## What You Integrate
+
+Import the package product:
+
+```swift
+import ClearSigning
+```
+
+App-facing types:
+- `ClearSigningClient`
+- `DataProviderFfi`
+- `DisplayModel`
+- `TokenMetaFfi`
+- `FfiError`
+
+## Install The SDK
+
+### Published Consumption
+
+Tagged releases are consumed as a Swift package from the repository URL:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/llbartekll/clear-signing", from: "0.1.0")
+]
+```
+
+Then add the `ClearSigning` product to your target dependencies.
+
+Current repo caveat:
+- The checked-in [Package.swift](../Package.swift) is currently configured for local XCFramework development with `useLocal = true`.
+- The checked-in `Package.swift` currently declares `.iOS(.v16)`.
+- The release workflow updates the manifest URL and checksum when cutting a Swift release tag.
+
+### Local Repo Development
+
+Build the local XCFramework first:
+
+```sh
+./scripts/build-xcframework.sh
+```
+
+That script:
+- Builds `target/ios/libclear_signing.xcframework`
+- Regenerates `bindings/swift/clear_signing.swift`
+
+The local package target then resolves against the XCFramework at:
+- `target/ios/libclear_signing.xcframework`
+
+## Integration Flow
+
+Typical app flow:
+1. Implement `DataProviderFfi`.
+2. Create `ClearSigningClient(dataProvider:)`.
+3. Call `formatCalldata(...)` or `formatTypedData(...)`.
+4. Render the returned `DisplayModel`.
+
+The client performs descriptor resolution before formatting:
+- `formatCalldata(...)` resolves transaction descriptors, including nested calldata descriptors when needed.
+- `formatTypedData(...)` resolves typed-data descriptors, including nested calldata descriptors when needed.
+- Proxy detection is delegated to your `DataProviderFfi.getImplementationAddress(...)`.
+
+## Implement DataProviderFfi
+
+`DataProviderFfi` is the wallet-owned callback surface. The SDK calls it synchronously across the FFI boundary whenever it needs metadata that only the host app can provide.
+
+Skeleton only:
+
+This sketch is intentionally illustrative and omits concrete return statements.
+
+```swift
+import ClearSigning
+
+final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
+    func resolveToken(chainId: UInt64, address: String) -> TokenMetaFfi? {
+        // Return token symbol, decimals, and name for this contract address.
+        // Use wallet caches or RPC-backed metadata if you have it.
+    }
+
+    func resolveEnsName(address: String, chainId: UInt64, types: [String]?) -> String? {
+        // Return an ENS or other remote name for this address when available.
+        // Return nil when the wallet cannot resolve a name.
+    }
+
+    func resolveLocalName(address: String, chainId: UInt64, types: [String]?) -> String? {
+        // Return a wallet-local contact or account label for this address.
+        // Return nil when no local label exists.
+    }
+
+    func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -> String? {
+        // Return the NFT collection name for this contract address.
+        // Return nil when unknown.
+    }
+
+    func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64) -> UInt64? {
+        // Return the block timestamp for date-format rendering that depends on block numbers.
+        // Return nil when the wallet cannot look it up.
+    }
+
+    func getImplementationAddress(chainId: UInt64, address: String) -> String? {
+        // Return the proxy implementation address when this contract is a supported proxy.
+        // Return nil for non-proxies or when proxy detection is unavailable.
+    }
+}
+```
+
+Callback contract:
+- `resolveToken`: used for token amount formatting and symbol/decimals/name display.
+- `resolveEnsName`: used for remote address naming, such as ENS-style labels.
+- `resolveLocalName`: used for wallet-local labels, address book entries, or “My Wallet”-style naming.
+- `resolveNftCollectionName`: used when the descriptor wants a collection label for an NFT contract.
+- `resolveBlockTimestamp`: used when descriptor rendering needs a block number converted to time.
+- `getImplementationAddress`: used for proxy-aware descriptor resolution when `tx.to` does not directly match a descriptor.
+
+## Use ClearSigningClient
+
+### Initialize The Client
+
+```swift
+let provider = WalletMetadataProvider()
+let client = ClearSigningClient(dataProvider: provider)
+```
+
+### Format Calldata
+
+```swift
+let model = try await client.formatCalldata(
+    chainId: 1,
+    to: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    calldataHex: "0xa9059cbb000000000000000000000000...",
+    valueHex: nil,
+    fromAddress: "0x1234..."
+)
+```
+
+Method behavior:
+- Builds a `TransactionInput`
+- Resolves descriptors for the transaction
+- Formats the transaction into `DisplayModel`
+
+Parameters:
+- `chainId`: target EVM chain ID
+- `to`: destination contract address
+- `calldataHex`: calldata as `0x`-prefixed hex
+- `valueHex`: optional `0x`-prefixed native token value
+- `fromAddress`: optional sender address for sender-aware rendering
+
+### Format Typed Data
+
+```swift
+let model = try await client.formatTypedData(
+    typedDataJson: typedDataJson
+)
+```
+
+Method behavior:
+- Resolves descriptors for the typed data payload
+- Formats the typed data into `DisplayModel`
+
+### Resolve Descriptors For A Transaction
+
+```swift
+let descriptors = try await client.resolveDescriptorsForTx(
+    chainId: 1,
+    to: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+    calldataHex: "0xa9059cbb000000000000000000000000...",
+    valueHex: nil,
+    fromAddress: nil
+)
+```
+
+Use this when your app wants visibility into the resolved descriptor set before formatting.
+
+### Resolve Descriptors For Typed Data
+
+```swift
+let descriptors = try await client.resolveDescriptorsForTypedData(
+    typedDataJson: typedDataJson
+)
+```
+
+Use this when your app wants descriptor diagnostics or staged formatting flows for typed data.
+
+## Returned Types
+
+### DisplayModel
+
+`DisplayModel` is the SDK output you render in wallet UI.
+
+Important fields:
+- `intent`: descriptor-defined intent label
+- `interpolatedIntent`: optional resolved intent string with interpolated values
+- `entries`: structured display entries for list/group/nested rendering
+- `warnings`: non-fatal rendering warnings
+- `owner`: descriptor owner metadata when present
+
+### TokenMetaFfi
+
+`TokenMetaFfi` is the token metadata record returned from `resolveToken(...)`.
+
+Fields:
+- `symbol`
+- `decimals`
+- `name`
+
+## Error Shape
+
+Swift client methods throw `FfiError`.
+
+Current error families include:
+- `InvalidDescriptorJson`
+- `InvalidTypedDataJson`
+- `InvalidCalldataHex`
+- `InvalidValueHex`
+- `Decode`
+- `Descriptor`
+- `Resolve`
+- `TokenRegistry`
+- `Render`
+
+Treat these as SDK-level failures from descriptor parsing, resolution, decoding, or rendering.
+
+## Related Paths
+
+- [bindings/swift/ClearSigningClient.swift](../bindings/swift/ClearSigningClient.swift)
+- [bindings/swift/clear_signing.swift](../bindings/swift/clear_signing.swift)
+- [Package.swift](../Package.swift)
+- [wallet/Wallet/Services/WalletMetadataProvider.swift](../wallet/Wallet/Services/WalletMetadataProvider.swift)
