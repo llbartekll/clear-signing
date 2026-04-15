@@ -8,6 +8,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 
 use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::error::Error;
+use crate::outcome::RenderState;
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
@@ -34,7 +35,6 @@ pub struct DisplayModel {
     pub intent: String,
     pub interpolated_intent: Option<String>,
     pub entries: Vec<DisplayEntry>,
-    pub warnings: Vec<String>,
     /// Owner of the descriptor that produced this model (from `metadata.owner`).
     pub owner: Option<String>,
 }
@@ -53,7 +53,6 @@ pub enum DisplayEntry {
         label: String,
         intent: String,
         entries: Vec<DisplayEntry>,
-        warnings: Vec<String>,
     },
 }
 
@@ -85,7 +84,8 @@ struct RenderContext<'a> {
 /// Format calldata into a display model using a descriptor.
 ///
 /// `descriptors` provides pre-resolved inner descriptors for nested calldata support.
-pub async fn format_calldata(
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn format_calldata(
     descriptor: &Descriptor,
     chain_id: u64,
     _to: &str,
@@ -93,6 +93,7 @@ pub async fn format_calldata(
     _value: Option<&[u8]>,
     data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
+    state: &mut RenderState,
 ) -> Result<DisplayModel, Error> {
     // Find matching format by function name + signature
     let format = find_format(descriptor, &decoded.function_name, &decoded.selector)?;
@@ -107,8 +108,9 @@ pub async fn format_calldata(
     };
 
     let mut warnings = Vec::new();
+    let mut nested_fallback = false;
     let expanded_fields = expand_display_fields(descriptor, &format.fields, &mut warnings);
-    let entries = render_fields(&ctx, &expanded_fields, &mut warnings).await?;
+    let entries = render_fields(&ctx, &expanded_fields, &mut warnings, &mut nested_fallback).await?;
 
     let interpolated = match format.interpolated_intent.as_ref() {
         Some(template) => {
@@ -123,7 +125,7 @@ pub async fn format_calldata(
         None => None,
     };
 
-    Ok(DisplayModel {
+    let model = DisplayModel {
         intent: format
             .intent
             .as_ref()
@@ -131,9 +133,15 @@ pub async fn format_calldata(
             .unwrap_or_else(|| decoded.function_name.clone()),
         interpolated_intent: interpolated,
         entries,
-        warnings,
         owner: descriptor.metadata.owner.clone(),
-    })
+    };
+
+    record_warnings(state, &warnings);
+    if nested_fallback {
+        state.mark_nested_fallback();
+    }
+
+    Ok(model)
 }
 
 /// Find the display format matching the decoded function.
@@ -186,6 +194,7 @@ fn render_fields<'a>(
     ctx: &'a RenderContext<'a>,
     fields: &[DisplayField],
     warnings: &'a mut Vec<String>,
+    nested_fallback: &'a mut bool,
 ) -> Pin<Box<dyn Future<Output = Result<Vec<DisplayEntry>, Error>> + Send + 'a>> {
     let fields = fields.to_vec();
     Box::pin(async move {
@@ -194,7 +203,10 @@ fn render_fields<'a>(
         for field in &fields {
             match field {
                 DisplayField::Group { field_group } => {
-                    entries.extend(render_field_group_entries(ctx, field_group, warnings).await?);
+                    entries.extend(
+                        render_field_group_entries(ctx, field_group, warnings, nested_fallback)
+                            .await?,
+                    );
                 }
                 DisplayField::Simple {
                     path,
@@ -270,8 +282,15 @@ fn render_fields<'a>(
 
                     // Intercept calldata format — produces a Nested entry instead of a flat value
                     if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
-                        let entry =
-                            render_calldata_field(ctx, &value, params.as_ref(), label).await?;
+                        let entry = render_calldata_field(
+                            ctx,
+                            &value,
+                            params.as_ref(),
+                            label,
+                            warnings,
+                            nested_fallback,
+                        )
+                        .await?;
                         entries.push(entry);
                         continue;
                     }
@@ -326,11 +345,12 @@ fn render_group_field_kind<'a>(
     ctx: &'a RenderContext<'a>,
     field: &'a DisplayField,
     warnings: &'a mut Vec<String>,
+    nested_fallback: &'a mut bool,
 ) -> Pin<Box<dyn Future<Output = Result<GroupRenderKind, Error>> + Send + 'a>> {
     Box::pin(async move {
         match field {
             DisplayField::Group { field_group } => {
-                render_group_kind(ctx, field_group, warnings).await
+                render_group_kind(ctx, field_group, warnings, nested_fallback).await
             }
             DisplayField::Simple {
                 path,
@@ -368,8 +388,15 @@ fn render_group_field_kind<'a>(
                             let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata))
                             {
                                 flatten_display_entry(
-                                    render_calldata_field(ctx, &val, params.as_ref(), label)
-                                        .await?,
+                                    render_calldata_field(
+                                        ctx,
+                                        &val,
+                                        params.as_ref(),
+                                        label,
+                                        warnings,
+                                        nested_fallback,
+                                    )
+                                    .await?,
                                 )
                             } else {
                                 vec![DisplayItem {
@@ -400,7 +427,15 @@ fn render_group_field_kind<'a>(
 
                 if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
                     return Ok(GroupRenderKind::Scalar(flatten_display_entry(
-                        render_calldata_field(ctx, &value, params.as_ref(), label).await?,
+                        render_calldata_field(
+                            ctx,
+                            &value,
+                            params.as_ref(),
+                            label,
+                            warnings,
+                            nested_fallback,
+                        )
+                        .await?,
                     )));
                 }
 
@@ -430,11 +465,14 @@ fn render_group_kind<'a>(
     ctx: &'a RenderContext<'a>,
     group: &'a FieldGroup,
     warnings: &'a mut Vec<String>,
+    nested_fallback: &'a mut bool,
 ) -> Pin<Box<dyn Future<Output = Result<GroupRenderKind, Error>> + Send + 'a>> {
     Box::pin(async move {
         let mut child_kinds = Vec::new();
         for field in &group.fields {
-            child_kinds.push(render_group_field_kind(ctx, field, warnings).await?);
+            child_kinds.push(
+                render_group_field_kind(ctx, field, warnings, nested_fallback).await?,
+            );
         }
 
         match group.iteration {
@@ -496,8 +534,9 @@ async fn render_field_group_entries<'a>(
     ctx: &'a RenderContext<'a>,
     group: &FieldGroup,
     warnings: &'a mut Vec<String>,
+    nested_fallback: &'a mut bool,
 ) -> Result<Vec<DisplayEntry>, Error> {
-    let rendered = render_group_kind(ctx, group, warnings).await?;
+    let rendered = render_group_kind(ctx, group, warnings, nested_fallback).await?;
     match rendered {
         GroupRenderKind::Scalar(items) => {
             if items.is_empty() {
@@ -1324,6 +1363,8 @@ async fn render_calldata_field(
     val: &Option<ArgumentValue>,
     params: Option<&FormatParams>,
     label: &str,
+    warnings: &mut Vec<String>,
+    nested_fallback: &mut bool,
 ) -> Result<DisplayEntry, Error> {
     // Extract bytes from value
     let inner_calldata = match val {
@@ -1333,6 +1374,8 @@ async fn render_calldata_field(
                 .as_ref()
                 .map(format_raw)
                 .unwrap_or_else(|| "<unresolved>".to_string());
+            warnings.push("calldata field is not bytes".to_string());
+            *nested_fallback = true;
             return Ok(DisplayEntry::Nested {
                 label: label.to_string(),
                 intent: "Unknown".to_string(),
@@ -1340,13 +1383,17 @@ async fn render_calldata_field(
                     label: "Raw data".to_string(),
                     value: raw,
                 })],
-                warnings: vec!["calldata field is not bytes".to_string()],
             });
         }
     };
 
     // Check depth limit
     if ctx.depth >= MAX_CALLDATA_DEPTH {
+        warnings.push(format!(
+            "nested calldata depth limit ({}) reached",
+            MAX_CALLDATA_DEPTH
+        ));
+        *nested_fallback = true;
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
@@ -1354,10 +1401,6 @@ async fn render_calldata_field(
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(inner_calldata)),
             })],
-            warnings: vec![format!(
-                "nested calldata depth limit ({}) reached",
-                MAX_CALLDATA_DEPTH
-            )],
         });
     }
 
@@ -1365,6 +1408,8 @@ async fn render_calldata_field(
         Some(addr) => addr,
         None => {
             // No callee — return raw preview
+            warnings.push("nested calldata callee could not be resolved".to_string());
+            *nested_fallback = true;
             return Ok(build_raw_nested(label, inner_calldata));
         }
     };
@@ -1376,6 +1421,8 @@ async fn render_calldata_field(
     let normalized_calldata = normalized_nested_calldata(inner_calldata, selector_override);
 
     if normalized_calldata.len() < 4 {
+        warnings.push("inner calldata too short".to_string());
+        *nested_fallback = true;
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
@@ -1383,7 +1430,6 @@ async fn render_calldata_field(
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(inner_calldata)),
             })],
-            warnings: vec!["inner calldata too short".to_string()],
         });
     }
 
@@ -1397,6 +1443,8 @@ async fn render_calldata_field(
     let inner_descriptor = match inner_descriptor {
         Some(rd) => &rd.descriptor,
         None => {
+            warnings.push("No matching descriptor for inner call".to_string());
+            *nested_fallback = true;
             return Ok(build_raw_nested(label, inner_calldata));
         }
     };
@@ -1409,6 +1457,8 @@ async fn render_calldata_field(
         match crate::find_matching_signature(inner_descriptor, &actual_selector) {
             Ok(result) => result,
             Err(_) => {
+                warnings.push("No matching descriptor for inner call".to_string());
+                *nested_fallback = true;
                 return Ok(build_raw_nested(label, inner_calldata));
             }
         };
@@ -1417,6 +1467,8 @@ async fn render_calldata_field(
     let mut decoded = match crate::decoder::decode_calldata(&sig, &normalized_calldata) {
         Ok(d) => d,
         Err(_) => {
+            warnings.push("inner calldata could not be decoded".to_string());
+            *nested_fallback = true;
             return Ok(build_raw_nested(label, inner_calldata));
         }
     };
@@ -1435,6 +1487,8 @@ async fn render_calldata_field(
         match find_format(inner_descriptor, &decoded.function_name, &decoded.selector) {
             Ok(f) => f,
             Err(_) => {
+                warnings.push("No matching descriptor for inner call".to_string());
+                *nested_fallback = true;
                 return Ok(build_raw_nested(label, inner_calldata));
             }
         };
@@ -1450,7 +1504,15 @@ async fn render_calldata_field(
 
     let mut inner_warnings = Vec::new();
     let inner_entries =
-        render_fields(&inner_ctx, &inner_format.fields, &mut inner_warnings).await?;
+        render_fields(
+            &inner_ctx,
+            &inner_format.fields,
+            &mut inner_warnings,
+            nested_fallback,
+        )
+        .await?;
+
+    warnings.extend(inner_warnings);
 
     let intent = inner_format
         .intent
@@ -1462,7 +1524,6 @@ async fn render_calldata_field(
         label: label.to_string(),
         intent,
         entries: inner_entries,
-        warnings: inner_warnings,
     })
 }
 
@@ -1492,7 +1553,6 @@ pub(crate) fn build_raw_nested(label: &str, calldata: &[u8]) -> DisplayEntry {
         label: label.to_string(),
         intent: format!("Unknown function {}", selector),
         entries,
-        warnings: vec!["No matching descriptor for inner call".to_string()],
     }
 }
 
@@ -2122,6 +2182,40 @@ async fn resolve_and_format_for_interpolation(
         &mut warnings,
     )
     .await
+}
+
+pub(crate) fn record_warnings(state: &mut RenderState, warnings: &[String]) {
+    for warning in warnings {
+        state.warn(warning_code(warning), warning.clone());
+    }
+}
+
+pub(crate) fn warning_code(message: &str) -> &str {
+    if message.starts_with("interpolated intent skipped") {
+        "interpolated_intent_skipped"
+    } else if message.starts_with("unresolved reference") {
+        "definition_reference_unresolved"
+    } else if message.starts_with("could not resolve path") {
+        "value_unresolved"
+    } else if message.starts_with("token metadata not found") {
+        "token_metadata_not_found"
+    } else if message == "token ticker not found" {
+        "token_ticker_not_found"
+    } else if message.starts_with("no collection address for nftName") {
+        "nft_collection_address_missing"
+    } else if message.starts_with("NFT collection not found") {
+        "nft_collection_name_not_found"
+    } else if message.starts_with("nested calldata") || message.starts_with("inner calldata") {
+        "nested_calldata_degraded"
+    } else if message == "No matching descriptor for inner call" {
+        "nested_descriptor_not_found"
+    } else if message == "calldata field is not bytes" {
+        "nested_calldata_invalid_type"
+    } else if message == "interoperableAddressName: falling back to addressName" {
+        "interoperable_address_name_fallback"
+    } else {
+        "render_warning"
+    }
 }
 
 #[cfg(test)]

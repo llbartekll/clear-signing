@@ -236,7 +236,7 @@ async fn wallet_batch_mixed_known_unknown() {
 
     // Known call: full formatting with intent and token amounts
     assert_eq!(known_result.intent, "Transfer tokens");
-    assert!(known_result.warnings.is_empty());
+    assert!(known_result.diagnostics().is_empty());
     if let DisplayEntry::Item(ref item) = known_result.entries[1] {
         assert_eq!(item.value, "2 USDC");
     } else {
@@ -250,8 +250,8 @@ async fn wallet_batch_mixed_known_unknown() {
         unknown_result.intent
     );
     assert!(
-        !unknown_result.warnings.is_empty(),
-        "expected warnings for unknown selector"
+        unknown_result.fallback_reason().is_some(),
+        "expected fallback for unknown selector"
     );
 
     // Wallet can still compose both into a batch summary

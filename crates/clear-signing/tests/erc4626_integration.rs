@@ -112,7 +112,7 @@ async fn leadblock_deposit() {
         get_entry_value(&result, "Send shares to"),
         "0x4a9fFDBc1c8d6aAbAfce2b6AFED90E714487ea74"
     );
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }
 
 #[tokio::test]
@@ -141,7 +141,7 @@ async fn leadblock_mint() {
         get_entry_value(&result, "Mint shares to"),
         "0x000000000000000000000000000000000000dEaD"
     );
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }
 
 #[tokio::test]
@@ -173,7 +173,7 @@ async fn leadblock_withdraw() {
         get_entry_value(&result, "Owner"),
         "0x8379bD16381620914d8fA3d535F6Ca9eF23ece53"
     );
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }
 
 #[tokio::test]
@@ -201,7 +201,7 @@ async fn leadblock_redeem() {
         get_entry_value(&result, "To"),
         "0xe0A68A5650C72f2d65B8B5de386234420B90Afed"
     );
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }
 
 // --- Yield.xyz USDe vault tests ---
@@ -228,7 +228,7 @@ async fn yieldxyz_deposit() {
     assert_eq!(result.owner.as_deref(), Some("Yield.xyz"));
     assert_eq!(get_entry_value(&result, "Deposit asset"), "100 USDe");
     assert_eq!(get_entry_value(&result, "Share ticker"), "stk-USDe");
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }
 
 #[tokio::test]
@@ -257,5 +257,5 @@ async fn yieldxyz_redeem() {
         get_entry_value(&result, "To"),
         "0x36272F3569DaF11Bb4464354cC136Acd9ecA1D2B"
     );
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }

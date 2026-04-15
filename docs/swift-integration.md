@@ -15,9 +15,13 @@ import ClearSigning
 App-facing types:
 - `ClearSigningClient`
 - `DataProviderFfi`
+- `FormatOutcome`
+- `FormatFailure`
+- `DescriptorResolutionOutcome`
+- `FormatDiagnostic`
+- `FallbackReason`
 - `DisplayModel`
 - `TokenMetaFfi`
-- `FfiError`
 
 ## Install The SDK
 
@@ -68,12 +72,13 @@ Typical app flow:
 1. Implement `DataProviderFfi`.
 2. Create `ClearSigningClient(dataProvider:)`.
 3. Call `formatCalldata(...)` or `formatTypedData(...)`.
-4. Render the returned `DisplayModel`.
+4. Switch on `FormatOutcome` and render either clear-signed or degraded UI.
 
 The client performs descriptor resolution before formatting:
 - `formatCalldata(...)` resolves transaction descriptors, including nested calldata descriptors when needed.
 - `formatTypedData(...)` resolves typed-data descriptors, including nested calldata descriptors when needed.
 - Proxy detection is delegated to your `DataProviderFfi.getImplementationAddress(...)`.
+- Missing token/name/NFT metadata stays best-effort and surfaces as diagnostics, not hard failures.
 
 ## Implement DataProviderFfi
 
@@ -139,19 +144,27 @@ let client = ClearSigningClient(dataProvider: provider)
 ### Format Calldata
 
 ```swift
-let model = try await client.formatCalldata(
+let outcome = try await client.formatCalldata(
     chainId: 1,
     to: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     calldataHex: "0xa9059cbb000000000000000000000000...",
     valueHex: nil,
     fromAddress: "0x1234..."
 )
+
+switch outcome {
+case .clearSigned(let model, let diagnostics):
+    renderTrusted(model: model, diagnostics: diagnostics)
+
+case .fallback(let model, let reason, let diagnostics):
+    renderGeneric(model: model, reason: reason, diagnostics: diagnostics)
+}
 ```
 
 Method behavior:
 - Builds a `TransactionInput`
 - Resolves descriptors for the transaction
-- Formats the transaction into `DisplayModel`
+- Formats the transaction into `FormatOutcome`
 
 Parameters:
 - `chainId`: target EVM chain ID
@@ -163,25 +176,32 @@ Parameters:
 ### Format Typed Data
 
 ```swift
-let model = try await client.formatTypedData(
+let outcome = try await client.formatTypedData(
     typedDataJson: typedDataJson
 )
 ```
 
 Method behavior:
 - Resolves descriptors for the typed data payload
-- Formats the typed data into `DisplayModel`
+- Formats the typed data into `FormatOutcome`
 
 ### Resolve Descriptors For A Transaction
 
 ```swift
-let descriptors = try await client.resolveDescriptorsForTx(
+let resolution = try await client.resolveDescriptorsForTx(
     chainId: 1,
     to: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     calldataHex: "0xa9059cbb000000000000000000000000...",
     valueHex: nil,
     fromAddress: nil
 )
+
+switch resolution {
+case .found(let descriptors):
+    print("resolved \(descriptors.count) descriptors")
+case .notFound:
+    print("no descriptors resolved")
+}
 ```
 
 Use this when your app wants visibility into the resolved descriptor set before formatting.
@@ -189,7 +209,7 @@ Use this when your app wants visibility into the resolved descriptor set before 
 ### Resolve Descriptors For Typed Data
 
 ```swift
-let descriptors = try await client.resolveDescriptorsForTypedData(
+let resolution = try await client.resolveDescriptorsForTypedData(
     typedDataJson: typedDataJson
 )
 ```
@@ -198,16 +218,51 @@ Use this when your app wants descriptor diagnostics or staged formatting flows f
 
 ## Returned Types
 
+### FormatOutcome
+
+`FormatOutcome` is the primary SDK result.
+
+Cases:
+- `clearSigned(model:diagnostics:)`
+- `fallback(model:reason:diagnostics:)`
+
+Recommended wallet policy:
+- `clearSigned`: show trusted clear-signing UI
+- `fallback`: show generic / degraded UI and keep the reason visible
+- thrown `FormatFailure`: fail closed
+
+Concrete fallback cases:
+- descriptor not found for the contract
+- known contract but no selector / encodeType format matched
+- typed data missing `domain.chainId` or `domain.verifyingContract`
+- nested calldata could not be clear-signed
+
 ### DisplayModel
 
-`DisplayModel` is the SDK output you render in wallet UI.
+`DisplayModel` is the render payload inside `FormatOutcome`.
 
 Important fields:
 - `intent`: descriptor-defined intent label
 - `interpolatedIntent`: optional resolved intent string with interpolated values
 - `entries`: structured display entries for list/group/nested rendering
-- `warnings`: non-fatal rendering warnings
 - `owner`: descriptor owner metadata when present
+
+### FormatDiagnostic
+
+`FormatDiagnostic` replaces legacy warning strings.
+
+Fields:
+- `code`
+- `severity` (`info` or `warning`)
+- `message`
+
+### DescriptorResolutionOutcome
+
+Descriptor resolution no longer uses empty arrays to signal misses.
+
+Cases:
+- `found([String])`
+- `notFound`
 
 ### TokenMetaFfi
 
@@ -220,20 +275,33 @@ Fields:
 
 ## Error Shape
 
-Swift client methods throw `FfiError`.
+Swift client methods throw `FormatFailure`.
 
-Current error families include:
-- `InvalidDescriptorJson`
-- `InvalidTypedDataJson`
-- `InvalidCalldataHex`
-- `InvalidValueHex`
-- `Decode`
-- `Descriptor`
-- `Resolve`
-- `TokenRegistry`
-- `Render`
+Cases:
+- `InvalidInput(message:retryable:)`
+- `InvalidDescriptor(message:retryable:)`
+- `ResolutionFailed(message:retryable:)`
+- `Internal(message:retryable:)`
 
-Treat these as SDK-level failures from descriptor parsing, resolution, decoding, or rendering.
+Example:
+
+```swift
+do {
+    let outcome = try await client.formatTypedData(typedDataJson: typedDataJson)
+    // handle outcome
+} catch let failure as FormatFailure {
+    switch failure {
+    case .InvalidInput(let message, _):
+        showBlockingError(message)
+    case .ResolutionFailed(let message, let retryable):
+        showResolutionError(message: message, retryable: retryable)
+    default:
+        showBlockingError(failure.message)
+    }
+}
+```
+
+`retryable` is intended for wallet policy and retry UX.
 
 ## Related Paths
 

@@ -26,7 +26,8 @@ final class WalletViewModel: ObservableObject {
 
     // Request
     @Published var pendingRequest: Request?
-    @Published var displayModel: DisplayModel?
+    @Published var formatOutcome: FormatOutcome?
+    @Published var formatFailure: FormatFailure?
     @Published var requestError: String?
     @Published var rawRequestJSON: String?
     @Published var showRequest = false
@@ -77,7 +78,8 @@ final class WalletViewModel: ObservableObject {
                 activeSessions = []
                 pendingProposal = nil
                 pendingRequest = nil
-                displayModel = nil
+                formatOutcome = nil
+                formatFailure = nil
                 requestError = nil
                 rawRequestJSON = nil
                 currentCalldataCapture = nil
@@ -179,7 +181,8 @@ final class WalletViewModel: ObservableObject {
         }
 
         pendingRequest = request
-        displayModel = nil
+        formatOutcome = nil
+        formatFailure = nil
         requestError = nil
         rawRequestJSON = nil
         currentCalldataCapture = nil
@@ -196,6 +199,8 @@ final class WalletViewModel: ObservableObject {
         } else {
             log.warning("Unsupported method: \(method)")
             rawRequestJSON = prettyJSON(request.params)
+            formatOutcome = nil
+            formatFailure = nil
             requestError = "Unsupported method: \(method)"
             if method == "eth_signTypedData" || method == "eth_signTypedData_v4" {
                 var capture = TypedDataCapture(request: request, rawParamsJson: rawRequestJSON)
@@ -251,7 +256,8 @@ final class WalletViewModel: ObservableObject {
                 }
                 showRequest = false
                 pendingRequest = nil
-                displayModel = nil
+                formatOutcome = nil
+                formatFailure = nil
                 requestError = nil
                 rawRequestJSON = nil
             }
@@ -261,6 +267,7 @@ final class WalletViewModel: ObservableObject {
     func approveRequest() {
         guard let request = pendingRequest else { return }
         guard let keyManager else {
+            formatFailure = nil
             requestError = "No private key available"
             return
         }
@@ -326,7 +333,8 @@ final class WalletViewModel: ObservableObject {
                 await MainActor.run {
                     showRequest = false
                     pendingRequest = nil
-                    displayModel = nil
+                    formatOutcome = nil
+                    formatFailure = nil
                     requestError = nil
                     rawRequestJSON = nil
                 }
@@ -365,6 +373,8 @@ final class WalletViewModel: ObservableObject {
                             capture.expectedAddress = keyManager.ethereumAddress
                         }
                     }
+                    formatOutcome = nil
+                    formatFailure = nil
                     requestError = error.localizedDescription
                 }
             }
@@ -402,6 +412,8 @@ final class WalletViewModel: ObservableObject {
         guard let paramsArray = try? request.params.get([TransactionParams].self),
               let tx = paramsArray.first else {
             log.error("Could not parse transaction params")
+            formatOutcome = nil
+            formatFailure = nil
             requestError = "Could not parse transaction params"
             rawRequestJSON = rawParams
             updateCurrentCalldataCapture { current in
@@ -415,6 +427,8 @@ final class WalletViewModel: ObservableObject {
         rawRequestJSON = rawParams
 
         guard let to = tx.to else {
+            formatOutcome = nil
+            formatFailure = nil
             requestError = "Transaction has no recipient (contract creation)"
             updateCurrentCalldataCapture { current in
                 current.outcome = .paramsExtractionFailed
@@ -447,18 +461,22 @@ final class WalletViewModel: ObservableObject {
                 from: tx.from
             )
             await MainActor.run {
-                if let model = result.model {
-                    log.info("Clear signing OK: intent=\(model.intent) entries=\(model.entries.count)")
-                    displayModel = model
+                if let outcome = result.formatOutcome {
+                    log.info("Clear signing OK: kind=\(outcome.outcomeKind.rawValue) intent=\(outcome.model.intent)")
+                    formatOutcome = outcome
+                    formatFailure = nil
+                    requestError = nil
                     self.updateCurrentCalldataCapture { current in
                         current.applyClearSigningSuccess(result)
                         if result.usedImplementationAddress, let implementationAddress = result.implementationAddress {
                             current.notes.append("Matched implementation address \(implementationAddress)")
                         }
                     }
-                } else if let error = result.error {
-                    log.error("Clear signing failed: \(error)")
-                    requestError = error.localizedDescription
+                } else if let failure = result.formatFailure {
+                    log.error("Clear signing failed: \(failure.message)")
+                    formatOutcome = nil
+                    formatFailure = failure
+                    requestError = failure.message
                     self.updateCurrentCalldataCapture { current in
                         current.applyClearSigningFailure(result)
                         if let stage = result.failedStage {
@@ -487,6 +505,8 @@ final class WalletViewModel: ObservableObject {
             log.info("Processing personal_sign: \(hexStr.prefix(20))...")
         } catch {
             log.error("Could not parse personal_sign params: \(error)")
+            formatOutcome = nil
+            formatFailure = nil
             requestError = error.localizedDescription
             rawRequestJSON = prettyJSON(request.params)
         }
@@ -515,13 +535,17 @@ final class WalletViewModel: ObservableObject {
             Task {
                 let result = await clearSigning.formatTypedDataDetailed(typedDataJson: typedDataJson)
                 await MainActor.run {
-                    if let model = result.model {
-                        displayModel = model
+                    if let outcome = result.formatOutcome {
+                        formatOutcome = outcome
+                        formatFailure = nil
+                        requestError = nil
                         self.updateCurrentTypedDataCapture { current in
                             current.applyClearSigningSuccess(result)
                         }
-                    } else if let error = result.error {
-                        requestError = error.localizedDescription
+                    } else if let failure = result.formatFailure {
+                        formatOutcome = nil
+                        formatFailure = failure
+                        requestError = failure.message
                         self.updateCurrentTypedDataCapture { current in
                             current.applyClearSigningFailure(result)
                             if let stage = result.failedStage {
@@ -532,6 +556,8 @@ final class WalletViewModel: ObservableObject {
                 }
             }
         } catch {
+            formatOutcome = nil
+            formatFailure = nil
             requestError = error.localizedDescription
             rawRequestJSON = prettyJSON(request.params)
             updateCurrentTypedDataCapture { current in

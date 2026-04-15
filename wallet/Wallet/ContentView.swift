@@ -41,7 +41,8 @@ struct ContentView: View {
             .sheet(isPresented: $viewModel.showRequest) {
                 SessionRequestSheet(
                     method: viewModel.pendingRequest?.method ?? "unknown",
-                    displayModel: viewModel.displayModel,
+                    formatOutcome: viewModel.formatOutcome,
+                    formatFailure: viewModel.formatFailure,
                     error: viewModel.requestError,
                     rawJSON: viewModel.rawRequestJSON,
                     diagnosticCaptureJSON: viewModel.currentTypedDataCapture?.exportJSONString

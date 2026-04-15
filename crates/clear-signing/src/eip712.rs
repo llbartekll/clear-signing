@@ -15,6 +15,7 @@ use crate::engine::{
     DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
+use crate::outcome::RenderState;
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
@@ -168,7 +169,16 @@ pub async fn format_typed_data(
     descriptors: &[ResolvedDescriptor],
 ) -> Result<DisplayModel, Error> {
     let format = find_typed_format(descriptor, data)?;
-    format_typed_data_with_format(descriptor, data, format, data_provider, descriptors).await
+    let mut state = RenderState::default();
+    format_typed_data_with_format(
+        descriptor,
+        data,
+        format,
+        data_provider,
+        descriptors,
+        &mut state,
+    )
+    .await
 }
 
 pub(crate) async fn format_typed_data_with_format(
@@ -177,9 +187,11 @@ pub(crate) async fn format_typed_data_with_format(
     format: &DisplayFormat,
     data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
+    state: &mut RenderState,
 ) -> Result<DisplayModel, Error> {
     let container = TypedContainerContext::from_typed_data(data);
     let mut warnings = Vec::new();
+    let mut nested_fallback = false;
     let expanded_fields =
         crate::engine::expand_display_fields(descriptor, &format.fields, &mut warnings);
     let renderable_fields = filter_excluded_fields(&expanded_fields, &format.excluded);
@@ -192,10 +204,11 @@ pub(crate) async fn format_typed_data_with_format(
         &mut warnings,
         descriptors,
         0,
+        &mut nested_fallback,
     )
     .await?;
 
-    Ok(DisplayModel {
+    let model = DisplayModel {
         intent: format
             .intent
             .as_ref()
@@ -222,9 +235,15 @@ pub(crate) async fn format_typed_data_with_format(
             None => None,
         },
         entries,
-        warnings,
         owner: descriptor.metadata.owner.clone(),
-    })
+    };
+
+    crate::engine::record_warnings(state, &warnings);
+    if nested_fallback {
+        state.mark_nested_fallback();
+    }
+
+    Ok(model)
 }
 
 pub(crate) fn validate_descriptor_domain_binding(
@@ -278,6 +297,7 @@ fn render_typed_fields<'a>(
     warnings: &'a mut Vec<String>,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
+    nested_fallback: &'a mut bool,
 ) -> Pin<Box<dyn Future<Output = Result<Vec<DisplayEntry>, Error>> + Send + 'a>> {
     let fields = fields.to_vec();
     Box::pin(async move {
@@ -296,6 +316,7 @@ fn render_typed_fields<'a>(
                             warnings,
                             descriptors,
                             depth,
+                            nested_fallback,
                         )
                         .await?,
                     );
@@ -378,6 +399,8 @@ fn render_typed_fields<'a>(
                             data_provider,
                             descriptors,
                             depth,
+                            warnings,
+                            nested_fallback,
                         )
                         .await?;
                         entries.push(entry);
@@ -429,6 +452,7 @@ fn render_typed_group_field_kind<'a>(
     warnings: &'a mut Vec<String>,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
+    nested_fallback: &'a mut bool,
 ) -> Pin<Box<dyn Future<Output = Result<TypedGroupRenderKind, Error>> + Send + 'a>> {
     Box::pin(async move {
         match field {
@@ -442,6 +466,7 @@ fn render_typed_group_field_kind<'a>(
                     warnings,
                     descriptors,
                     depth,
+                    nested_fallback,
                 )
                 .await
             }
@@ -493,6 +518,8 @@ fn render_typed_group_field_kind<'a>(
                                         data_provider,
                                         descriptors,
                                         depth,
+                                        warnings,
+                                        nested_fallback,
                                     )
                                     .await?,
                                 )
@@ -537,6 +564,8 @@ fn render_typed_group_field_kind<'a>(
                                 data_provider,
                                 descriptors,
                                 depth,
+                                warnings,
+                                nested_fallback,
                             )
                             .await?,
                         ),
@@ -606,6 +635,7 @@ fn render_typed_group_kind<'a>(
     warnings: &'a mut Vec<String>,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
+    nested_fallback: &'a mut bool,
 ) -> Pin<Box<dyn Future<Output = Result<TypedGroupRenderKind, Error>> + Send + 'a>> {
     Box::pin(async move {
         let mut child_kinds = Vec::new();
@@ -620,6 +650,7 @@ fn render_typed_group_kind<'a>(
                     warnings,
                     descriptors,
                     depth,
+                    nested_fallback,
                 )
                 .await?,
             );
@@ -689,6 +720,7 @@ async fn render_typed_field_group_entries<'a>(
     warnings: &'a mut Vec<String>,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
+    nested_fallback: &'a mut bool,
 ) -> Result<Vec<DisplayEntry>, Error> {
     let rendered = render_typed_group_kind(
         descriptor,
@@ -699,6 +731,7 @@ async fn render_typed_field_group_entries<'a>(
         warnings,
         descriptors,
         depth,
+        nested_fallback,
     )
     .await?;
     match rendered {
@@ -744,6 +777,8 @@ async fn render_typed_calldata_field(
     data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
     depth: u8,
+    warnings: &mut Vec<String>,
+    nested_fallback: &mut bool,
 ) -> Result<DisplayEntry, Error> {
     // Extract hex bytes from JSON value
     let inner_calldata = match val {
@@ -755,6 +790,8 @@ async fn render_typed_calldata_field(
             match hex::decode(hex_str) {
                 Ok(bytes) => bytes,
                 Err(_) => {
+                    warnings.push("could not decode calldata hex".to_string());
+                    *nested_fallback = true;
                     return Ok(DisplayEntry::Nested {
                         label: label.to_string(),
                         intent: "Unknown".to_string(),
@@ -762,7 +799,6 @@ async fn render_typed_calldata_field(
                             label: "Raw data".to_string(),
                             value: s.clone(),
                         })],
-                        warnings: vec!["could not decode calldata hex".to_string()],
                     });
                 }
             }
@@ -772,6 +808,8 @@ async fn render_typed_calldata_field(
                 .as_ref()
                 .map(json_value_to_string)
                 .unwrap_or_else(|| "<unresolved>".to_string());
+            warnings.push("calldata field is not a hex string".to_string());
+            *nested_fallback = true;
             return Ok(DisplayEntry::Nested {
                 label: label.to_string(),
                 intent: "Unknown".to_string(),
@@ -779,13 +817,17 @@ async fn render_typed_calldata_field(
                     label: "Raw data".to_string(),
                     value: raw,
                 })],
-                warnings: vec!["calldata field is not a hex string".to_string()],
             });
         }
     };
 
     // Check depth limit
     if depth >= MAX_CALLDATA_DEPTH {
+        warnings.push(format!(
+            "nested calldata depth limit ({}) reached",
+            MAX_CALLDATA_DEPTH
+        ));
+        *nested_fallback = true;
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
@@ -793,16 +835,14 @@ async fn render_typed_calldata_field(
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(&inner_calldata)),
             })],
-            warnings: vec![format!(
-                "nested calldata depth limit ({}) reached",
-                MAX_CALLDATA_DEPTH
-            )],
         });
     }
 
     let callee = match resolve_typed_nested_callee(message, params, container)? {
         Some(addr) => addr,
         None => {
+            warnings.push("nested calldata callee could not be resolved".to_string());
+            *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
@@ -818,6 +858,8 @@ async fn render_typed_calldata_field(
     let normalized_calldata = normalized_nested_calldata(&inner_calldata, selector_override);
 
     if normalized_calldata.len() < 4 {
+        warnings.push("inner calldata too short".to_string());
+        *nested_fallback = true;
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
@@ -825,7 +867,6 @@ async fn render_typed_calldata_field(
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(&inner_calldata)),
             })],
-            warnings: vec!["inner calldata too short".to_string()],
         });
     }
 
@@ -838,6 +879,8 @@ async fn render_typed_calldata_field(
     let inner_descriptor = match inner_descriptor {
         Some(rd) => &rd.descriptor,
         None => {
+            warnings.push("No matching descriptor for inner call".to_string());
+            *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
@@ -847,6 +890,8 @@ async fn render_typed_calldata_field(
     {
         Ok(result) => result,
         Err(_) => {
+            warnings.push("No matching descriptor for inner call".to_string());
+            *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
@@ -854,6 +899,8 @@ async fn render_typed_calldata_field(
     let mut decoded = match crate::decoder::decode_calldata(&sig, &normalized_calldata) {
         Ok(d) => d,
         Err(_) => {
+            warnings.push("inner calldata could not be decoded".to_string());
+            *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
     };
@@ -867,6 +914,7 @@ async fn render_typed_calldata_field(
     );
 
     // Use engine's format pipeline for the inner call
+    let mut inner_state = RenderState::default();
     let result = crate::engine::format_calldata(
         inner_descriptor,
         chain_id,
@@ -875,14 +923,21 @@ async fn render_typed_calldata_field(
         amount_bytes.as_deref(),
         data_provider,
         descriptors,
+        &mut inner_state,
     )
     .await?;
+
+    if inner_state.fallback_reason().is_some() {
+        *nested_fallback = true;
+    }
+    for diagnostic in inner_state.diagnostics() {
+        warnings.push(diagnostic.message.clone());
+    }
 
     Ok(DisplayEntry::Nested {
         label: label.to_string(),
         intent: result.intent,
         entries: result.entries,
-        warnings: result.warnings,
     })
 }
 
@@ -917,7 +972,6 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
         intent: data.primary_type.clone(),
         interpolated_intent: None,
         entries,
-        warnings: vec!["No matching descriptor format found".to_string()],
         owner: None,
     }
 }
@@ -2366,8 +2420,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.intent, "Permit");
-        assert!(!result.warnings.is_empty());
-        assert!(result.warnings[0].contains("No matching descriptor format found"));
+        assert_eq!(
+            result.fallback_reason(),
+            Some(&crate::FallbackReason::DescriptorNotFound)
+        );
+        assert!(
+            result
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message.contains("no typed-data descriptor matched")),
+            "expected descriptor-not-found diagnostic"
+        );
 
         // Should have all 5 fields from the Permit type, in order
         assert_eq!(result.entries.len(), 5);

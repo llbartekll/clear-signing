@@ -127,7 +127,14 @@ async fn run_morpho_test(calldata_hex: &str, from: &str) -> DisplayModel {
         from: Some(from),
         implementation_address: None,
     };
-    format_calldata(&descriptors, &tx, &provider).await.unwrap()
+    let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
+    assert!(result.is_clear_signed(), "expected clear-signed outcome");
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
+    result.into_model()
 }
 
 #[tokio::test]
@@ -155,7 +162,6 @@ async fn morpho_borrow() {
         get_entry_value(&result, "Receiver"),
         "0xf11Cc888d8Da84D3bF735b7b357814fD071e8B1A"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -176,7 +182,6 @@ async fn morpho_repay() {
         "0x3B855AA8CC56a3cBd5dBb5456F5A13Ce86AA0fe8"
     );
     assert_eq!(get_entry_value(&result, "Data"), "0x");
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -193,7 +198,6 @@ async fn morpho_supply() {
         get_entry_value(&result, "On Behalf"),
         "0x84D1b180d67Ba40A4Cb7AEb78AF6a8BF80fC5C63"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -210,7 +214,6 @@ async fn morpho_supply_collateral() {
         "0xdC035D45d973E3EC169d2276DDab16f1e407384F"
     );
     assert_eq!(get_entry_value(&result, "Assets"), "20390899943");
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -231,7 +234,6 @@ async fn morpho_withdraw() {
         get_entry_value(&result, "Receiver"),
         "0x8fee409f8F772667ADD2a2ccfB8C5182a7349cE9"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -252,5 +254,4 @@ async fn morpho_withdraw_collateral() {
         "0xbf5495Efe5DB9ce00f80364C8B423567e58d2110"
     );
     assert_eq!(get_entry_value(&result, "Assets"), "823264954256555005");
-    assert!(result.warnings.is_empty());
 }

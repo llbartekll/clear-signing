@@ -259,6 +259,10 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         .unwrap();
 
     assert_eq!(result.intent, "sign multisig operation");
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&clear_signing::FallbackReason::NestedCallNotClearSigned)
+    );
 
     // Transaction field should be a Nested with raw fallback — find by label
     let nested = result
@@ -268,20 +272,11 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         .expect("expected Nested entry for Transaction");
 
     match nested {
-        DisplayEntry::Nested {
-            label,
-            intent,
-            warnings,
-            ..
-        } => {
+        DisplayEntry::Nested { label, intent, .. } => {
             assert_eq!(label, "Transaction");
             assert!(
                 intent.contains("Unknown function"),
                 "expected raw fallback intent, got: {intent}"
-            );
-            assert!(
-                !warnings.is_empty(),
-                "expected warnings for missing descriptor"
             );
         }
         other => {
@@ -412,18 +407,26 @@ async fn safe_exec_transaction_depth_limit() {
 
     // Verify the result doesn't panic and has nested structure
     assert_eq!(result.intent, "sign multisig operation");
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&clear_signing::FallbackReason::NestedCallNotClearSigned)
+    );
 
     // Walk down to find the depth-limited entry
-    fn find_depth_warning(entries: &[DisplayEntry], depth: usize) -> bool {
+    fn find_depth_limited_nested(entries: &[DisplayEntry], depth: usize) -> bool {
         for entry in entries {
-            if let DisplayEntry::Nested {
-                warnings, entries, ..
-            } = entry
-            {
-                if warnings.iter().any(|w| w.contains("depth limit")) {
+            if let DisplayEntry::Nested { intent, entries, .. } = entry {
+                if intent == "Unknown"
+                    && entries.iter().any(|inner| {
+                        matches!(
+                            inner,
+                            DisplayEntry::Item(item) if item.label == "Raw data"
+                        )
+                    })
+                {
                     return true;
                 }
-                if depth < 10 && find_depth_warning(entries, depth + 1) {
+                if depth < 10 && find_depth_limited_nested(entries, depth + 1) {
                     return true;
                 }
             }
@@ -432,7 +435,14 @@ async fn safe_exec_transaction_depth_limit() {
     }
 
     assert!(
-        find_depth_warning(&result.entries, 0),
-        "expected depth limit warning somewhere in nested structure"
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("depth limit")),
+        "expected nested depth-limit diagnostic"
+    );
+    assert!(
+        find_depth_limited_nested(&result.entries, 0),
+        "expected raw nested fallback somewhere in nested structure"
     );
 }

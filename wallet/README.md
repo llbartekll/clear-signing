@@ -2,6 +2,13 @@
 
 WalletConnect v2 wallet demo that uses the ERC-7730 clear signing library to display human-readable transaction details.
 
+The demo now models clear-signing results explicitly:
+- `clearSigned`: trusted clear-signing card
+- `fallback`: degraded / unverified card with fallback reason and diagnostics
+- `failure`: blocking error state
+
+Diagnostic captures include outcome kind, fallback reason, diagnostics, and failure metadata.
+
 ## Setup
 
 1. Copy the WalletConnect config template:
@@ -24,6 +31,7 @@ ALCHEMY_API_KEY = your_alchemy_api_key
 ```sh
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
+xcodebuild -project Wallet.xcodeproj -scheme Wallet -destination 'generic/platform=iOS Simulator' build
 ```
 
 4. Open `Wallet.xcodeproj` and run on a simulator or device.

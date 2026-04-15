@@ -4,7 +4,7 @@
 use clear_signing::resolver::ResolvedDescriptor;
 use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
 use clear_signing::types::descriptor::Descriptor;
-use clear_signing::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
+use clear_signing::{format_calldata, DisplayEntry, DisplayModel, FormatOutcome, TransactionContext};
 
 const OKX_ADDR: &str = "0x5E1f62Dac767b0491e3CE72469C217365D5B48cC";
 
@@ -131,7 +131,7 @@ fn token_source() -> CompositeDataProvider {
     ])
 }
 
-async fn run_okx_test(calldata_hex: &str, from: &str) -> DisplayModel {
+async fn run_okx_test(calldata_hex: &str, from: &str) -> FormatOutcome {
     let descriptor = load_descriptor();
     let descriptors = wrap_rd(descriptor);
     let calldata = decode_hex(calldata_hex);
@@ -144,7 +144,9 @@ async fn run_okx_test(calldata_hex: &str, from: &str) -> DisplayModel {
         from: Some(from),
         implementation_address: None,
     };
-    format_calldata(&descriptors, &tx, &provider).await.unwrap()
+    let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
+    assert!(result.is_clear_signed(), "expected clear-signed outcome");
+    result
 }
 
 #[tokio::test]
@@ -168,7 +170,6 @@ async fn okx_dag_swap_by_order_id() {
         get_entry_value(&result, "Deadline"),
         "2026-03-27 09:16:30 UTC"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -196,7 +197,6 @@ async fn okx_dag_swap_to() {
         get_entry_value(&result, "Deadline"),
         "2026-03-27 09:15:02 UTC"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -214,7 +214,6 @@ async fn okx_uniswap_v3_swap_to() {
         get_entry_value(&result, "Beneficiary"),
         "0x0a29a91f9b31b7C58b90a3F7a7B4de1F2F1c8031"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -236,7 +235,6 @@ async fn okx_unxswap_by_order_id() {
         get_entry_value(&result, "Minimum to Receive"),
         "67699065390985128"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -260,7 +258,6 @@ async fn okx_smart_swap_by_order_id() {
         get_entry_value(&result, "Deadline"),
         "2026-03-30 11:35:20 UTC"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -300,7 +297,6 @@ async fn okx_smart_swap_to() {
         get_entry_value(&result, "Deadline"),
         "2026-03-30 09:05:35 UTC"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -317,7 +313,6 @@ async fn okx_swap_wrap() {
     assert_eq!(get_entry_value(&result, "Order ID"), "17047945215486016");
     assert_eq!(get_entry_value(&result, "Direction"), "WETH --> ETH");
     assert_eq!(get_entry_value(&result, "Amount"), "0.037 WETH");
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -344,7 +339,6 @@ async fn okx_swap_wrap_to_with_base_request() {
         get_entry_value(&result, "Deadline"),
         "2026-03-30 07:47:41 UTC"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -375,7 +369,6 @@ async fn okx_uniswap_v3_swap_to_with_base_request() {
         get_entry_value(&result, "Deadline"),
         "2026-03-30 09:47:11 UTC"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -439,5 +432,4 @@ async fn okx_unxswap_to_with_base_request() {
         get_entry_value(&result, "Deadline"),
         "2026-03-30 11:13:23 UTC"
     );
-    assert!(result.warnings.is_empty());
 }

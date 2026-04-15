@@ -4,7 +4,7 @@
 use clear_signing::resolver::ResolvedDescriptor;
 use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
 use clear_signing::types::descriptor::Descriptor;
-use clear_signing::{format_calldata, DisplayEntry, TransactionContext};
+use clear_signing::{format_calldata, DisplayEntry, FormatOutcome, TransactionContext};
 
 fn load_descriptor() -> Descriptor {
     let path = format!(
@@ -65,7 +65,7 @@ fn value_bytes(wei: &str) -> Vec<u8> {
     be[start..].to_vec()
 }
 
-fn print_model(model: &clear_signing::DisplayModel, label: &str) {
+fn print_model(model: &FormatOutcome, label: &str) {
     eprintln!("=== {label} ===");
     eprintln!("  intent: {:?}", model.intent);
     eprintln!("  interpolated_intent: {:?}", model.interpolated_intent);
@@ -80,7 +80,7 @@ fn print_model(model: &clear_signing::DisplayModel, label: &str) {
             _ => eprintln!("  other entry"),
         }
     }
-    if !model.warnings.is_empty() { eprintln!("  warnings: {:?}", model.warnings); }
+    if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
 }
 
 // ── swap ────────────────────────────────────────────────────────────────

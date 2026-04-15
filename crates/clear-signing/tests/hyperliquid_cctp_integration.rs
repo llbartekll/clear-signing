@@ -163,9 +163,9 @@ async fn hyperliquid_cctp_byte_slice_fields_resolve() {
 
     assert_eq!(result.intent, "Bridge USDC via CCTP");
     assert!(
-        result.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        result.warnings
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
     );
     assert_eq!(entry_value(&result.entries, "Amount"), "499 USDC");
     assert_eq!(

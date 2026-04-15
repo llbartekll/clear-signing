@@ -22,18 +22,18 @@ struct ClearSigningService {
         calldata: String,
         value: String?,
         from: String?
-    ) async -> Result<DisplayModel, Error> {
+    ) async -> Result<FormatOutcome, FormatFailure> {
         do {
-            let model = try await client.formatCalldata(
+            let outcome = try await client.formatCalldata(
                 chainId: chainId,
                 to: to,
                 calldataHex: calldata,
                 valueHex: value,
                 fromAddress: from
             )
-            return .success(model)
+            return .success(outcome)
         } catch {
-            return .failure(error)
+            return .failure(Self.coerceFailure(error))
         }
     }
 
@@ -62,28 +62,35 @@ struct ClearSigningService {
             log.info(
                 "Resolving calldata descriptors to=\(to) matched=\(matchedAddress) chainId=\(chainId)"
             )
-            let descriptors = try await client.resolveDescriptorsForTx(
+            let resolution = try await client.resolveDescriptorsForTx(
                 chainId: chainId,
                 to: to,
                 calldataHex: calldata,
                 valueHex: value,
                 fromAddress: from
             )
+            let descriptors = resolution.descriptors
             let descriptorOwners = descriptors.compactMap(Self.descriptorOwner)
-            log.info("Resolved \(descriptors.count) calldata descriptors")
+            switch resolution {
+            case .found(let resolved):
+                log.info("Resolved \(resolved.count) calldata descriptors")
+            case .notFound:
+                log.info("No calldata descriptors resolved; formatting will fall back")
+            }
 
             do {
-                let model = try await clearSigningFormatCalldata(
+                let formatOutcome = try await clearSigningFormatCalldata(
                     descriptorsJson: descriptors,
                     transaction: tx,
                     dataProvider: dataProvider
                 )
-                log.info("Calldata formatting OK: intent=\(model.intent) warnings=\(model.warnings.count)")
+                log.info("Calldata formatting OK: \(Self.describe(formatOutcome))")
                 return CalldataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
                     resolvedDescriptorsJson: descriptors,
-                    model: model,
-                    error: nil,
+                    resolutionOutcome: resolution,
+                    formatOutcome: formatOutcome,
+                    formatFailure: nil,
                     failedStage: nil,
                     implementationAddress: implementationAddress,
                     matchedAddress: matchedAddress,
@@ -91,12 +98,14 @@ struct ClearSigningService {
                     usedImplementationAddress: usedImplementationAddress
                 )
             } catch {
-                log.error("Calldata formatting failed: \(error)")
+                let failure = Self.coerceFailure(error)
+                log.error("Calldata formatting failed: \(failure.message)")
                 return CalldataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
                     resolvedDescriptorsJson: descriptors,
-                    model: nil,
-                    error: error,
+                    resolutionOutcome: resolution,
+                    formatOutcome: nil,
+                    formatFailure: failure,
                     failedStage: .format,
                     implementationAddress: implementationAddress,
                     matchedAddress: matchedAddress,
@@ -105,12 +114,14 @@ struct ClearSigningService {
                 )
             }
         } catch {
-            log.error("Calldata descriptor resolution failed: \(error)")
+            let failure = Self.coerceFailure(error)
+            log.error("Calldata descriptor resolution failed: \(failure.message)")
             return CalldataFormattingOutcome(
                 descriptorOwners: [],
                 resolvedDescriptorsJson: [],
-                model: nil,
-                error: error,
+                resolutionOutcome: nil,
+                formatOutcome: nil,
+                formatFailure: failure,
                 failedStage: .resolve,
                 implementationAddress: implementationAddress,
                 matchedAddress: matchedAddress,
@@ -123,12 +134,12 @@ struct ClearSigningService {
     /// Format EIP-712 typed data.
     /// Resolves all descriptors (outer + nested calldata) from the GitHub registry, then formats.
     /// Automatically detects proxies via dataProvider.getImplementationAddress().
-    func formatTypedData(typedDataJson: String) async -> Result<DisplayModel, Error> {
+    func formatTypedData(typedDataJson: String) async -> Result<FormatOutcome, FormatFailure> {
         do {
-            let model = try await client.formatTypedData(typedDataJson: typedDataJson)
-            return .success(model)
+            let outcome = try await client.formatTypedData(typedDataJson: typedDataJson)
+            return .success(outcome)
         } catch {
-            return .failure(error)
+            return .failure(Self.coerceFailure(error))
         }
     }
 
@@ -137,44 +148,55 @@ struct ClearSigningService {
             log.info("Resolving typed-data descriptors")
             // Single call resolves outer EIP-712 descriptor + any nested calldata descriptors.
             // Automatically detects proxies via dataProvider.getImplementationAddress().
-            let descriptors = try await client.resolveDescriptorsForTypedData(
+            let resolution = try await client.resolveDescriptorsForTypedData(
                 typedDataJson: typedDataJson
             )
+            let descriptors = resolution.descriptors
             let descriptorOwners = descriptors.compactMap(Self.descriptorOwner)
-            log.info("Resolved \(descriptors.count) typed-data descriptors")
+            switch resolution {
+            case .found(let resolved):
+                log.info("Resolved \(resolved.count) typed-data descriptors")
+            case .notFound:
+                log.info("No typed-data descriptors resolved; formatting will fall back")
+            }
 
             do {
                 log.info("Formatting typed data with resolved descriptors")
-                let model = try await clearSigningFormatTypedData(
+                let formatOutcome = try await clearSigningFormatTypedData(
                     descriptorsJson: descriptors,
                     typedDataJson: typedDataJson,
                     dataProvider: dataProvider
                 )
-                log.info("Typed-data formatting OK: intent=\(model.intent) warnings=\(model.warnings.count)")
+                log.info("Typed-data formatting OK: \(Self.describe(formatOutcome))")
                 return TypedDataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
                     resolvedDescriptorsJson: descriptors,
-                    model: model,
-                    error: nil,
+                    resolutionOutcome: resolution,
+                    formatOutcome: formatOutcome,
+                    formatFailure: nil,
                     failedStage: nil
                 )
             } catch {
-                log.error("Typed-data formatting failed: \(error)")
+                let failure = Self.coerceFailure(error)
+                log.error("Typed-data formatting failed: \(failure.message)")
                 return TypedDataFormattingOutcome(
                     descriptorOwners: descriptorOwners,
                     resolvedDescriptorsJson: descriptors,
-                    model: nil,
-                    error: error,
+                    resolutionOutcome: resolution,
+                    formatOutcome: nil,
+                    formatFailure: failure,
                     failedStage: .format
                 )
             }
         } catch {
-            log.error("Typed-data descriptor resolution failed: \(error)")
+            let failure = Self.coerceFailure(error)
+            log.error("Typed-data descriptor resolution failed: \(failure.message)")
             return TypedDataFormattingOutcome(
                 descriptorOwners: [],
                 resolvedDescriptorsJson: [],
-                model: nil,
-                error: error,
+                resolutionOutcome: nil,
+                formatOutcome: nil,
+                formatFailure: failure,
                 failedStage: .resolve
             )
         }
@@ -187,5 +209,121 @@ struct ClearSigningService {
             return nil
         }
         return metadata["owner"] as? String
+    }
+
+    private static func coerceFailure(_ error: Error) -> FormatFailure {
+        if let failure = error as? FormatFailure {
+            return failure
+        }
+        return .Internal(message: error.localizedDescription, retryable: false)
+    }
+
+    private static func describe(_ outcome: FormatOutcome) -> String {
+        switch outcome {
+        case .clearSigned(let model, let diagnostics):
+            return "clearSigned intent=\(model.intent) diagnostics=\(diagnostics.count)"
+        case .fallback(let model, let reason, let diagnostics):
+            return "fallback reason=\(reason.displayLabel) intent=\(model.intent) diagnostics=\(diagnostics.count)"
+        }
+    }
+}
+
+enum ClearSigningOutcomeKind: String, Codable {
+    case clearSigned
+    case fallback
+    case failure
+}
+
+struct CapturedFormatDiagnostic: Codable {
+    let code: String
+    let severity: String
+    let message: String
+
+    init(_ diagnostic: FormatDiagnostic) {
+        code = diagnostic.code
+        severity = diagnostic.severity.captureValue
+        message = diagnostic.message
+    }
+}
+
+extension DiagnosticSeverity {
+    var captureValue: String {
+        switch self {
+        case .info:
+            return "info"
+        case .warning:
+            return "warning"
+        }
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .info:
+            return "Info"
+        case .warning:
+            return "Warning"
+        }
+    }
+}
+
+extension FallbackReason {
+    var captureValue: String {
+        switch self {
+        case .descriptorNotFound:
+            return "descriptor_not_found"
+        case .formatNotFound:
+            return "format_not_found"
+        case .nestedCallNotClearSigned:
+            return "nested_call_not_clear_signed"
+        case .insufficientContext:
+            return "insufficient_context"
+        }
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .descriptorNotFound:
+            return "Descriptor not found"
+        case .formatNotFound:
+            return "Format not found"
+        case .nestedCallNotClearSigned:
+            return "Nested call not clear-signed"
+        case .insufficientContext:
+            return "Insufficient context"
+        }
+    }
+}
+
+extension FormatOutcome {
+    var outcomeKind: ClearSigningOutcomeKind {
+        fallbackReason == nil ? .clearSigned : .fallback
+    }
+}
+
+extension FormatFailure {
+    var captureValue: String {
+        switch self {
+        case .InvalidInput:
+            return "invalid_input"
+        case .InvalidDescriptor:
+            return "invalid_descriptor"
+        case .ResolutionFailed:
+            return "resolution_failed"
+        case .Internal:
+            return "internal"
+        }
+    }
+
+    var displayLabel: String {
+        switch self {
+        case .InvalidInput:
+            return "Invalid input"
+        case .InvalidDescriptor:
+            return "Invalid descriptor"
+        case .ResolutionFailed:
+            return "Resolution failed"
+        case .Internal:
+            return "Internal error"
+        }
     }
 }

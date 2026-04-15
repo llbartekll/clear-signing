@@ -8,7 +8,8 @@ use clear_signing::provider::{DataProvider, EmptyDataProvider};
 use clear_signing::token::{StaticTokenSource, TokenMeta};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::{
-    format_calldata, format_typed_data, merge_descriptors, ResolvedDescriptor, TransactionContext,
+    format_calldata, format_typed_data, merge_descriptors, FallbackReason, FormatOutcome,
+    ResolvedDescriptor, TransactionContext,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -130,26 +131,26 @@ fn bytes32_word(hex_value: &str) -> [u8; 32] {
     word
 }
 
-fn assert_interpolation_warning(result: &DisplayModel, expected_detail: &str) {
+fn assert_interpolation_warning(result: &FormatOutcome, expected_detail: &str) {
     assert!(
         result.interpolated_intent.is_none(),
         "expected interpolated intent to be skipped"
     );
     assert!(
         result
-            .warnings
+            .diagnostics()
             .iter()
-            .any(|warning| warning.contains("interpolated intent skipped")),
+            .any(|warning| warning.message.contains("interpolated intent skipped")),
         "missing interpolation skip warning: {:?}",
-        result.warnings
+        result.diagnostics()
     );
     assert!(
         result
-            .warnings
+            .diagnostics()
             .iter()
-            .any(|warning| warning.contains(expected_detail)),
+            .any(|warning| warning.message.contains(expected_detail)),
         "missing interpolation warning detail '{expected_detail}': {:?}",
-        result.warnings
+        result.diagnostics()
     );
 }
 
@@ -2732,9 +2733,9 @@ async fn test_eip712_encode_type_format_key() {
     // Must match the descriptor format, not fall back to raw
     assert_eq!(result.intent, "Swap order");
     assert!(
-        result.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        result.warnings
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
     );
     assert_eq!(result.entries.len(), 5);
 
@@ -2794,15 +2795,22 @@ async fn test_eip712_bare_primary_type_key_rejected() {
     }))
     .unwrap();
 
-    let err = format_typed_data(
+    let result = format_typed_data(
         &wrap_rd(descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("no EIP-712 display format found"));
+    .unwrap();
+    assert_eq!(result.fallback_reason(), Some(&FallbackReason::FormatNotFound));
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("no descriptor format matched")),
+        "expected format-miss diagnostic, got {:?}",
+        result.diagnostics()
+    );
 }
 
 #[tokio::test]
@@ -2894,15 +2902,22 @@ async fn test_eip712_prefix_only_format_key_rejected() {
     }))
     .unwrap();
 
-    let err = format_typed_data(
+    let result = format_typed_data(
         &wrap_rd(descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("no EIP-712 display format found"));
+    .unwrap();
+    assert_eq!(result.fallback_reason(), Some(&FallbackReason::FormatNotFound));
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("no descriptor format matched")),
+        "expected format-miss diagnostic, got {:?}",
+        result.diagnostics()
+    );
 }
 
 #[tokio::test]
@@ -2977,15 +2992,25 @@ async fn test_eip712_missing_chain_id_rejected_with_descriptors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(
+    let result = format_typed_data(
         &wrap_rd(descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("domain.chainId is required"));
+    .unwrap();
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&FallbackReason::InsufficientContext)
+    );
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("domain.chainId is required")),
+        "expected insufficient-context diagnostic, got {:?}",
+        result.diagnostics()
+    );
 }
 
 #[tokio::test]
@@ -3015,15 +3040,25 @@ async fn test_eip712_missing_verifying_contract_rejected_with_descriptors() {
     }))
     .unwrap();
 
-    let err = format_typed_data(
+    let result = format_typed_data(
         &wrap_rd(descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("domain.verifyingContract is required"));
+    .unwrap();
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&FallbackReason::InsufficientContext)
+    );
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("domain.verifyingContract is required")),
+        "expected insufficient-context diagnostic, got {:?}",
+        result.diagnostics()
+    );
 }
 
 #[tokio::test]

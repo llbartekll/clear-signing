@@ -188,7 +188,14 @@ async fn run_quickswap_test(calldata_hex: &str, value_hex: &str, from: &str) -> 
         from: Some(from),
         implementation_address: None,
     };
-    format_calldata(&descriptors, &tx, &provider).await.unwrap()
+    let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
+    assert!(result.is_clear_signed(), "expected clear-signed outcome");
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
+    result.into_model()
 }
 
 #[tokio::test]
@@ -211,7 +218,6 @@ async fn quickswap_swap_exact_tokens_for_tokens() {
         get_entry_value(&result, "Beneficiary"),
         "0xa7112994F478DbF1e8829622b46604AC324bB58B"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -229,7 +235,6 @@ async fn quickswap_swap_exact_eth_for_tokens() {
         get_entry_value(&result, "Minimum to Receive"),
         "122.270929 USDT"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -250,7 +255,6 @@ async fn quickswap_swap_tokens_for_exact_tokens() {
         get_entry_value(&result, "Maximum to Send"),
         "72.552614 USDT"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -271,7 +275,6 @@ async fn quickswap_swap_exact_tokens_for_tokens_supporting_fee() {
         get_entry_value(&result, "Minimum to Receive"),
         "0.803683 USDT"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -301,7 +304,6 @@ async fn quickswap_add_liquidity() {
     assert_eq!(desired_entries.len(), 2);
     assert!(desired_entries.contains(&"1014.420568073331773313 WOMBAT".to_string()));
     assert!(desired_entries.contains(&"2.932705 USDC.e".to_string()));
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -334,7 +336,6 @@ async fn quickswap_remove_liquidity_eth_with_permit() {
         get_entry_value(&result, "Beneficiary"),
         "0x3272D5C631096d013fc40925E9AcB6A7faF70866"
     );
-    assert!(result.warnings.is_empty());
 }
 
 #[tokio::test]
@@ -361,5 +362,4 @@ async fn quickswap_add_liquidity_eth() {
         })
         .collect();
     assert!(desired_entries.contains(&"26733098897834.742680118057451818 PDDOLLAR".to_string()));
-    assert!(result.warnings.is_empty());
 }

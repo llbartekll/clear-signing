@@ -9,9 +9,13 @@ The primary integration API is the handwritten [android/clear-signing/src/main/k
 App-facing types:
 - `com.clearsigning.ClearSigningClient`
 - `com.clearsigning.DataProviderFfi`
+- `uniffi.clear_signing.FormatOutcome`
+- `uniffi.clear_signing.FormatFailure`
+- `uniffi.clear_signing.DescriptorResolutionOutcome`
+- `uniffi.clear_signing.FormatDiagnostic`
+- `uniffi.clear_signing.FallbackReason`
 - `com.clearsigning.DisplayModel`
 - `com.clearsigning.TokenMetaFfi`
-- `com.clearsigning.FfiException`
 
 All client methods are `suspend` functions and should be called from a coroutine.
 
@@ -81,12 +85,13 @@ Typical app flow:
 1. Implement `DataProviderFfi`.
 2. Construct `ClearSigningClient(dataProvider)`.
 3. Call `formatCalldata(...)` or `formatTypedData(...)` from a coroutine.
-4. Render the returned `DisplayModel`.
+4. Branch on `FormatOutcome` and render clear-signed or degraded UI explicitly.
 
 The client performs descriptor resolution before formatting:
 - `formatCalldata(...)` resolves transaction descriptors, including nested calldata descriptors when needed.
 - `formatTypedData(...)` resolves typed-data descriptors, including nested calldata descriptors when needed.
 - Proxy detection is delegated to your `DataProviderFfi.getImplementationAddress(...)`.
+- Missing token/name/NFT metadata stays best-effort and surfaces as diagnostics, not hard failures.
 
 ## Implement DataProviderFfi
 
@@ -153,19 +158,24 @@ val client = ClearSigningClient(provider)
 ### Format Calldata
 
 ```kotlin
-val model = client.formatCalldata(
+val outcome = client.formatCalldata(
     chainId = 1uL,
     to = "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     calldataHex = "0xa9059cbb000000000000000000000000...",
     valueHex = null,
     fromAddress = "0x1234..."
 )
+
+when (outcome) {
+    is FormatOutcome.ClearSigned -> renderTrusted(outcome.model, outcome.diagnostics)
+    is FormatOutcome.Fallback -> renderGeneric(outcome.model, outcome.reason, outcome.diagnostics)
+}
 ```
 
 Method behavior:
 - Builds a `TransactionInput`
 - Resolves descriptors for the transaction
-- Formats the transaction into `DisplayModel`
+- Formats the transaction into `FormatOutcome`
 
 Parameters:
 - `chainId`: target EVM chain ID
@@ -177,25 +187,30 @@ Parameters:
 ### Format Typed Data
 
 ```kotlin
-val model = client.formatTypedData(
+val outcome = client.formatTypedData(
     typedDataJson = typedDataJson
 )
 ```
 
 Method behavior:
 - Resolves descriptors for the typed data payload
-- Formats the typed data into `DisplayModel`
+- Formats the typed data into `FormatOutcome`
 
 ### Resolve Descriptors For A Transaction
 
 ```kotlin
-val descriptors = client.resolveDescriptorsForTx(
+val resolution = client.resolveDescriptorsForTx(
     chainId = 1uL,
     to = "0xdAC17F958D2ee523a2206206994597C13D831ec7",
     calldataHex = "0xa9059cbb000000000000000000000000...",
     valueHex = null,
     fromAddress = null
 )
+
+when (resolution) {
+    is DescriptorResolutionOutcome.Found -> println("resolved ${resolution.v1.size} descriptors")
+    DescriptorResolutionOutcome.NotFound -> println("no descriptors resolved")
+}
 ```
 
 Use this when your app wants visibility into the resolved descriptor set before formatting.
@@ -203,7 +218,7 @@ Use this when your app wants visibility into the resolved descriptor set before 
 ### Resolve Descriptors For Typed Data
 
 ```kotlin
-val descriptors = client.resolveDescriptorsForTypedData(
+val resolution = client.resolveDescriptorsForTypedData(
     typedDataJson = typedDataJson
 )
 ```
@@ -212,16 +227,51 @@ Use this when your app wants descriptor diagnostics or staged formatting flows f
 
 ## Returned Types
 
+### FormatOutcome
+
+`FormatOutcome` is the primary SDK result.
+
+Cases:
+- `FormatOutcome.ClearSigned(model, diagnostics)`
+- `FormatOutcome.Fallback(model, reason, diagnostics)`
+
+Recommended wallet policy:
+- `ClearSigned`: trusted clear-signing UI
+- `Fallback`: generic / degraded UI with a visible fallback reason
+- thrown `FormatFailure`: fail closed
+
+Concrete fallback cases:
+- descriptor not found
+- selector / encodeType format not found
+- missing typed-data descriptor context
+- nested calldata not clear-signed
+
 ### DisplayModel
 
-`DisplayModel` is the SDK output you render in wallet UI.
+`DisplayModel` is the render payload inside `FormatOutcome`.
 
 Important fields:
 - `intent`
 - `interpolatedIntent`
 - `entries`
-- `warnings`
 - `owner`
+
+### FormatDiagnostic
+
+`FormatDiagnostic` replaces legacy warning strings.
+
+Fields:
+- `code`
+- `severity`
+- `message`
+
+### DescriptorResolutionOutcome
+
+Resolution misses are explicit.
+
+Cases:
+- `DescriptorResolutionOutcome.Found(List<String>)`
+- `DescriptorResolutionOutcome.NotFound`
 
 ### TokenMetaFfi
 
@@ -234,20 +284,29 @@ Fields:
 
 ## Error Shape
 
-Kotlin client methods can throw `FfiException`.
+Kotlin client methods can throw `FormatFailure`.
 
-Current error families include:
-- `InvalidDescriptorJson`
-- `InvalidTypedDataJson`
-- `InvalidCalldataHex`
-- `InvalidValueHex`
-- `Decode`
-- `Descriptor`
-- `Resolve`
-- `TokenRegistry`
-- `Render`
+Cases:
+- `FormatFailure.InvalidInput(message, retryable)`
+- `FormatFailure.InvalidDescriptor(message, retryable)`
+- `FormatFailure.ResolutionFailed(message, retryable)`
+- `FormatFailure.Internal(message, retryable)`
 
-Treat these as SDK-level failures from descriptor parsing, resolution, decoding, or rendering.
+Example:
+
+```kotlin
+try {
+    val outcome = client.formatTypedData(typedDataJson)
+    // handle outcome
+} catch (failure: FormatFailure) {
+    when (failure) {
+        is FormatFailure.InvalidInput -> showBlockingError(failure.message)
+        is FormatFailure.ResolutionFailed -> showResolutionError(failure.message, failure.retryable)
+        is FormatFailure.InvalidDescriptor -> showBlockingError(failure.message)
+        is FormatFailure.Internal -> showBlockingError(failure.message)
+    }
+}
+```
 
 ## Related Paths
 

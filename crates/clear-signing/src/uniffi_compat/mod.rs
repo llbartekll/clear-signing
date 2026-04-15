@@ -3,8 +3,9 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::{
-    eip712::TypedData, error::Error, provider::DataProvider, resolver::ResolvedDescriptor,
-    token::TokenMeta, types::descriptor::Descriptor, DisplayModel,
+    eip712::TypedData, error::FormatFailure, outcome::DescriptorResolutionOutcome,
+    outcome::FormatOutcome, outcome::ResolvedDescriptorResolution, provider::DataProvider,
+    resolver::ResolvedDescriptor, token::TokenMeta, types::descriptor::Descriptor,
 };
 
 #[cfg(feature = "github-registry")]
@@ -19,12 +20,15 @@ static REGISTRY_SOURCE: tokio::sync::OnceCell<GitHubRegistrySource> =
     tokio::sync::OnceCell::const_new();
 
 #[cfg(feature = "github-registry")]
-async fn get_registry_source() -> Result<&'static GitHubRegistrySource, FfiError> {
+async fn get_registry_source() -> Result<&'static GitHubRegistrySource, FormatFailure> {
     REGISTRY_SOURCE
         .get_or_try_init(|| async {
             GitHubRegistrySource::from_registry(DEFAULT_REGISTRY_URL)
                 .await
-                .map_err(|e| FfiError::Resolve(format!("failed to initialize registry: {e}")))
+                .map_err(|e| FormatFailure::ResolutionFailed {
+                    message: format!("failed to initialize registry: {e}"),
+                    retryable: true,
+                })
         })
         .await
 }
@@ -202,44 +206,6 @@ pub struct TransactionInput {
 }
 
 // ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Enum)]
-pub enum FfiError {
-    #[error("invalid descriptor JSON: {0}")]
-    InvalidDescriptorJson(String),
-    #[error("invalid typed data JSON: {0}")]
-    InvalidTypedDataJson(String),
-    #[error("invalid calldata hex: {0}")]
-    InvalidCalldataHex(String),
-    #[error("invalid value hex: {0}")]
-    InvalidValueHex(String),
-    #[error("decode error: {0}")]
-    Decode(String),
-    #[error("descriptor error: {0}")]
-    Descriptor(String),
-    #[error("resolve error: {0}")]
-    Resolve(String),
-    #[error("token registry error: {0}")]
-    TokenRegistry(String),
-    #[error("render error: {0}")]
-    Render(String),
-}
-
-impl From<Error> for FfiError {
-    fn from(value: Error) -> Self {
-        match value {
-            Error::Decode(err) => Self::Decode(err.to_string()),
-            Error::Descriptor(err) => Self::Descriptor(err),
-            Error::Resolve(err) => Self::Resolve(err.to_string()),
-            Error::TokenRegistry(err) => Self::TokenRegistry(err),
-            Error::Render(err) => Self::Render(err),
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // FFI exports
 // ---------------------------------------------------------------------------
 
@@ -253,7 +219,7 @@ pub async fn clear_signing_format_calldata(
     descriptors_json: Vec<String>,
     transaction: TransactionInput,
     data_provider: Option<Arc<dyn DataProviderFfi>>,
-) -> Result<DisplayModel, FfiError> {
+) -> Result<FormatOutcome, FormatFailure> {
     let descriptors = parse_descriptors(&descriptors_json, transaction.chain_id, &transaction.to)?;
     let calldata = decode_hex(&transaction.calldata_hex, HexContext::Calldata)?;
     let value = match transaction.value_hex {
@@ -273,9 +239,7 @@ pub async fn clear_signing_format_calldata(
         from: transaction.from_address.as_deref(),
         implementation_address: impl_addr.as_deref(),
     };
-    crate::format_calldata(&descriptors, &tx, provider.as_ref())
-        .await
-        .map_err(Into::into)
+    crate::format_calldata(&descriptors, &tx, provider.as_ref()).await
 }
 
 /// Format EIP-712 typed data for clear signing display.
@@ -286,9 +250,9 @@ pub async fn clear_signing_format_typed_data(
     descriptors_json: Vec<String>,
     typed_data_json: String,
     data_provider: Option<Arc<dyn DataProviderFfi>>,
-) -> Result<DisplayModel, FfiError> {
+) -> Result<FormatOutcome, FormatFailure> {
     let typed_data: TypedData = serde_json::from_str::<TypedData>(&typed_data_json)
-        .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
+        .map_err(|e| invalid_input(format!("invalid typed data JSON: {e}")))?;
 
     let chain_id = typed_data.domain.chain_id.unwrap_or(1);
     let address = typed_data
@@ -298,9 +262,7 @@ pub async fn clear_signing_format_typed_data(
         .unwrap_or("0x0000000000000000000000000000000000000000");
     let descriptors = parse_descriptors(&descriptors_json, chain_id, address)?;
     let provider = build_data_provider(data_provider);
-    crate::format_typed_data(&descriptors, &typed_data, provider.as_ref())
-        .await
-        .map_err(Into::into)
+    crate::format_typed_data(&descriptors, &typed_data, provider.as_ref()).await
 }
 
 /// Resolve a calldata descriptor from the GitHub registry for a given chain + address.
@@ -312,16 +274,16 @@ pub async fn clear_signing_format_typed_data(
 pub async fn clear_signing_resolve_descriptor(
     chain_id: u64,
     address: String,
-) -> Result<Option<String>, FfiError> {
+) -> Result<DescriptorResolutionOutcome, FormatFailure> {
     let source = get_registry_source().await?;
     match source.resolve_calldata(chain_id, &address).await {
         Ok(resolved) => {
             let json = serde_json::to_string(&resolved.descriptor)
-                .map_err(|e| FfiError::Descriptor(e.to_string()))?;
-            Ok(Some(json))
+                .map_err(|e| invalid_descriptor(format!("failed to serialize descriptor: {e}")))?;
+            Ok(DescriptorResolutionOutcome::Found(vec![json]))
         }
-        Err(crate::error::ResolveError::NotFound { .. }) => Ok(None),
-        Err(e) => Err(FfiError::Resolve(e.to_string())),
+        Err(crate::error::ResolveError::NotFound { .. }) => Ok(DescriptorResolutionOutcome::NotFound),
+        Err(e) => Err(FormatFailure::from(e)),
     }
 }
 
@@ -336,9 +298,9 @@ pub async fn clear_signing_resolve_descriptor(
 pub async fn clear_signing_resolve_descriptors_for_typed_data(
     typed_data_json: String,
     data_provider: Arc<dyn DataProviderFfi>,
-) -> Result<Vec<String>, FfiError> {
+) -> Result<DescriptorResolutionOutcome, FormatFailure> {
     let typed_data: crate::eip712::TypedData = serde_json::from_str(&typed_data_json)
-        .map_err(|e| FfiError::InvalidTypedDataJson(e.to_string()))?;
+        .map_err(|e| invalid_input(format!("invalid typed data JSON: {e}")))?;
 
     let chain_id = typed_data.domain.chain_id.unwrap_or(1);
     let verifying_contract = typed_data
@@ -352,10 +314,10 @@ pub async fn clear_signing_resolve_descriptors_for_typed_data(
     // Try direct lookup
     let mut descriptors = crate::resolver::resolve_descriptors_for_typed_data(&typed_data, source)
         .await
-        .map_err(|e| FfiError::Resolve(e.to_string()))?;
+        .map_err(FormatFailure::from)?;
 
     // Proxy detection fallback
-    if descriptors.is_empty() {
+    if matches!(descriptors, ResolvedDescriptorResolution::NotFound) {
         let impl_addr =
             data_provider.get_implementation_address(chain_id, verifying_contract.to_string());
         if let Some(impl_addr) = impl_addr {
@@ -363,16 +325,11 @@ pub async fn clear_signing_resolve_descriptors_for_typed_data(
             proxied.domain.verifying_contract = Some(impl_addr.clone());
             descriptors = crate::resolver::resolve_descriptors_for_typed_data(&proxied, source)
                 .await
-                .map_err(|e| FfiError::Resolve(e.to_string()))?;
+                .map_err(FormatFailure::from)?;
         }
     }
 
-    descriptors
-        .iter()
-        .map(|rd| {
-            serde_json::to_string(&rd.descriptor).map_err(|e| FfiError::Descriptor(e.to_string()))
-        })
-        .collect()
+    resolved_descriptor_json_outcome(descriptors)
 }
 
 /// Resolve all descriptors needed for a transaction, including nested calldata.
@@ -386,7 +343,7 @@ pub async fn clear_signing_resolve_descriptors_for_typed_data(
 pub async fn clear_signing_resolve_descriptors_for_tx(
     transaction: TransactionInput,
     data_provider: Arc<dyn DataProviderFfi>,
-) -> Result<Vec<String>, FfiError> {
+) -> Result<DescriptorResolutionOutcome, FormatFailure> {
     let source = get_registry_source().await?;
     let calldata = decode_hex(&transaction.calldata_hex, HexContext::Calldata)?;
     let value = match transaction.value_hex {
@@ -403,10 +360,10 @@ pub async fn clear_signing_resolve_descriptors_for_tx(
     };
     let mut descriptors = crate::resolve_descriptors_for_tx(&tx, source)
         .await
-        .map_err(|e| FfiError::Resolve(e.to_string()))?;
+        .map_err(FormatFailure::from)?;
 
     // Proxy detection fallback
-    if descriptors.is_empty() {
+    if matches!(descriptors, ResolvedDescriptorResolution::NotFound) {
         let impl_addr =
             data_provider.get_implementation_address(transaction.chain_id, transaction.to.clone());
         if let Some(impl_addr) = impl_addr {
@@ -416,16 +373,11 @@ pub async fn clear_signing_resolve_descriptors_for_tx(
             };
             descriptors = crate::resolve_descriptors_for_tx(&tx_with_impl, source)
                 .await
-                .map_err(|e| FfiError::Resolve(e.to_string()))?;
+                .map_err(FormatFailure::from)?;
         }
     }
 
-    descriptors
-        .iter()
-        .map(|rd| {
-            serde_json::to_string(&rd.descriptor).map_err(|e| FfiError::Descriptor(e.to_string()))
-        })
-        .collect()
+    resolved_descriptor_json_outcome(descriptors)
 }
 
 /// Merge two descriptor JSON strings (including + included).
@@ -435,8 +387,9 @@ pub async fn clear_signing_resolve_descriptors_for_tx(
 pub fn clear_signing_merge_descriptors(
     including_json: String,
     included_json: String,
-) -> Result<String, FfiError> {
-    crate::merge::merge_descriptors(&including_json, &included_json).map_err(Into::into)
+) -> Result<String, FormatFailure> {
+    crate::merge::merge_descriptors(&including_json, &included_json)
+        .map_err(FormatFailure::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +401,7 @@ enum HexContext {
     Value,
 }
 
-fn decode_hex(input: &str, context: HexContext) -> Result<Vec<u8>, FfiError> {
+fn decode_hex(input: &str, context: HexContext) -> Result<Vec<u8>, FormatFailure> {
     let trimmed = input.trim();
     let normalized = trimmed
         .strip_prefix("0x")
@@ -465,8 +418,8 @@ fn decode_hex(input: &str, context: HexContext) -> Result<Vec<u8>, FfiError> {
     };
 
     hex::decode(hex_str).map_err(|err| match context {
-        HexContext::Calldata => FfiError::InvalidCalldataHex(err.to_string()),
-        HexContext::Value => FfiError::InvalidValueHex(err.to_string()),
+        HexContext::Calldata => invalid_input(format!("invalid calldata hex: {err}")),
+        HexContext::Value => invalid_input(format!("invalid value hex: {err}")),
     })
 }
 
@@ -474,11 +427,11 @@ fn parse_descriptors(
     descriptors_json: &[String],
     fallback_chain_id: u64,
     fallback_address: &str,
-) -> Result<Vec<ResolvedDescriptor>, FfiError> {
+) -> Result<Vec<ResolvedDescriptor>, FormatFailure> {
     let mut descriptors = Vec::with_capacity(descriptors_json.len());
     for json_str in descriptors_json {
         let descriptor = Descriptor::from_json(json_str)
-            .map_err(|e| FfiError::InvalidDescriptorJson(e.to_string()))?;
+            .map_err(|e| invalid_descriptor(format!("invalid descriptor JSON: {e}")))?;
         let (cid, addr) = descriptor
             .context
             .deployments()
@@ -492,6 +445,36 @@ fn parse_descriptors(
         });
     }
     Ok(descriptors)
+}
+
+fn resolved_descriptor_json_outcome(
+    descriptors: ResolvedDescriptorResolution,
+) -> Result<DescriptorResolutionOutcome, FormatFailure> {
+    match descriptors {
+        ResolvedDescriptorResolution::Found(descriptors) => descriptors
+            .iter()
+            .map(|rd| {
+                serde_json::to_string(&rd.descriptor)
+                    .map_err(|e| invalid_descriptor(format!("failed to serialize descriptor: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(DescriptorResolutionOutcome::Found),
+        ResolvedDescriptorResolution::NotFound => Ok(DescriptorResolutionOutcome::NotFound),
+    }
+}
+
+fn invalid_input(message: String) -> FormatFailure {
+    FormatFailure::InvalidInput {
+        message,
+        retryable: false,
+    }
+}
+
+fn invalid_descriptor(message: String) -> FormatFailure {
+    FormatFailure::InvalidDescriptor {
+        message,
+        retryable: false,
+    }
 }
 
 fn build_data_provider(ffi_provider: Option<Arc<dyn DataProviderFfi>>) -> Box<dyn DataProvider> {
@@ -738,7 +721,7 @@ mod tests {
             .await
             .expect_err("invalid descriptor should fail");
 
-        assert!(matches!(err, FfiError::InvalidDescriptorJson(_)));
+        assert!(matches!(err, FormatFailure::InvalidDescriptor { .. }));
     }
 
     #[tokio::test]
@@ -751,7 +734,7 @@ mod tests {
         .await
         .expect_err("invalid typed data should fail");
 
-        assert!(matches!(err, FfiError::InvalidTypedDataJson(_)));
+        assert!(matches!(err, FormatFailure::InvalidInput { .. }));
     }
 
     #[tokio::test]
@@ -763,7 +746,7 @@ mod tests {
             .await
             .expect_err("invalid calldata hex should fail");
 
-        assert!(matches!(err, FfiError::InvalidCalldataHex(_)));
+        assert!(matches!(err, FormatFailure::InvalidInput { .. }));
     }
 
     #[tokio::test]
@@ -775,7 +758,7 @@ mod tests {
             .await
             .expect_err("invalid value hex should fail");
 
-        assert!(matches!(err, FfiError::InvalidValueHex(_)));
+        assert!(matches!(err, FormatFailure::InvalidInput { .. }));
     }
 
     #[tokio::test]
@@ -1034,9 +1017,9 @@ mod tests {
 
         assert_eq!(result.intent, "Swap order");
         assert!(
-            result.warnings.is_empty(),
-            "unexpected warnings: {:?}",
-            result.warnings
+            result.diagnostics().is_empty(),
+            "unexpected diagnostics: {:?}",
+            result.diagnostics()
         );
         assert_eq!(result.entries.len(), 4);
 

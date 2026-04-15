@@ -10,11 +10,18 @@ The repository contains:
 
 ## What The SDK Does
 
-- Formats calldata into a `DisplayModel` for wallet UI rendering.
-- Formats EIP-712 typed data into the same display model shape.
-- Resolves descriptors for direct calls and nested calldata flows.
+- Formats calldata and EIP-712 typed data into an explicit `FormatOutcome`:
+  - `clearSigned`: descriptor-backed clear signing succeeded
+  - `fallback`: renderable but degraded / unverified output
+  - `failure`: invalid input, invalid descriptor, resolution outage, or internal failure
+- Returns typed `FormatDiagnostic` entries for non-fatal degradation instead of string warnings.
+- Resolves descriptors for direct calls and nested calldata flows via `DescriptorResolutionOutcome`.
 - Supports proxy-aware descriptor resolution through wallet-provided `DataProviderFfi`.
 - Delegates token, name, NFT, and block metadata lookups to the host wallet.
+
+Provider callbacks are still best-effort in this phase:
+- missing token or name metadata can produce diagnostics
+- they do not automatically become hard failures
 
 ## SDK Surfaces
 
@@ -48,14 +55,18 @@ Build and test the Rust crate from repo root:
 ```sh
 cargo build
 cargo test
+cargo check -p clear-signing --features uniffi,github-registry
+cargo test -p clear-signing --features uniffi,github-registry
 cargo clippy -p clear-signing --all-targets --features uniffi,github-registry -- -D warnings
 ```
 
 Swift local packaging:
 
 ```sh
+./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
 USE_LOCAL_RUST_XCFRAMEWORK=1 swift package describe
+xcodebuild -project wallet/Wallet.xcodeproj -scheme Wallet -destination 'generic/platform=iOS Simulator' build
 ```
 
 Android local packaging follows the same steps used in CI: build native libraries, generate Kotlin bindings, then assemble/publish the Android artifact. See the Kotlin integration guide for the exact local flow.

@@ -4,7 +4,8 @@ import ClearSigning
 
 struct SessionRequestSheet: View {
     let method: String
-    let displayModel: DisplayModel?
+    let formatOutcome: FormatOutcome?
+    let formatFailure: FormatFailure?
     let error: String?
     let rawJSON: String?
     let diagnosticCaptureJSON: String?
@@ -15,6 +16,10 @@ struct SessionRequestSheet: View {
     @State private var showRaw = true
     @State private var showDiagnostics = true
 
+    private var approvalBlocked: Bool {
+        formatFailure != nil || error != nil
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -22,13 +27,36 @@ struct SessionRequestSheet: View {
                     Label(method, systemImage: "doc.text")
                         .font(.headline)
 
-                    if let model = displayModel {
-                        DisplayModelView(model: model)
+                    if let formatOutcome {
+                        DisplayModelView(outcome: formatOutcome)
                             .padding()
                             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
                     }
 
-                    if let error {
+                    if let formatFailure {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(formatFailure.displayLabel, systemImage: "xmark.shield.fill")
+                                .font(.headline)
+                                .foregroundStyle(.red)
+
+                            Button {
+                                copyToClipboard(formatFailure.message)
+                            } label: {
+                                Text(formatFailure.message)
+                                    .font(.footnote)
+                                    .foregroundStyle(.red)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+
+                            Text(formatFailure.retryable ? "Retryable failure" : "Blocking failure")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding()
+                        .background(Color.red.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+                    } else if let error {
                         Button {
                             copyToClipboard(error)
                         } label: {
@@ -86,6 +114,7 @@ struct SessionRequestSheet: View {
                     Button("Approve") {
                         onApprove()
                     }
+                    .disabled(approvalBlocked)
                 }
             }
         }

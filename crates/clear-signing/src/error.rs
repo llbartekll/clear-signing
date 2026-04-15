@@ -2,6 +2,22 @@
 
 use thiserror::Error;
 
+#[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
+#[derive(Debug, Clone, PartialEq, Eq, Error, serde::Serialize)]
+pub enum FormatFailure {
+    #[error("invalid input: {message}")]
+    InvalidInput { message: String, retryable: bool },
+
+    #[error("invalid descriptor: {message}")]
+    InvalidDescriptor { message: String, retryable: bool },
+
+    #[error("resolution failed: {message}")]
+    ResolutionFailed { message: String, retryable: bool },
+
+    #[error("internal error: {message}")]
+    Internal { message: String, retryable: bool },
+}
+
 /// Unified error type for the ERC-7730 library.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -57,4 +73,57 @@ pub enum ResolveError {
 
     #[error("parse error: {0}")]
     Parse(String),
+}
+
+impl From<Error> for FormatFailure {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::Decode(err) => Self::InvalidInput {
+                message: err.to_string(),
+                retryable: false,
+            },
+            Error::Descriptor(message) => Self::InvalidDescriptor {
+                message,
+                retryable: false,
+            },
+            Error::Resolve(err) => err.into(),
+            Error::TokenRegistry(message) => Self::ResolutionFailed {
+                message: format!("token registry error: {message}"),
+                retryable: true,
+            },
+            Error::Render(message) => Self::InvalidDescriptor {
+                message,
+                retryable: false,
+            },
+        }
+    }
+}
+
+impl From<ResolveError> for FormatFailure {
+    fn from(value: ResolveError) -> Self {
+        match value {
+            ResolveError::NotFound { chain_id, address } => Self::InvalidDescriptor {
+                message: format!(
+                    "descriptor not found for chain_id={chain_id}, address={address}"
+                ),
+                retryable: false,
+            },
+            ResolveError::RegistryIndexMissing { url } => Self::ResolutionFailed {
+                message: format!("registry index missing: {url}"),
+                retryable: true,
+            },
+            ResolveError::RegistryDescriptorMissing { url } => Self::ResolutionFailed {
+                message: format!("registry descriptor missing: {url}"),
+                retryable: true,
+            },
+            ResolveError::RegistryIo(message) => Self::ResolutionFailed {
+                message: format!("registry io error: {message}"),
+                retryable: true,
+            },
+            ResolveError::Parse(message) => Self::ResolutionFailed {
+                message: format!("parse error: {message}"),
+                retryable: false,
+            },
+        }
+    }
 }

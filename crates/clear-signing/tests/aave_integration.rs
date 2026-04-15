@@ -552,8 +552,17 @@ async fn graceful_fallback_unknown_selector() {
     let result = format_calldata(&descriptors, &tx, &tokens).await.unwrap();
 
     assert!(result.intent.contains("0xdeadbeef"));
-    assert!(!result.warnings.is_empty());
-    assert!(result.warnings[0].contains("No matching descriptor format found"));
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&clear_signing::FallbackReason::FormatNotFound)
+    );
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("no descriptor format matched selector")),
+        "expected format-not-found diagnostic"
+    );
 }
 
 // --- L2 encoded withdraw(bytes32) on Optimism ---
@@ -589,8 +598,17 @@ async fn aave_withdraw_bytes32_optimism_graceful_fallback() {
         "should fall back to unknown function: {}",
         result.intent
     );
-    assert!(!result.warnings.is_empty());
-    assert!(result.warnings[0].contains("No matching descriptor format found"));
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&clear_signing::FallbackReason::FormatNotFound)
+    );
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("no descriptor format matched selector")),
+        "expected format-not-found diagnostic"
+    );
     // The single bytes32 arg should appear as a raw param
     assert_eq!(result.entries.len(), 1);
 }

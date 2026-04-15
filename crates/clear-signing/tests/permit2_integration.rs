@@ -88,9 +88,9 @@ async fn permit2_permit_single_real_wallet_request_formats_with_current_descript
     assert_eq!(result.intent, "Authorize spending of token");
     assert_eq!(result.owner.as_deref(), Some("Uniswap Labs"));
     assert!(
-        result.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        result.warnings
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
     );
 
     assert_eq!(

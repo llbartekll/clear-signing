@@ -118,7 +118,7 @@ async fn lifi_swap_tokens_single_v3_erc20_to_erc20() {
         get_entry_value(&result, "Recipient"),
         "0x9915B072B257Abc17fd95b49c23D8A64fe42a682"
     );
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }
 
 #[tokio::test]
@@ -154,7 +154,7 @@ async fn lifi_swap_tokens_multiple_v3_erc20_to_erc20() {
     );
     // LI.FI marks multi-leg swap internals as visible: "never"; they should not leak into the UI.
     assert_eq!(result.entries.len(), 3);
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }
 
 #[tokio::test]
@@ -189,5 +189,5 @@ async fn lifi_swap_tokens_multiple_v3_native_to_erc20() {
         get_entry_value(&result, "Recipient"),
         "0x2dbb7ba0806b2Cf8CC32F8CAc5cc49b8db29673f"
     );
-    assert!(result.warnings.is_empty());
+    assert!(result.diagnostics().is_empty());
 }

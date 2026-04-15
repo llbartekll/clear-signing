@@ -150,8 +150,8 @@ async fn test_paraswap_v6_swapExactAmountIn() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() {
-                eprintln!("  warnings: {:?}", model.warnings);
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
             }
         }
         Err(e) => panic!("swapExactAmountIn failed: {e}"),
@@ -199,8 +199,8 @@ async fn test_paraswap_v6_swapExactAmountInOnUniswapV2() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() {
-                eprintln!("  warnings: {:?}", model.warnings);
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
             }
         }
         Err(e) => panic!("swapExactAmountInOnUniswapV2 failed: {e}"),
@@ -247,8 +247,8 @@ async fn test_paraswap_v6_swapExactAmountInOnUniswapV3() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() {
-                eprintln!("  warnings: {:?}", model.warnings);
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
             }
         }
         Err(e) => panic!("swapExactAmountInOnUniswapV3 failed: {e}"),
@@ -276,9 +276,9 @@ async fn test_paraswap_v6_balancer_byte_slice_paths() {
     let result = format_calldata(&descriptors, &tx, &provider).await.unwrap();
 
     assert!(
-        result.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        result.warnings
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
     );
     assert_eq!(get_entry_value(&result.entries, "Swap type"), "Single swap");
     assert_eq!(get_entry_value(&result.entries, "Amount to Send"), "1 USDC");
@@ -328,8 +328,8 @@ async fn test_paraswap_v6_swapOnAugustusRFQTryBatchFill() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() {
-                eprintln!("  warnings: {:?}", model.warnings);
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
             }
         }
         Err(e) => panic!("swapOnAugustusRFQTryBatchFill failed: {e}"),
@@ -376,8 +376,8 @@ async fn test_paraswap_v6_swapExactAmountIn_eth() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() {
-                eprintln!("  warnings: {:?}", model.warnings);
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
             }
         }
         Err(e) => panic!("swapExactAmountIn_eth failed: {e}"),
@@ -424,8 +424,8 @@ async fn test_paraswap_v6_swapExactAmountInOnUniswapV2_b() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() {
-                eprintln!("  warnings: {:?}", model.warnings);
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
             }
         }
         Err(e) => panic!("swapExactAmountInOnUniswapV2_b failed: {e}"),
@@ -472,8 +472,8 @@ async fn test_paraswap_v6_swapOnAugustusRFQTryBatchFill_b() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() {
-                eprintln!("  warnings: {:?}", model.warnings);
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
             }
         }
         Err(e) => panic!("swapOnAugustusRFQTryBatchFill_b failed: {e}"),

@@ -3,10 +3,16 @@ import UIKit
 import ClearSigning
 
 struct DisplayModelView: View {
-    let model: DisplayModel
+    let outcome: FormatOutcome
+
+    private var model: DisplayModel {
+        outcome.model
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            statusBanner
+
             Text(model.interpolatedIntent ?? model.intent)
                 .font(.headline)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -25,19 +31,43 @@ struct DisplayModelView: View {
                 entryView(entry)
             }
 
-            ForEach(model.warnings, id: \.self) { warning in
-                Button {
-                    copyToClipboard(warning)
-                } label: {
-                    Label(warning, systemImage: "exclamationmark.triangle.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.orange)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            if !outcome.diagnostics.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Diagnostics")
+                        .font(.subheadline.bold())
+
+                    ForEach(Array(outcome.diagnostics.enumerated()), id: \.offset) { _, diagnostic in
+                        Button {
+                            copyToClipboard(diagnostic.message)
+                        } label: {
+                            Label(diagnostic.message, systemImage: diagnostic.severity == .warning ? "exclamationmark.triangle.fill" : "info.circle.fill")
+                                .font(.footnote)
+                                .foregroundStyle(diagnostic.severity == .warning ? .orange : .secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
+                    }
                 }
-                .buttonStyle(.plain)
-                .contentShape(Rectangle())
             }
         }
+    }
+
+    private var statusBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: outcome.isClearSigned ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                .foregroundStyle(outcome.isClearSigned ? .green : .orange)
+            Text(outcome.isClearSigned ? "Clear Signed" : outcome.fallbackReason?.displayLabel ?? "Fallback")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(outcome.isClearSigned ? .green : .orange)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(outcome.isClearSigned ? Color.green.opacity(0.12) : Color.orange.opacity(0.14))
+        )
     }
 
     @ViewBuilder
@@ -54,7 +84,7 @@ struct DisplayModelView: View {
                         .padding(.leading, 12)
                 }
             }
-        case .nested(let label, let intent, let entries, _):
+        case .nested(let label, let intent, let entries):
             VStack(alignment: .leading, spacing: 6) {
                 Text(label)
                     .font(.subheadline.bold())

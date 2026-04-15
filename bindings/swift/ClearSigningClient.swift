@@ -1,5 +1,70 @@
 import Foundation
 
+public extension FormatOutcome {
+    var model: DisplayModel {
+        switch self {
+        case .clearSigned(let model, _), .fallback(let model, _, _):
+            return model
+        }
+    }
+
+    var diagnostics: [FormatDiagnostic] {
+        switch self {
+        case .clearSigned(_, let diagnostics), .fallback(_, _, let diagnostics):
+            return diagnostics
+        }
+    }
+
+    var fallbackReason: FallbackReason? {
+        switch self {
+        case .clearSigned:
+            return nil
+        case .fallback(_, let reason, _):
+            return reason
+        }
+    }
+
+    var isClearSigned: Bool {
+        if case .clearSigned = self {
+            return true
+        }
+        return false
+    }
+}
+
+public extension DescriptorResolutionOutcome {
+    var descriptors: [String] {
+        switch self {
+        case .found(let descriptors):
+            return descriptors
+        case .notFound:
+            return []
+        }
+    }
+}
+
+public extension FormatFailure {
+    var message: String {
+        switch self {
+        case .InvalidInput(let message, _),
+                .InvalidDescriptor(let message, _),
+                .ResolutionFailed(let message, _),
+                .Internal(let message, _):
+            return message
+        }
+    }
+
+    var retryable: Bool {
+        switch self {
+        case .InvalidInput(_, let retryable),
+                .InvalidDescriptor(_, let retryable),
+                .ResolutionFailed(_, let retryable),
+                .Internal(_, let retryable):
+            return retryable
+        }
+    }
+}
+
 public final class ClearSigningClient {
     private let dataProvider: DataProviderFfi
 
@@ -13,7 +78,7 @@ public final class ClearSigningClient {
         calldataHex: String,
         valueHex: String? = nil,
         fromAddress: String? = nil
-    ) async throws -> DisplayModel {
+    ) async throws -> FormatOutcome {
         let transaction = TransactionInput(
             chainId: chainId,
             to: to,
@@ -23,7 +88,7 @@ public final class ClearSigningClient {
         )
         let descriptors = try await resolveDescriptorsForTx(transaction: transaction)
         return try await clearSigningFormatCalldata(
-            descriptorsJson: descriptors,
+            descriptorsJson: descriptors.descriptors,
             transaction: transaction,
             dataProvider: dataProvider
         )
@@ -31,10 +96,10 @@ public final class ClearSigningClient {
 
     public func formatTypedData(
         typedDataJson: String
-    ) async throws -> DisplayModel {
+    ) async throws -> FormatOutcome {
         let descriptors = try await resolveDescriptorsForTypedData(typedDataJson: typedDataJson)
         return try await clearSigningFormatTypedData(
-            descriptorsJson: descriptors,
+            descriptorsJson: descriptors.descriptors,
             typedDataJson: typedDataJson,
             dataProvider: dataProvider
         )
@@ -46,7 +111,7 @@ public final class ClearSigningClient {
         calldataHex: String,
         valueHex: String? = nil,
         fromAddress: String? = nil
-    ) async throws -> [String] {
+    ) async throws -> DescriptorResolutionOutcome {
         let transaction = TransactionInput(
             chainId: chainId,
             to: to,
@@ -59,7 +124,7 @@ public final class ClearSigningClient {
 
     public func resolveDescriptorsForTypedData(
         typedDataJson: String
-    ) async throws -> [String] {
+    ) async throws -> DescriptorResolutionOutcome {
         try await clearSigningResolveDescriptorsForTypedData(
             typedDataJson: typedDataJson,
             dataProvider: dataProvider
@@ -68,7 +133,7 @@ public final class ClearSigningClient {
 
     private func resolveDescriptorsForTx(
         transaction: TransactionInput
-    ) async throws -> [String] {
+    ) async throws -> DescriptorResolutionOutcome {
         try await clearSigningResolveDescriptorsForTx(
             transaction: transaction,
             dataProvider: dataProvider

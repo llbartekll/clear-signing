@@ -457,6 +457,30 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterBool : FfiConverter {
+    typealias FfiType = Int8
+    typealias SwiftType = Bool
+
+    public static func lift(_ value: Int8) throws -> Bool {
+        return value != 0
+    }
+
+    public static func lower(_ value: Bool) -> Int8 {
+        return value ? 1 : 0
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Bool {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Bool, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterString: FfiConverter {
     typealias SwiftType = String
     typealias FfiType = RustBuffer
@@ -976,7 +1000,6 @@ public struct DisplayModel: Equatable, Hashable {
     public var intent: String
     public var interpolatedIntent: String?
     public var entries: [DisplayEntry]
-    public var warnings: [String]
     /**
      * Owner of the descriptor that produced this model (from `metadata.owner`).
      */
@@ -984,14 +1007,13 @@ public struct DisplayModel: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(intent: String, interpolatedIntent: String?, entries: [DisplayEntry], warnings: [String], 
+    public init(intent: String, interpolatedIntent: String?, entries: [DisplayEntry], 
         /**
          * Owner of the descriptor that produced this model (from `metadata.owner`).
          */owner: String?) {
         self.intent = intent
         self.interpolatedIntent = interpolatedIntent
         self.entries = entries
-        self.warnings = warnings
         self.owner = owner
     }
 
@@ -1014,7 +1036,6 @@ public struct FfiConverterTypeDisplayModel: FfiConverterRustBuffer {
                 intent: FfiConverterString.read(from: &buf), 
                 interpolatedIntent: FfiConverterOptionString.read(from: &buf), 
                 entries: FfiConverterSequenceTypeDisplayEntry.read(from: &buf), 
-                warnings: FfiConverterSequenceString.read(from: &buf), 
                 owner: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -1023,7 +1044,6 @@ public struct FfiConverterTypeDisplayModel: FfiConverterRustBuffer {
         FfiConverterString.write(value.intent, into: &buf)
         FfiConverterOptionString.write(value.interpolatedIntent, into: &buf)
         FfiConverterSequenceTypeDisplayEntry.write(value.entries, into: &buf)
-        FfiConverterSequenceString.write(value.warnings, into: &buf)
         FfiConverterOptionString.write(value.owner, into: &buf)
     }
 }
@@ -1041,6 +1061,64 @@ public func FfiConverterTypeDisplayModel_lift(_ buf: RustBuffer) throws -> Displ
 #endif
 public func FfiConverterTypeDisplayModel_lower(_ value: DisplayModel) -> RustBuffer {
     return FfiConverterTypeDisplayModel.lower(value)
+}
+
+
+public struct FormatDiagnostic: Equatable, Hashable {
+    public var code: String
+    public var severity: DiagnosticSeverity
+    public var message: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(code: String, severity: DiagnosticSeverity, message: String) {
+        self.code = code
+        self.severity = severity
+        self.message = message
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FormatDiagnostic: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFormatDiagnostic: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FormatDiagnostic {
+        return
+            try FormatDiagnostic(
+                code: FfiConverterString.read(from: &buf), 
+                severity: FfiConverterTypeDiagnosticSeverity.read(from: &buf), 
+                message: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FormatDiagnostic, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.code, into: &buf)
+        FfiConverterTypeDiagnosticSeverity.write(value.severity, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFormatDiagnostic_lift(_ buf: RustBuffer) throws -> FormatDiagnostic {
+    return try FfiConverterTypeFormatDiagnostic.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFormatDiagnostic_lower(_ value: FormatDiagnostic) -> RustBuffer {
+    return FfiConverterTypeFormatDiagnostic.lower(value)
 }
 
 
@@ -1169,6 +1247,143 @@ public func FfiConverterTypeTransactionInput_lower(_ value: TransactionInput) ->
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum DescriptorResolutionOutcome: Equatable, Hashable {
+    
+    case found([String]
+    )
+    case notFound
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DescriptorResolutionOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDescriptorResolutionOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = DescriptorResolutionOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DescriptorResolutionOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .found(try FfiConverterSequenceString.read(from: &buf)
+        )
+        
+        case 2: return .notFound
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DescriptorResolutionOutcome, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .found(v1):
+            writeInt(&buf, Int32(1))
+            FfiConverterSequenceString.write(v1, into: &buf)
+            
+        
+        case .notFound:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDescriptorResolutionOutcome_lift(_ buf: RustBuffer) throws -> DescriptorResolutionOutcome {
+    return try FfiConverterTypeDescriptorResolutionOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDescriptorResolutionOutcome_lower(_ value: DescriptorResolutionOutcome) -> RustBuffer {
+    return FfiConverterTypeDescriptorResolutionOutcome.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum DiagnosticSeverity: Equatable, Hashable {
+    
+    case info
+    case warning
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension DiagnosticSeverity: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDiagnosticSeverity: FfiConverterRustBuffer {
+    typealias SwiftType = DiagnosticSeverity
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DiagnosticSeverity {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .info
+        
+        case 2: return .warning
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DiagnosticSeverity, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .info:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .warning:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticSeverity_lift(_ buf: RustBuffer) throws -> DiagnosticSeverity {
+    return try FfiConverterTypeDiagnosticSeverity.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDiagnosticSeverity_lower(_ value: DiagnosticSeverity) -> RustBuffer {
+    return FfiConverterTypeDiagnosticSeverity.lower(value)
+}
+
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 /**
  * A display entry — either a flat item, a group of items, or a nested calldata call.
  */
@@ -1179,7 +1394,7 @@ public enum DisplayEntry: Equatable, Hashable {
     )
     case group(label: String, iteration: GroupIteration, items: [DisplayItem]
     )
-    case nested(label: String, intent: String, entries: [DisplayEntry], warnings: [String]
+    case nested(label: String, intent: String, entries: [DisplayEntry]
     )
 
 
@@ -1208,7 +1423,7 @@ public struct FfiConverterTypeDisplayEntry: FfiConverterRustBuffer {
         case 2: return .group(label: try FfiConverterString.read(from: &buf), iteration: try FfiConverterTypeGroupIteration.read(from: &buf), items: try FfiConverterSequenceTypeDisplayItem.read(from: &buf)
         )
         
-        case 3: return .nested(label: try FfiConverterString.read(from: &buf), intent: try FfiConverterString.read(from: &buf), entries: try FfiConverterSequenceTypeDisplayEntry.read(from: &buf), warnings: try FfiConverterSequenceString.read(from: &buf)
+        case 3: return .nested(label: try FfiConverterString.read(from: &buf), intent: try FfiConverterString.read(from: &buf), entries: try FfiConverterSequenceTypeDisplayEntry.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -1231,12 +1446,11 @@ public struct FfiConverterTypeDisplayEntry: FfiConverterRustBuffer {
             FfiConverterSequenceTypeDisplayItem.write(items, into: &buf)
             
         
-        case let .nested(label,intent,entries,warnings):
+        case let .nested(label,intent,entries):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(label, into: &buf)
             FfiConverterString.write(intent, into: &buf)
             FfiConverterSequenceTypeDisplayEntry.write(entries, into: &buf)
-            FfiConverterSequenceString.write(warnings, into: &buf)
             
         }
     }
@@ -1258,28 +1472,99 @@ public func FfiConverterTypeDisplayEntry_lower(_ value: DisplayEntry) -> RustBuf
 }
 
 
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
-public enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+public enum FallbackReason: Equatable, Hashable {
+    
+    case descriptorNotFound
+    case formatNotFound
+    case nestedCallNotClearSigned
+    case insufficientContext
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FallbackReason: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFallbackReason: FfiConverterRustBuffer {
+    typealias SwiftType = FallbackReason
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FallbackReason {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .descriptorNotFound
+        
+        case 2: return .formatNotFound
+        
+        case 3: return .nestedCallNotClearSigned
+        
+        case 4: return .insufficientContext
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FallbackReason, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .descriptorNotFound:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .formatNotFound:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .nestedCallNotClearSigned:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .insufficientContext:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFallbackReason_lift(_ buf: RustBuffer) throws -> FallbackReason {
+    return try FfiConverterTypeFallbackReason.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFallbackReason_lower(_ value: FallbackReason) -> RustBuffer {
+    return FfiConverterTypeFallbackReason.lower(value)
+}
+
+
+
+public enum FormatFailure: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
 
     
     
-    case InvalidDescriptorJson(String
+    case InvalidInput(message: String, retryable: Bool
     )
-    case InvalidTypedDataJson(String
+    case InvalidDescriptor(message: String, retryable: Bool
     )
-    case InvalidCalldataHex(String
+    case ResolutionFailed(message: String, retryable: Bool
     )
-    case InvalidValueHex(String
-    )
-    case Decode(String
-    )
-    case Descriptor(String
-    )
-    case Resolve(String
-    )
-    case TokenRegistry(String
-    )
-    case Render(String
+    case Internal(message: String, retryable: Bool
     )
 
     
@@ -1294,104 +1579,72 @@ public enum FfiError: Swift.Error, Equatable, Hashable, Foundation.LocalizedErro
 }
 
 #if compiler(>=6)
-extension FfiError: Sendable {}
+extension FormatFailure: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
-    typealias SwiftType = FfiError
+public struct FfiConverterTypeFormatFailure: FfiConverterRustBuffer {
+    typealias SwiftType = FormatFailure
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiError {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FormatFailure {
         let variant: Int32 = try readInt(&buf)
         switch variant {
 
         
 
         
-        case 1: return .InvalidDescriptorJson(
-            try FfiConverterString.read(from: &buf)
+        case 1: return .InvalidInput(
+            message: try FfiConverterString.read(from: &buf), 
+            retryable: try FfiConverterBool.read(from: &buf)
             )
-        case 2: return .InvalidTypedDataJson(
-            try FfiConverterString.read(from: &buf)
+        case 2: return .InvalidDescriptor(
+            message: try FfiConverterString.read(from: &buf), 
+            retryable: try FfiConverterBool.read(from: &buf)
             )
-        case 3: return .InvalidCalldataHex(
-            try FfiConverterString.read(from: &buf)
+        case 3: return .ResolutionFailed(
+            message: try FfiConverterString.read(from: &buf), 
+            retryable: try FfiConverterBool.read(from: &buf)
             )
-        case 4: return .InvalidValueHex(
-            try FfiConverterString.read(from: &buf)
-            )
-        case 5: return .Decode(
-            try FfiConverterString.read(from: &buf)
-            )
-        case 6: return .Descriptor(
-            try FfiConverterString.read(from: &buf)
-            )
-        case 7: return .Resolve(
-            try FfiConverterString.read(from: &buf)
-            )
-        case 8: return .TokenRegistry(
-            try FfiConverterString.read(from: &buf)
-            )
-        case 9: return .Render(
-            try FfiConverterString.read(from: &buf)
+        case 4: return .Internal(
+            message: try FfiConverterString.read(from: &buf), 
+            retryable: try FfiConverterBool.read(from: &buf)
             )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
-    public static func write(_ value: FfiError, into buf: inout [UInt8]) {
+    public static func write(_ value: FormatFailure, into buf: inout [UInt8]) {
         switch value {
 
         
 
         
         
-        case let .InvalidDescriptorJson(v1):
+        case let .InvalidInput(message,retryable):
             writeInt(&buf, Int32(1))
-            FfiConverterString.write(v1, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            FfiConverterBool.write(retryable, into: &buf)
             
         
-        case let .InvalidTypedDataJson(v1):
+        case let .InvalidDescriptor(message,retryable):
             writeInt(&buf, Int32(2))
-            FfiConverterString.write(v1, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            FfiConverterBool.write(retryable, into: &buf)
             
         
-        case let .InvalidCalldataHex(v1):
+        case let .ResolutionFailed(message,retryable):
             writeInt(&buf, Int32(3))
-            FfiConverterString.write(v1, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            FfiConverterBool.write(retryable, into: &buf)
             
         
-        case let .InvalidValueHex(v1):
+        case let .Internal(message,retryable):
             writeInt(&buf, Int32(4))
-            FfiConverterString.write(v1, into: &buf)
-            
-        
-        case let .Decode(v1):
-            writeInt(&buf, Int32(5))
-            FfiConverterString.write(v1, into: &buf)
-            
-        
-        case let .Descriptor(v1):
-            writeInt(&buf, Int32(6))
-            FfiConverterString.write(v1, into: &buf)
-            
-        
-        case let .Resolve(v1):
-            writeInt(&buf, Int32(7))
-            FfiConverterString.write(v1, into: &buf)
-            
-        
-        case let .TokenRegistry(v1):
-            writeInt(&buf, Int32(8))
-            FfiConverterString.write(v1, into: &buf)
-            
-        
-        case let .Render(v1):
-            writeInt(&buf, Int32(9))
-            FfiConverterString.write(v1, into: &buf)
+            FfiConverterString.write(message, into: &buf)
+            FfiConverterBool.write(retryable, into: &buf)
             
         }
     }
@@ -1401,16 +1654,92 @@ public struct FfiConverterTypeFfiError: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeFfiError_lift(_ buf: RustBuffer) throws -> FfiError {
-    return try FfiConverterTypeFfiError.lift(buf)
+public func FfiConverterTypeFormatFailure_lift(_ buf: RustBuffer) throws -> FormatFailure {
+    return try FfiConverterTypeFormatFailure.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeFfiError_lower(_ value: FfiError) -> RustBuffer {
-    return FfiConverterTypeFfiError.lower(value)
+public func FfiConverterTypeFormatFailure_lower(_ value: FormatFailure) -> RustBuffer {
+    return FfiConverterTypeFormatFailure.lower(value)
 }
+
+// Note that we don't yet support `indirect` for enums.
+// See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+
+public enum FormatOutcome: Equatable, Hashable {
+    
+    case clearSigned(model: DisplayModel, diagnostics: [FormatDiagnostic]
+    )
+    case fallback(model: DisplayModel, reason: FallbackReason, diagnostics: [FormatDiagnostic]
+    )
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FormatOutcome: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFormatOutcome: FfiConverterRustBuffer {
+    typealias SwiftType = FormatOutcome
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FormatOutcome {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .clearSigned(model: try FfiConverterTypeDisplayModel.read(from: &buf), diagnostics: try FfiConverterSequenceTypeFormatDiagnostic.read(from: &buf)
+        )
+        
+        case 2: return .fallback(model: try FfiConverterTypeDisplayModel.read(from: &buf), reason: try FfiConverterTypeFallbackReason.read(from: &buf), diagnostics: try FfiConverterSequenceTypeFormatDiagnostic.read(from: &buf)
+        )
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FormatOutcome, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case let .clearSigned(model,diagnostics):
+            writeInt(&buf, Int32(1))
+            FfiConverterTypeDisplayModel.write(model, into: &buf)
+            FfiConverterSequenceTypeFormatDiagnostic.write(diagnostics, into: &buf)
+            
+        
+        case let .fallback(model,reason,diagnostics):
+            writeInt(&buf, Int32(2))
+            FfiConverterTypeDisplayModel.write(model, into: &buf)
+            FfiConverterTypeFallbackReason.write(reason, into: &buf)
+            FfiConverterSequenceTypeFormatDiagnostic.write(diagnostics, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFormatOutcome_lift(_ buf: RustBuffer) throws -> FormatOutcome {
+    return try FfiConverterTypeFormatOutcome.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFormatOutcome_lower(_ value: FormatOutcome) -> RustBuffer {
+    return FfiConverterTypeFormatOutcome.lower(value)
+}
+
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
@@ -1652,6 +1981,31 @@ fileprivate struct FfiConverterSequenceTypeDisplayItem: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFormatDiagnostic: FfiConverterRustBuffer {
+    typealias SwiftType = [FormatDiagnostic]
+
+    public static func write(_ value: [FormatDiagnostic], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFormatDiagnostic.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FormatDiagnostic] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FormatDiagnostic]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFormatDiagnostic.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeDisplayEntry: FfiConverterRustBuffer {
     typealias SwiftType = [DisplayEntry]
 
@@ -1728,7 +2082,7 @@ fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: In
  * The wallet is responsible for descriptor resolution (via `clear_signing_resolve_descriptor`
  * or its own source). Proxy detection is automatic when `data_provider` is provided.
  */
-public func clearSigningFormatCalldata(descriptorsJson: [String], transaction: TransactionInput, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+public func clearSigningFormatCalldata(descriptorsJson: [String], transaction: TransactionInput, dataProvider: DataProviderFfi?)async throws  -> FormatOutcome  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1738,8 +2092,8 @@ public func clearSigningFormatCalldata(descriptorsJson: [String], transaction: T
             pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
             completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
             freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeDisplayModel_lift,
-            errorHandler: FfiConverterTypeFfiError_lift
+            liftFunc: FfiConverterTypeFormatOutcome_lift,
+            errorHandler: FfiConverterTypeFormatFailure_lift
         )
 }
 /**
@@ -1747,7 +2101,7 @@ public func clearSigningFormatCalldata(descriptorsJson: [String], transaction: T
  *
  * Takes pre-resolved descriptor JSON strings and the EIP-712 typed data JSON.
  */
-public func clearSigningFormatTypedData(descriptorsJson: [String], typedDataJson: String, dataProvider: DataProviderFfi?)async throws  -> DisplayModel  {
+public func clearSigningFormatTypedData(descriptorsJson: [String], typedDataJson: String, dataProvider: DataProviderFfi?)async throws  -> FormatOutcome  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1757,8 +2111,8 @@ public func clearSigningFormatTypedData(descriptorsJson: [String], typedDataJson
             pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
             completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
             freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterTypeDisplayModel_lift,
-            errorHandler: FfiConverterTypeFfiError_lift
+            liftFunc: FfiConverterTypeFormatOutcome_lift,
+            errorHandler: FfiConverterTypeFormatFailure_lift
         )
 }
 /**
@@ -1767,7 +2121,7 @@ public func clearSigningFormatTypedData(descriptorsJson: [String], typedDataJson
  * Returns merged JSON ready for use with `clear_signing_format_calldata` / `clear_signing_format_typed_data`.
  */
 public func clearSigningMergeDescriptors(includingJson: String, includedJson: String)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFfiError_lift) {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeFormatFailure_lift) {
     uniffi_clear_signing_fn_func_clear_signing_merge_descriptors(
         FfiConverterString.lower(includingJson),
         FfiConverterString.lower(includedJson),$0
@@ -1780,7 +2134,7 @@ public func clearSigningMergeDescriptors(includingJson: String, includedJson: St
  * Returns the descriptor JSON string, or `None` if no descriptor is found.
  * Requires the `github-registry` feature.
  */
-public func clearSigningResolveDescriptor(chainId: UInt64, address: String)async throws  -> String?  {
+public func clearSigningResolveDescriptor(chainId: UInt64, address: String)async throws  -> DescriptorResolutionOutcome  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1790,8 +2144,8 @@ public func clearSigningResolveDescriptor(chainId: UInt64, address: String)async
             pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
             completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
             freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionString.lift,
-            errorHandler: FfiConverterTypeFfiError_lift
+            liftFunc: FfiConverterTypeDescriptorResolutionOutcome_lift,
+            errorHandler: FfiConverterTypeFormatFailure_lift
         )
 }
 /**
@@ -1802,7 +2156,7 @@ public func clearSigningResolveDescriptor(chainId: UInt64, address: String)async
  * Returns empty vec if no descriptor is found for the outer address.
  * Automatically detects proxy contracts via `data_provider.get_implementation_address`.
  */
-public func clearSigningResolveDescriptorsForTx(transaction: TransactionInput, dataProvider: DataProviderFfi)async throws  -> [String]  {
+public func clearSigningResolveDescriptorsForTx(transaction: TransactionInput, dataProvider: DataProviderFfi)async throws  -> DescriptorResolutionOutcome  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1812,8 +2166,8 @@ public func clearSigningResolveDescriptorsForTx(transaction: TransactionInput, d
             pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
             completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
             freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceString.lift,
-            errorHandler: FfiConverterTypeFfiError_lift
+            liftFunc: FfiConverterTypeDescriptorResolutionOutcome_lift,
+            errorHandler: FfiConverterTypeFormatFailure_lift
         )
 }
 /**
@@ -1824,7 +2178,7 @@ public func clearSigningResolveDescriptorsForTx(transaction: TransactionInput, d
  * Returns empty vec if no descriptor is found for the outer verifying contract.
  * Automatically detects proxy contracts via `data_provider.get_implementation_address`.
  */
-public func clearSigningResolveDescriptorsForTypedData(typedDataJson: String, dataProvider: DataProviderFfi)async throws  -> [String]  {
+public func clearSigningResolveDescriptorsForTypedData(typedDataJson: String, dataProvider: DataProviderFfi)async throws  -> DescriptorResolutionOutcome  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
@@ -1834,8 +2188,8 @@ public func clearSigningResolveDescriptorsForTypedData(typedDataJson: String, da
             pollFunc: ffi_clear_signing_rust_future_poll_rust_buffer,
             completeFunc: ffi_clear_signing_rust_future_complete_rust_buffer,
             freeFunc: ffi_clear_signing_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterSequenceString.lift,
-            errorHandler: FfiConverterTypeFfiError_lift
+            liftFunc: FfiConverterTypeDescriptorResolutionOutcome_lift,
+            errorHandler: FfiConverterTypeFormatFailure_lift
         )
 }
 
@@ -1854,22 +2208,22 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_clear_signing_checksum_func_clear_signing_format_calldata() != 17729) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_format_calldata() != 40735) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_clear_signing_checksum_func_clear_signing_format_typed_data() != 29131) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_format_typed_data() != 51995) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_clear_signing_checksum_func_clear_signing_merge_descriptors() != 42834) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_merge_descriptors() != 3376) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptor() != 48535) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptor() != 58425) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptors_for_tx() != 34604) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptors_for_tx() != 46128) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptors_for_typed_data() != 54303) {
+    if (uniffi_clear_signing_checksum_func_clear_signing_resolve_descriptors_for_typed_data() != 25097) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_token() != 12923) {

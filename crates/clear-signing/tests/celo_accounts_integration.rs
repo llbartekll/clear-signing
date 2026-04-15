@@ -73,9 +73,16 @@ async fn run_celo_accounts_test(
         from: Some(from),
         implementation_address: None,
     };
-    format_calldata(&descriptors, &tx, &EmptyDataProvider)
+    let result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
         .await
-        .unwrap()
+        .unwrap();
+    assert!(result.is_clear_signed(), "expected clear-signed outcome");
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
+    result.into_model()
 }
 
 #[tokio::test]
@@ -88,11 +95,6 @@ async fn celo_accounts_create_account_formats() {
     .await;
 
     assert_eq!(result.intent, "Create Account");
-    assert!(
-        result.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        result.warnings
-    );
     assert_eq!(
         entry_value(&result.entries, "Account Owner"),
         "0xebB21A1e1c7f456Efb42add2Fa31F0f19b4CE8BC"
@@ -109,11 +111,6 @@ async fn celo_accounts_authorize_vote_signer_formats() {
     .await;
 
     assert_eq!(result.intent, "Authorize & Set Vote");
-    assert!(
-        result.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        result.warnings
-    );
     assert_eq!(
         entry_value(&result.entries, "Authorized Signer"),
         "0x4797E71F1CdB12A43a64954E67a5EF19bb2e0823"
@@ -130,10 +127,5 @@ async fn celo_accounts_set_name_formats() {
     .await;
 
     assert_eq!(result.intent, "Set Account Name");
-    assert!(
-        result.warnings.is_empty(),
-        "unexpected warnings: {:?}",
-        result.warnings
-    );
     assert_eq!(entry_value(&result.entries, "Name"), "AngoPlus-node1");
 }

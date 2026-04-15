@@ -339,23 +339,18 @@ async fn userop_no_matching_inner_descriptor() {
         .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&clear_signing::FallbackReason::NestedCallNotClearSigned)
+    );
 
     // Embedded Call should degrade gracefully
     match &result.entries[1] {
-        DisplayEntry::Nested {
-            label,
-            intent,
-            warnings,
-            ..
-        } => {
+        DisplayEntry::Nested { label, intent, .. } => {
             assert_eq!(label, "Embedded Call");
             assert!(
                 intent.contains("Unknown function"),
                 "expected raw fallback, got: {intent}"
-            );
-            assert!(
-                !warnings.is_empty(),
-                "expected warnings for missing descriptor"
             );
         }
         other => {

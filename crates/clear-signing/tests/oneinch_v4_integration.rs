@@ -105,7 +105,7 @@ async fn smoke_1inch_v4_swap_eth_to_sand() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() { eprintln!("  warnings: {:?}", model.warnings); }
+            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
         }
         Err(e) => eprintln!("FAIL swap ETH→SAND: {e}"),
     }
@@ -145,7 +145,7 @@ async fn smoke_1inch_v4_swap_syn_to_eth() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() { eprintln!("  warnings: {:?}", model.warnings); }
+            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
         }
         Err(e) => eprintln!("FAIL swap SYN→ETH: {e}"),
     }
@@ -187,7 +187,7 @@ async fn smoke_1inch_v4_unoswap_weth() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() { eprintln!("  warnings: {:?}", model.warnings); }
+            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
         }
         Err(e) => eprintln!("FAIL unoswap WETH: {e}"),
     }
@@ -227,7 +227,7 @@ async fn smoke_1inch_v4_unoswap_weth_1() {
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.warnings.is_empty() { eprintln!("  warnings: {:?}", model.warnings); }
+            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
         }
         Err(e) => eprintln!("FAIL unoswap WETH #1: {e}"),
     }

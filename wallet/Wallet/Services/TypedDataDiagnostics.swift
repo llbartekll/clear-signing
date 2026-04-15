@@ -47,6 +47,7 @@ struct TypedDataCapture: Identifiable, Codable {
         case payloadExtracted
         case payloadExtractionFailed
         case clearSigningSucceeded
+        case clearSigningFallback
         case clearSigningFailed
         case signingSucceeded
         case signingFailed
@@ -72,10 +73,14 @@ struct TypedDataCapture: Identifiable, Codable {
     var descriptorOwners: [String]?
     var resolvedDescriptorsJson: [String]?
     var selectedDescriptorOwner: String?
+    var clearSigningOutcomeKind: ClearSigningOutcomeKind?
+    var clearSigningFallbackReason: String?
+    var clearSigningDiagnostics: [CapturedFormatDiagnostic]?
     var clearSigningIntent: String?
     var clearSigningInterpolatedIntent: String?
-    var clearSigningWarnings: [String]?
     var clearSigningEntryPreview: [String]?
+    var clearSigningFailureType: String?
+    var clearSigningFailureRetryable: Bool?
     var clearSigningError: String?
     var errorDescription: String?
     var signerError: String?
@@ -99,10 +104,14 @@ struct TypedDataCapture: Identifiable, Codable {
         self.descriptorOwners = nil
         self.resolvedDescriptorsJson = nil
         self.selectedDescriptorOwner = nil
+        self.clearSigningOutcomeKind = nil
+        self.clearSigningFallbackReason = nil
+        self.clearSigningDiagnostics = nil
         self.clearSigningIntent = nil
         self.clearSigningInterpolatedIntent = nil
-        self.clearSigningWarnings = nil
         self.clearSigningEntryPreview = nil
+        self.clearSigningFailureType = nil
+        self.clearSigningFailureRetryable = nil
         self.clearSigningError = nil
         self.errorDescription = nil
         self.signerError = nil
@@ -133,10 +142,14 @@ struct TypedDataCapture: Identifiable, Codable {
         self.descriptorOwners = nil
         self.resolvedDescriptorsJson = nil
         self.selectedDescriptorOwner = nil
+        self.clearSigningOutcomeKind = nil
+        self.clearSigningFallbackReason = nil
+        self.clearSigningDiagnostics = nil
         self.clearSigningIntent = nil
         self.clearSigningInterpolatedIntent = nil
-        self.clearSigningWarnings = nil
         self.clearSigningEntryPreview = nil
+        self.clearSigningFailureType = nil
+        self.clearSigningFailureRetryable = nil
         self.clearSigningError = nil
         self.errorDescription = nil
         self.signerError = nil
@@ -155,28 +168,26 @@ struct TypedDataCapture: Identifiable, Codable {
     }
 
     mutating func applyClearSigningSuccess(_ formattingOutcome: TypedDataFormattingOutcome) {
-        outcome = .clearSigningSucceeded
+        guard let formatOutcome = formattingOutcome.formatOutcome else {
+            return
+        }
+
+        outcome = formatOutcome.isClearSigned ? .clearSigningSucceeded : .clearSigningFallback
         failedStage = nil
         descriptorCount = formattingOutcome.descriptorOwners.count
         descriptorOwners = formattingOutcome.descriptorOwners
         resolvedDescriptorsJson = formattingOutcome.resolvedDescriptorsJson
-        selectedDescriptorOwner = nil
-        clearSigningIntent = nil
-        clearSigningInterpolatedIntent = nil
-        clearSigningWarnings = nil
-        clearSigningEntryPreview = nil
+        selectedDescriptorOwner = formatOutcome.model.owner
+        clearSigningOutcomeKind = formatOutcome.outcomeKind
+        clearSigningFallbackReason = formatOutcome.fallbackReason?.captureValue
+        clearSigningDiagnostics = formatOutcome.diagnostics.map(CapturedFormatDiagnostic.init)
+        clearSigningIntent = formatOutcome.model.intent
+        clearSigningInterpolatedIntent = formatOutcome.model.interpolatedIntent
+        clearSigningEntryPreview = previewEntries(from: formatOutcome.model)
+        clearSigningFailureType = nil
+        clearSigningFailureRetryable = nil
         clearSigningError = nil
         errorDescription = nil
-
-        guard let model = formattingOutcome.model else {
-            return
-        }
-
-        selectedDescriptorOwner = model.owner
-        clearSigningIntent = model.intent
-        clearSigningInterpolatedIntent = model.interpolatedIntent
-        clearSigningWarnings = model.warnings
-        clearSigningEntryPreview = previewEntries(from: model)
     }
 
     mutating func applyClearSigningFailure(_ formattingOutcome: TypedDataFormattingOutcome) {
@@ -186,12 +197,16 @@ struct TypedDataCapture: Identifiable, Codable {
         descriptorOwners = formattingOutcome.descriptorOwners
         resolvedDescriptorsJson = formattingOutcome.resolvedDescriptorsJson
         selectedDescriptorOwner = nil
+        clearSigningOutcomeKind = .failure
+        clearSigningFallbackReason = nil
+        clearSigningDiagnostics = nil
         clearSigningIntent = nil
         clearSigningInterpolatedIntent = nil
-        clearSigningWarnings = nil
         clearSigningEntryPreview = nil
-        clearSigningError = formattingOutcome.error?.localizedDescription
-        errorDescription = formattingOutcome.error?.localizedDescription
+        clearSigningFailureType = formattingOutcome.formatFailure?.captureValue
+        clearSigningFailureRetryable = formattingOutcome.formatFailure?.retryable
+        clearSigningError = formattingOutcome.formatFailure?.message
+        errorDescription = formattingOutcome.formatFailure?.message
     }
 
     private func previewEntries(from model: DisplayModel) -> [String] {
@@ -201,7 +216,7 @@ struct TypedDataCapture: Identifiable, Codable {
                 return "\(item.label): \(item.value)"
             case .group(let label, _, let items):
                 return "\(label): \(items.count) item(s)"
-            case .nested(let label, _, _, _):
+            case .nested(let label, _, _):
                 return "\(label): nested"
             }
         }
@@ -216,7 +231,8 @@ struct TypedDataFormattingOutcome {
 
     let descriptorOwners: [String]
     let resolvedDescriptorsJson: [String]
-    let model: DisplayModel?
-    let error: Error?
+    let resolutionOutcome: DescriptorResolutionOutcome?
+    let formatOutcome: FormatOutcome?
+    let formatFailure: FormatFailure?
     let failedStage: Stage?
 }

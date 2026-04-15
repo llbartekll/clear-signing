@@ -12,6 +12,7 @@ mod eip712_domain;
 pub mod engine;
 pub mod error;
 pub mod merge;
+pub mod outcome;
 mod path;
 pub mod provider;
 mod render_shared;
@@ -22,10 +23,16 @@ pub mod types;
 pub mod uniffi_compat;
 
 use error::Error;
+use outcome::RenderState;
 
 // Re-exports for convenience
 pub use engine::{DisplayEntry, DisplayItem, DisplayModel};
+pub use error::FormatFailure;
 pub use merge::merge_descriptors;
+pub use outcome::{
+    DescriptorResolutionOutcome, DiagnosticSeverity, FallbackReason, FormatDiagnostic,
+    FormatOutcome, ResolvedDescriptorResolution,
+};
 pub use provider::{DataProvider, EmptyDataProvider};
 #[cfg(feature = "github-registry")]
 pub use resolver::resolve_descriptors_for_typed_data;
@@ -58,12 +65,16 @@ pub async fn format_calldata(
     descriptors: &[ResolvedDescriptor],
     tx: &TransactionContext<'_>,
     data_provider: &dyn DataProvider,
-) -> Result<DisplayModel, Error> {
+) -> Result<FormatOutcome, FormatFailure> {
     if tx.calldata.len() < 4 {
-        return Err(Error::Decode(error::DecodeError::CalldataTooShort {
-            expected: 4,
-            actual: tx.calldata.len(),
-        }));
+        return Err(FormatFailure::InvalidInput {
+            message: error::DecodeError::CalldataTooShort {
+                expected: 4,
+                actual: tx.calldata.len(),
+            }
+            .to_string(),
+            retryable: false,
+        });
     }
 
     // Find the outer descriptor matching chain_id + address.
@@ -80,12 +91,23 @@ pub async fn format_calldata(
         Some(idx) => idx,
         None => {
             if descriptors.is_empty() {
-                return Ok(build_raw_fallback(tx.calldata));
+                return Ok(fallback_outcome(
+                    build_raw_fallback(tx.calldata),
+                    FallbackReason::DescriptorNotFound,
+                    "descriptor_not_found",
+                    format!(
+                        "no descriptor matched chain_id={} address={}",
+                        tx.chain_id, match_address
+                    ),
+                ));
             }
-            return Err(Error::Descriptor(format!(
-                "no outer descriptor matches chain_id={} address={}",
-                tx.chain_id, match_address
-            )));
+            return Err(FormatFailure::InvalidDescriptor {
+                message: format!(
+                    "no outer descriptor matches chain_id={} address={}",
+                    tx.chain_id, match_address
+                ),
+                retryable: false,
+            });
         }
     };
 
@@ -97,18 +119,32 @@ pub async fn format_calldata(
         Ok(result) => result,
         Err(_) => {
             // Graceful fallback: return raw preview for unknown selectors
-            return Ok(build_raw_fallback(tx.calldata));
+            return Ok(fallback_outcome(
+                build_raw_fallback(tx.calldata),
+                FallbackReason::FormatNotFound,
+                "format_not_found",
+                format!(
+                    "no descriptor format matched selector 0x{}",
+                    hex::encode(actual_selector)
+                ),
+            ));
         }
     };
 
     // Decode calldata using the parsed signature
-    let mut decoded = decoder::decode_calldata(&sig, tx.calldata)?;
+    let mut decoded = decoder::decode_calldata(&sig, tx.calldata).map_err(|err| {
+        FormatFailure::InvalidInput {
+            message: err.to_string(),
+            retryable: false,
+        }
+    })?;
 
     // Inject container values as synthetic arguments
     inject_container_values(&mut decoded, tx.chain_id, tx.to, tx.value, tx.from);
 
     // Render the display model
-    engine::format_calldata(
+    let mut state = RenderState::default();
+    let model = engine::format_calldata(
         outer_descriptor,
         tx.chain_id,
         tx.to,
@@ -116,8 +152,12 @@ pub async fn format_calldata(
         tx.value,
         data_provider,
         descriptors,
+        &mut state,
     )
     .await
+    .map_err(FormatFailure::from)?;
+
+    Ok(state.outcome(model, None))
 }
 
 /// Inject EIP-7730 container values (@.value, @.to, @.chainId, @.from) as synthetic arguments.
@@ -217,7 +257,6 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
         intent: format!("Unknown function {}", selector),
         interpolated_intent: None,
         entries,
-        warnings: vec!["No matching descriptor format found".to_string()],
         owner: None,
     }
 }
@@ -231,33 +270,57 @@ pub async fn format_typed_data(
     descriptors: &[ResolvedDescriptor],
     data: &eip712::TypedData,
     data_provider: &dyn DataProvider,
-) -> Result<DisplayModel, Error> {
+) -> Result<FormatOutcome, FormatFailure> {
     if descriptors.is_empty() {
-        return Ok(eip712::build_typed_raw_fallback(data));
+        return Ok(fallback_outcome(
+            eip712::build_typed_raw_fallback(data),
+            FallbackReason::DescriptorNotFound,
+            "descriptor_not_found",
+            "no typed-data descriptor matched the verifying contract".to_string(),
+        ));
     }
 
-    let chain_id = data.domain.chain_id.ok_or_else(|| {
-        Error::Descriptor(
-            "EIP-712 domain.chainId is required when formatting with descriptors".to_string(),
-        )
-    })?;
-    let verifying_contract = data.domain.verifying_contract.as_deref().ok_or_else(|| {
-        Error::Descriptor(
-            "EIP-712 domain.verifyingContract is required when formatting with descriptors"
-                .to_string(),
-        )
-    })?;
+    let chain_id = match data.domain.chain_id {
+        Some(chain_id) => chain_id,
+        None => {
+            return Ok(fallback_outcome(
+                eip712::build_typed_raw_fallback(data),
+                FallbackReason::InsufficientContext,
+                "insufficient_context",
+                "EIP-712 domain.chainId is required for descriptor-based clear signing"
+                    .to_string(),
+            ));
+        }
+    };
+    let verifying_contract = match data.domain.verifying_contract.as_deref() {
+        Some(verifying_contract) => verifying_contract,
+        None => {
+            return Ok(fallback_outcome(
+                eip712::build_typed_raw_fallback(data),
+                FallbackReason::InsufficientContext,
+                "insufficient_context",
+                "EIP-712 domain.verifyingContract is required for descriptor-based clear signing"
+                    .to_string(),
+            ));
+        }
+    };
 
-    let selection = resolver::select_typed_outer_descriptor(descriptors, data)?;
+    let selection = resolver::select_typed_outer_descriptor(descriptors, data)
+        .map_err(FormatFailure::from)?;
 
     let selected = match selection {
         resolver::TypedOuterSelection::Selected(selected) => selected,
         resolver::TypedOuterSelection::NoMatch(no_match) => {
             if no_match.domain_errors.is_empty() && no_match.format_misses.len() == 1 {
-                return Err(
-                    eip712::find_typed_format(&no_match.format_misses[0].descriptor, data)
-                        .expect_err("single format miss must still fail exact format lookup"),
-                );
+                return Ok(fallback_outcome(
+                    eip712::build_typed_raw_fallback(data),
+                    FallbackReason::FormatNotFound,
+                    "format_not_found",
+                    format!(
+                        "no descriptor format matched primaryType={} encodeType for verifying_contract={}",
+                        data.primary_type, verifying_contract
+                    ),
+                ));
             }
             let mut message = format!(
                 "no EIP-712 descriptor found for chain_id={} verifying_contract={} after domain and encodeType validation",
@@ -267,20 +330,44 @@ pub async fn format_typed_data(
                 message.push_str(": ");
                 message.push_str(&no_match.domain_errors.join("; "));
             } else if !no_match.format_misses.is_empty() {
-                message.push_str(": no descriptor matched the typed-data encodeType");
+                return Ok(fallback_outcome(
+                    eip712::build_typed_raw_fallback(data),
+                    FallbackReason::FormatNotFound,
+                    "format_not_found",
+                    "no descriptor matched the typed-data encodeType".to_string(),
+                ));
             }
-            return Err(Error::Descriptor(message));
+            return Err(FormatFailure::InvalidDescriptor {
+                message,
+                retryable: false,
+            });
         }
     };
 
-    eip712::format_typed_data_with_format(
+    let mut state = RenderState::default();
+    let model = eip712::format_typed_data_with_format(
         &selected.outer.descriptor,
         data,
         selected.format,
         data_provider,
         descriptors,
+        &mut state,
     )
     .await
+    .map_err(FormatFailure::from)?;
+
+    Ok(state.outcome(model, None))
+}
+
+fn fallback_outcome(
+    model: DisplayModel,
+    reason: FallbackReason,
+    code: &str,
+    message: String,
+) -> FormatOutcome {
+    let mut state = RenderState::default();
+    state.warn(code, message);
+    state.outcome(model, Some(reason))
 }
 
 /// Find a format key whose signature matches the calldata selector.
@@ -799,7 +886,7 @@ mod tests {
             result.interpolated_intent.as_deref(),
             Some("Increase unlock time to 2025-12-19 13:42:21 UTC")
         );
-        assert!(result.warnings.is_empty());
+        assert!(result.diagnostics().is_empty());
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@ use std::pin::Pin;
 
 use crate::decoder::ArgumentValue;
 use crate::error::{Error, ResolveError};
+use crate::outcome::ResolvedDescriptorResolution;
 use crate::types::display::{DisplayField, FieldFormat};
 
 use super::source::{DescriptorSource, ResolvedDescriptor, TypedDescriptorLookup};
@@ -16,7 +17,7 @@ const MAX_RESOLVE_DEPTH: u8 = 3;
 pub async fn resolve_descriptors_for_tx(
     tx: &crate::TransactionContext<'_>,
     source: &dyn DescriptorSource,
-) -> Result<Vec<ResolvedDescriptor>, ResolveError> {
+) -> Result<ResolvedDescriptorResolution, ResolveError> {
     let mut results = Vec::new();
     let address = tx.implementation_address.unwrap_or(tx.to);
     resolve_recursive(
@@ -28,7 +29,11 @@ pub async fn resolve_descriptors_for_tx(
         &mut results,
     )
     .await?;
-    Ok(results)
+    Ok(if results.is_empty() {
+        ResolvedDescriptorResolution::NotFound
+    } else {
+        ResolvedDescriptorResolution::Found(results)
+    })
 }
 
 fn resolve_recursive<'a>(
@@ -116,14 +121,14 @@ fn resolve_recursive<'a>(
 pub async fn resolve_descriptors_for_typed_data(
     typed_data: &crate::eip712::TypedData,
     source: &dyn DescriptorSource,
-) -> Result<Vec<ResolvedDescriptor>, ResolveError> {
+) -> Result<ResolvedDescriptorResolution, ResolveError> {
     let mut results = Vec::new();
 
     let Some(chain_id) = typed_data.domain.chain_id else {
-        return Ok(results);
+        return Ok(ResolvedDescriptorResolution::NotFound);
     };
     let Some(verifying_contract) = typed_data.domain.verifying_contract.as_deref() else {
-        return Ok(results);
+        return Ok(ResolvedDescriptorResolution::NotFound);
     };
 
     let lookup = TypedDescriptorLookup {
@@ -138,7 +143,7 @@ pub async fn resolve_descriptors_for_typed_data(
 
     let candidates = match source.resolve_typed_candidates(lookup).await {
         Ok(r) => r,
-        Err(ResolveError::NotFound { .. }) => return Ok(results),
+        Err(ResolveError::NotFound { .. }) => return Ok(ResolvedDescriptorResolution::NotFound),
         Err(e) => return Err(e),
     };
 
@@ -146,7 +151,7 @@ pub async fn resolve_descriptors_for_typed_data(
         .map_err(|e| ResolveError::Parse(e.to_string()))?;
     let selected = match selection {
         TypedOuterSelection::Selected(selected) => selected,
-        TypedOuterSelection::NoMatch(_) => return Ok(results),
+        TypedOuterSelection::NoMatch(_) => return Ok(ResolvedDescriptorResolution::NotFound),
     };
 
     let mut warnings = Vec::new();
@@ -232,7 +237,11 @@ pub async fn resolve_descriptors_for_typed_data(
         }
     }
 
-    Ok(results)
+    Ok(if results.is_empty() {
+        ResolvedDescriptorResolution::NotFound
+    } else {
+        ResolvedDescriptorResolution::Found(results)
+    })
 }
 
 /// Info extracted from a `FieldFormat::Calldata` display field.
