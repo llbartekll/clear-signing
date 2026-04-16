@@ -78,7 +78,11 @@ async fn safe_add_owner_with_threshold() {
         "0x0f6a14d90c44b8731ea1f17b6e479a772171718c",
     ).await;
     assert!(result.is_clear_signed(), "expected clear-signed outcome");
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 
     assert_eq!(result.intent, "Add signer");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
@@ -97,7 +101,11 @@ async fn safe_remove_owner() {
         "0x0f6a14d90c44b8731ea1f17b6e479a772171718c",
     ).await;
     assert!(result.is_clear_signed(), "expected clear-signed outcome");
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 
     assert_eq!(result.intent, "Remove signer");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
@@ -116,7 +124,11 @@ async fn safe_swap_owner() {
         "0xc841d6ddf66467af551b35218c0c2e22f9c14b48",
     ).await;
     assert!(result.is_clear_signed(), "expected clear-signed outcome");
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 
     assert_eq!(result.intent, "Swap signer");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
@@ -139,7 +151,11 @@ async fn safe_change_threshold() {
     )
     .await;
     assert!(result.is_clear_signed(), "expected clear-signed outcome");
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 
     assert_eq!(result.intent, "Modify threshold");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
@@ -156,7 +172,11 @@ async fn safe_approve_hash() {
     )
     .await;
     assert!(result.is_clear_signed(), "expected clear-signed outcome");
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 
     assert_eq!(result.intent, "Approve Safe hash");
     assert_eq!(result.owner.as_deref(), Some("Safe{Wallet}"));
@@ -182,7 +202,14 @@ async fn safe_setup() {
         result
             .diagnostics()
             .iter()
-            .any(|diagnostic| diagnostic.message.contains("No matching descriptor for inner call")),
+            .any(|diagnostic| diagnostic.code == "nested_descriptor_not_found"),
+        "expected nested fallback diagnostic code, got {:?}",
+        result.diagnostics()
+    );
+    assert!(
+        result.diagnostics().iter().any(|diagnostic| diagnostic
+            .message
+            .contains("No matching descriptor for inner call")),
         "expected nested fallback diagnostic, got {:?}",
         result.diagnostics()
     );

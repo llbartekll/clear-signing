@@ -2,7 +2,9 @@
 //! Covers LeadBlock USDC RWA vault and Yield.xyz USDe vault.
 
 use clear_signing::resolver::ResolvedDescriptor;
-use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::token::{
+    CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource,
+};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 

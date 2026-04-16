@@ -2,7 +2,9 @@
 //! Real on-chain transactions from 0x8236a87084f8b84306f72007f36f2618a5634494 (Ethereum mainnet).
 
 use clear_signing::resolver::ResolvedDescriptor;
-use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::token::{
+    CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource,
+};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::{format_calldata, DisplayEntry, TransactionContext};
 
@@ -85,7 +87,11 @@ async fn lbtc_redeem_for_btc_p2tr() {
         get_item(&result, "ScriptPubKey (BTC)"),
         "0x51203ecfea2fc36feac3446a5e81629d316cf1e0b5226cdb134b35100502fb36c97f"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // Tx: 0x7e2b56c6038faff4a7a921ae3e6621570958afaa9814e254b70734f541c45f9e
@@ -112,7 +118,11 @@ async fn lbtc_redeem_for_btc_p2wpkh() {
         get_item(&result, "ScriptPubKey (BTC)"),
         "0x001437d5dc33584d8829b3503f2046095f3978f9d020"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // Tx: 0x9400d5dea6114bd894e53d9f09f24eeabc815ec99f18869c80dfbbef513add85
@@ -139,7 +149,11 @@ async fn lbtc_redeem_for_btc_p2wpkh_2() {
         get_item(&result, "ScriptPubKey (BTC)"),
         "0x00147e91f438c184df239a78d4e47fa00001affd3268"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // --- approve ---
@@ -168,7 +182,11 @@ async fn lbtc_approve_small_amount() {
         get_item(&result, "Spender"),
         "0x5f46d540b6eD704C3c8789105F30E075AA900726"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // Tx: 0xa0fe4f792e5c532995673b804cd3cf9bbe37b92bbe9316e39f565e70c4941556
@@ -195,7 +213,11 @@ async fn lbtc_approve_uniswap_v3() {
         get_item(&result, "Spender"),
         "0xC36442b4a4522E871399CD717aBDD847Ab11FE88"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // Tx: 0xbaab87544e796a22abf354d891a5055b7c155c420b709a1a669570e09037f338
@@ -222,7 +244,11 @@ async fn lbtc_approve_round_amount() {
         get_item(&result, "Spender"),
         "0x6131B5fae19EA4f9D964eAc0408E4408b66337b5"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // --- transfer ---
@@ -251,7 +277,11 @@ async fn lbtc_transfer_nearly_2_btc() {
         get_item(&result, "Recipient"),
         "0x1CD026EA8B42A376ABC5d471Fd8D6276a7913B93"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // Tx: 0x15cf154f4907a9217b802e30403ad600c01b786f48e471b299235f936cc861df
@@ -278,7 +308,11 @@ async fn lbtc_transfer_large_amount() {
         get_item(&result, "Recipient"),
         "0x52D757B42719Ce13C92EdD87fA14ccc0898c3F9B"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // Tx: 0x79aed93050daa27083540a041f61c47430148df727be458db4853e1fd846a9f9
@@ -305,7 +339,11 @@ async fn lbtc_transfer_dust_amount() {
         get_item(&result, "Recipient"),
         "0xf89d7b9c864f589bbF53a82105107622B35EaA40"
     );
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }
 
 // --- mint ---
@@ -331,9 +369,16 @@ async fn lbtc_mint_raw_payload() {
     assert_eq!(result.owner, Some("Lombard Finance".to_string()));
     // rawPayload starts with expected bytes from the on-chain data
     let payload = get_item(&result, "Payload");
-    assert!(payload.starts_with("0xe288fb4a67636e97dfe9e0a5f7c0ab17636a921dc777c6aa9d6665e810ce50d6"), "payload: {payload}");
+    assert!(
+        payload.starts_with("0xe288fb4a67636e97dfe9e0a5f7c0ab17636a921dc777c6aa9d6665e810ce50d6"),
+        "payload: {payload}"
+    );
     // proof is a large multi-sig proof array
     let proof = get_item(&result, "Proof");
     assert!(proof.starts_with("0x"), "proof should be hex: {proof}");
-    assert!(result.diagnostics().is_empty(), "unexpected diagnostics: {:?}", result.diagnostics());
+    assert!(
+        result.diagnostics().is_empty(),
+        "unexpected diagnostics: {:?}",
+        result.diagnostics()
+    );
 }

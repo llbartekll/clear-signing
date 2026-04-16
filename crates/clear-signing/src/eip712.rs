@@ -15,15 +15,14 @@ use crate::engine::{
     DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
-use crate::outcome::RenderState;
+use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
-    chain_name, coerce_unsigned_decimal_string_from_typed_value,
-    format_blockheight_timestamp, format_duration_seconds, format_timestamp,
-    format_token_amount_output, format_unit_biguint, is_excluded_path, lookup_map_entry,
-    native_token_meta, parse_unsigned_biguint_from_typed_value, resolve_interpolation_field_spec,
-    resolve_metadata_constant_str,
+    chain_name, coerce_unsigned_decimal_string_from_typed_value, format_blockheight_timestamp,
+    format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
+    is_excluded_path, lookup_map_entry, native_token_meta, parse_unsigned_biguint_from_typed_value,
+    resolve_interpolation_field_spec, resolve_metadata_constant_str,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -34,6 +33,8 @@ use crate::types::display::{
 
 /// Maximum recursion depth for nested calldata in EIP-712 context.
 const MAX_CALLDATA_DEPTH: u8 = 3;
+
+type RenderDiagnostics = Vec<FormatDiagnostic>;
 
 /// EIP-712 typed data as received for signing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,7 +191,7 @@ pub(crate) async fn format_typed_data_with_format(
     state: &mut RenderState,
 ) -> Result<DisplayModel, Error> {
     let container = TypedContainerContext::from_typed_data(data);
-    let mut warnings = Vec::new();
+    let mut warnings = RenderDiagnostics::new();
     let mut nested_fallback = false;
     let expanded_fields =
         crate::engine::expand_display_fields(descriptor, &format.fields, &mut warnings);
@@ -228,7 +229,10 @@ pub(crate) async fn format_typed_data_with_format(
             {
                 Ok(rendered) => Some(rendered),
                 Err(err) => {
-                    warnings.push(format!("interpolated intent skipped: {err}"));
+                    warnings.push(render_warning(
+                        RenderDiagnosticKind::InterpolatedIntentSkipped,
+                        format!("interpolated intent skipped: {err}"),
+                    ));
                     None
                 }
             },
@@ -238,7 +242,7 @@ pub(crate) async fn format_typed_data_with_format(
         owner: descriptor.metadata.owner.clone(),
     };
 
-    crate::engine::record_warnings(state, &warnings);
+    crate::engine::record_diagnostics(state, &warnings);
     if nested_fallback {
         state.mark_nested_fallback();
     }
@@ -294,7 +298,7 @@ fn render_typed_fields<'a>(
     fields: &[DisplayField],
     container: TypedContainerContext<'a>,
     data_provider: &'a dyn DataProvider,
-    warnings: &'a mut Vec<String>,
+    warnings: &'a mut RenderDiagnostics,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
     nested_fallback: &'a mut bool,
@@ -426,9 +430,10 @@ fn render_typed_fields<'a>(
                     }));
                 }
                 DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
-                    warnings.push(
-                        "unexpanded display field reached typed renderer; skipping".to_string(),
-                    );
+                    warnings.push(render_warning(
+                        RenderDiagnosticKind::GenericRenderWarning,
+                        "unexpanded display field reached typed renderer; skipping",
+                    ));
                 }
             }
         }
@@ -449,7 +454,7 @@ fn render_typed_group_field_kind<'a>(
     field: &'a DisplayField,
     container: TypedContainerContext<'a>,
     data_provider: &'a dyn DataProvider,
-    warnings: &'a mut Vec<String>,
+    warnings: &'a mut RenderDiagnostics,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
     nested_fallback: &'a mut bool,
@@ -632,7 +637,7 @@ fn render_typed_group_kind<'a>(
     group: &'a FieldGroup,
     container: TypedContainerContext<'a>,
     data_provider: &'a dyn DataProvider,
-    warnings: &'a mut Vec<String>,
+    warnings: &'a mut RenderDiagnostics,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
     nested_fallback: &'a mut bool,
@@ -717,7 +722,7 @@ async fn render_typed_field_group_entries<'a>(
     group: &FieldGroup,
     container: TypedContainerContext<'a>,
     data_provider: &'a dyn DataProvider,
-    warnings: &'a mut Vec<String>,
+    warnings: &'a mut RenderDiagnostics,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
     nested_fallback: &'a mut bool,
@@ -777,7 +782,7 @@ async fn render_typed_calldata_field(
     data_provider: &dyn DataProvider,
     descriptors: &[ResolvedDescriptor],
     depth: u8,
-    warnings: &mut Vec<String>,
+    warnings: &mut RenderDiagnostics,
     nested_fallback: &mut bool,
 ) -> Result<DisplayEntry, Error> {
     // Extract hex bytes from JSON value
@@ -790,7 +795,10 @@ async fn render_typed_calldata_field(
             match hex::decode(hex_str) {
                 Ok(bytes) => bytes,
                 Err(_) => {
-                    warnings.push("could not decode calldata hex".to_string());
+                    warnings.push(render_warning(
+                        RenderDiagnosticKind::NestedCalldataDegraded,
+                        "could not decode calldata hex",
+                    ));
                     *nested_fallback = true;
                     return Ok(DisplayEntry::Nested {
                         label: label.to_string(),
@@ -808,7 +816,10 @@ async fn render_typed_calldata_field(
                 .as_ref()
                 .map(json_value_to_string)
                 .unwrap_or_else(|| "<unresolved>".to_string());
-            warnings.push("calldata field is not a hex string".to_string());
+            warnings.push(render_warning(
+                RenderDiagnosticKind::NestedCalldataInvalidType,
+                "calldata field is not a hex string",
+            ));
             *nested_fallback = true;
             return Ok(DisplayEntry::Nested {
                 label: label.to_string(),
@@ -823,9 +834,12 @@ async fn render_typed_calldata_field(
 
     // Check depth limit
     if depth >= MAX_CALLDATA_DEPTH {
-        warnings.push(format!(
-            "nested calldata depth limit ({}) reached",
-            MAX_CALLDATA_DEPTH
+        warnings.push(render_warning(
+            RenderDiagnosticKind::NestedCalldataDegraded,
+            format!(
+                "nested calldata depth limit ({}) reached",
+                MAX_CALLDATA_DEPTH
+            ),
         ));
         *nested_fallback = true;
         return Ok(DisplayEntry::Nested {
@@ -841,7 +855,10 @@ async fn render_typed_calldata_field(
     let callee = match resolve_typed_nested_callee(message, params, container)? {
         Some(addr) => addr,
         None => {
-            warnings.push("nested calldata callee could not be resolved".to_string());
+            warnings.push(render_warning(
+                RenderDiagnosticKind::NestedCalldataDegraded,
+                "nested calldata callee could not be resolved",
+            ));
             *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
@@ -858,7 +875,10 @@ async fn render_typed_calldata_field(
     let normalized_calldata = normalized_nested_calldata(&inner_calldata, selector_override);
 
     if normalized_calldata.len() < 4 {
-        warnings.push("inner calldata too short".to_string());
+        warnings.push(render_warning(
+            RenderDiagnosticKind::NestedCalldataDegraded,
+            "inner calldata too short",
+        ));
         *nested_fallback = true;
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
@@ -879,7 +899,10 @@ async fn render_typed_calldata_field(
     let inner_descriptor = match inner_descriptor {
         Some(rd) => &rd.descriptor,
         None => {
-            warnings.push("No matching descriptor for inner call".to_string());
+            warnings.push(render_warning(
+                RenderDiagnosticKind::NestedDescriptorNotFound,
+                "No matching descriptor for inner call",
+            ));
             *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
@@ -890,7 +913,10 @@ async fn render_typed_calldata_field(
     {
         Ok(result) => result,
         Err(_) => {
-            warnings.push("No matching descriptor for inner call".to_string());
+            warnings.push(render_warning(
+                RenderDiagnosticKind::NestedDescriptorNotFound,
+                "No matching descriptor for inner call",
+            ));
             *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
@@ -899,7 +925,10 @@ async fn render_typed_calldata_field(
     let mut decoded = match crate::decoder::decode_calldata(&sig, &normalized_calldata) {
         Ok(d) => d,
         Err(_) => {
-            warnings.push("inner calldata could not be decoded".to_string());
+            warnings.push(render_warning(
+                RenderDiagnosticKind::NestedCalldataDegraded,
+                "inner calldata could not be decoded",
+            ));
             *nested_fallback = true;
             return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
         }
@@ -930,9 +959,7 @@ async fn render_typed_calldata_field(
     if inner_state.fallback_reason().is_some() {
         *nested_fallback = true;
     }
-    for diagnostic in inner_state.diagnostics() {
-        warnings.push(diagnostic.message.clone());
-    }
+    warnings.extend(inner_state.diagnostics().iter().cloned());
 
     Ok(DisplayEntry::Nested {
         label: label.to_string(),
@@ -1544,7 +1571,7 @@ async fn format_typed_value(
     message: &serde_json::Value,
     item_scope: Option<&serde_json::Value>,
     data_provider: &dyn DataProvider,
-    warnings: &mut Vec<String>,
+    warnings: &mut RenderDiagnostics,
 ) -> Result<String, Error> {
     let Some(val) = value else {
         return Ok("<unresolved>".to_string());
@@ -1737,7 +1764,10 @@ async fn format_typed_value(
             if let Some(meta) = data_provider.resolve_token(lookup_chain, &addr).await {
                 Ok(meta.symbol)
             } else {
-                warnings.push("token ticker not found".to_string());
+                warnings.push(render_warning(
+                    RenderDiagnosticKind::TokenTickerNotFound,
+                    "token ticker not found",
+                ));
                 Ok(addr)
             }
         }
@@ -1746,10 +1776,8 @@ async fn format_typed_value(
             Ok(chain_name(cid))
         }
         FieldFormat::Raw => Ok(json_value_to_string(val)),
-        FieldFormat::Amount => {
-            Ok(coerce_unsigned_decimal_string_from_typed_value(val)
-                .unwrap_or_else(|| json_value_to_string(val)))
-        }
+        FieldFormat::Amount => Ok(coerce_unsigned_decimal_string_from_typed_value(val)
+            .unwrap_or_else(|| json_value_to_string(val))),
         FieldFormat::Duration => {
             let secs = parse_typed_u64_value(val, "duration")?;
             Ok(format_duration_seconds(secs))
@@ -1790,7 +1818,10 @@ async fn format_typed_value(
         }
         FieldFormat::Calldata => {
             // Should not reach here — calldata is intercepted in render_typed_fields
-            warnings.push("calldata format should be handled separately".to_string());
+            warnings.push(render_warning(
+                RenderDiagnosticKind::GenericRenderWarning,
+                "calldata format should be handled separately",
+            ));
             Ok(json_value_to_string(val))
         }
     }
@@ -2425,10 +2456,9 @@ mod tests {
             Some(&crate::FallbackReason::DescriptorNotFound)
         );
         assert!(
-            result
-                .diagnostics()
-                .iter()
-                .any(|diagnostic| diagnostic.message.contains("no typed-data descriptor matched")),
+            result.diagnostics().iter().any(|diagnostic| diagnostic
+                .message
+                .contains("no typed-data descriptor matched")),
             "expected descriptor-not-found diagnostic"
         );
 

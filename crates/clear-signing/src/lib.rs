@@ -132,12 +132,11 @@ pub async fn format_calldata(
     };
 
     // Decode calldata using the parsed signature
-    let mut decoded = decoder::decode_calldata(&sig, tx.calldata).map_err(|err| {
-        FormatFailure::InvalidInput {
+    let mut decoded =
+        decoder::decode_calldata(&sig, tx.calldata).map_err(|err| FormatFailure::InvalidInput {
             message: err.to_string(),
             retryable: false,
-        }
-    })?;
+        })?;
 
     // Inject container values as synthetic arguments
     inject_container_values(&mut decoded, tx.chain_id, tx.to, tx.value, tx.from);
@@ -287,8 +286,7 @@ pub async fn format_typed_data(
                 eip712::build_typed_raw_fallback(data),
                 FallbackReason::InsufficientContext,
                 "insufficient_context",
-                "EIP-712 domain.chainId is required for descriptor-based clear signing"
-                    .to_string(),
+                "EIP-712 domain.chainId is required for descriptor-based clear signing".to_string(),
             ));
         }
     };
@@ -305,8 +303,8 @@ pub async fn format_typed_data(
         }
     };
 
-    let selection = resolver::select_typed_outer_descriptor(descriptors, data)
-        .map_err(FormatFailure::from)?;
+    let selection =
+        resolver::select_typed_outer_descriptor(descriptors, data).map_err(FormatFailure::from)?;
 
     let selected = match selection {
         resolver::TypedOuterSelection::Selected(selected) => selected,

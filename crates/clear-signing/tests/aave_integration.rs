@@ -2,7 +2,9 @@
 
 use clear_signing::decoder::parse_signature;
 use clear_signing::resolver::ResolvedDescriptor;
-use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::token::{
+    CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource,
+};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::{format_calldata, DisplayEntry, DisplayModel, TransactionContext};
 
@@ -557,10 +559,9 @@ async fn graceful_fallback_unknown_selector() {
         Some(&clear_signing::FallbackReason::FormatNotFound)
     );
     assert!(
-        result
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("no descriptor format matched selector")),
+        result.diagnostics().iter().any(|diagnostic| diagnostic
+            .message
+            .contains("no descriptor format matched selector")),
         "expected format-not-found diagnostic"
     );
 }
@@ -603,10 +604,9 @@ async fn aave_withdraw_bytes32_optimism_graceful_fallback() {
         Some(&clear_signing::FallbackReason::FormatNotFound)
     );
     assert!(
-        result
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("no descriptor format matched selector")),
+        result.diagnostics().iter().any(|diagnostic| diagnostic
+            .message
+            .contains("no descriptor format matched selector")),
         "expected format-not-found diagnostic"
     );
     // The single bytes32 arg should appear as a raw param

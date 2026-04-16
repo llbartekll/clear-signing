@@ -334,9 +334,10 @@ async fn userop_no_matching_inner_descriptor() {
         chain_id: 1,
         address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
     }];
-    let result = clear_signing::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap();
+    let result =
+        clear_signing::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
 
     assert_eq!(result.intent, "Sign Packed User Operation");
     assert_eq!(
@@ -384,9 +385,10 @@ async fn userop_hash_prefix_resolves_from_message() {
         address: "0x5ff137d4b0fdcd49dca30c7cf57e578a026d2789".to_string(),
     }];
     all_descriptors.extend(descriptors);
-    let result = clear_signing::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
-        .await
-        .unwrap();
+    let result =
+        clear_signing::format_typed_data(&all_descriptors, &typed_data, &EmptyDataProvider)
+            .await
+            .unwrap();
 
     // The #.sender path should have resolved to the sender address from the message,
     // matched against the ERC-20 descriptor, and decoded the transfer calldata

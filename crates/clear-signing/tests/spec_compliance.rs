@@ -140,6 +140,14 @@ fn assert_interpolation_warning(result: &FormatOutcome, expected_detail: &str) {
         result
             .diagnostics()
             .iter()
+            .any(|warning| warning.code == "interpolated_intent_skipped"),
+        "missing interpolation skip diagnostic code: {:?}",
+        result.diagnostics()
+    );
+    assert!(
+        result
+            .diagnostics()
+            .iter()
             .any(|warning| warning.message.contains("interpolated intent skipped")),
         "missing interpolation skip warning: {:?}",
         result.diagnostics()
@@ -2293,9 +2301,10 @@ async fn test_eip712_sliced_numeric_formats_match_calldata() {
     let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
         .await
         .unwrap();
-    let typed_result = format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
-        .await
-        .unwrap();
+    let typed_result =
+        format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+            .await
+            .unwrap();
 
     assert_semantic_parity(&calldata_result, &typed_result);
 }
@@ -2802,7 +2811,10 @@ async fn test_eip712_bare_primary_type_key_rejected() {
     )
     .await
     .unwrap();
-    assert_eq!(result.fallback_reason(), Some(&FallbackReason::FormatNotFound));
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&FallbackReason::FormatNotFound)
+    );
     assert!(
         result
             .diagnostics()
@@ -2909,7 +2921,10 @@ async fn test_eip712_prefix_only_format_key_rejected() {
     )
     .await
     .unwrap();
-    assert_eq!(result.fallback_reason(), Some(&FallbackReason::FormatNotFound));
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&FallbackReason::FormatNotFound)
+    );
     assert!(
         result
             .diagnostics()
@@ -3052,10 +3067,9 @@ async fn test_eip712_missing_verifying_contract_rejected_with_descriptors() {
         Some(&FallbackReason::InsufficientContext)
     );
     assert!(
-        result
-            .diagnostics()
-            .iter()
-            .any(|diagnostic| diagnostic.message.contains("domain.verifyingContract is required")),
+        result.diagnostics().iter().any(|diagnostic| diagnostic
+            .message
+            .contains("domain.verifyingContract is required")),
         "expected insufficient-context diagnostic, got {:?}",
         result.diagnostics()
     );

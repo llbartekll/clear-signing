@@ -2,7 +2,9 @@
 #![allow(non_snake_case)]
 
 use clear_signing::resolver::ResolvedDescriptor;
-use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::token::{
+    CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource,
+};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::{format_calldata, DisplayEntry, FormatOutcome, TransactionContext};
 
@@ -28,17 +30,29 @@ fn token_source() -> CompositeDataProvider {
     custom.insert(
         1,
         "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-        TokenMeta { symbol: "ETH".to_string(), decimals: 18, name: "Ether".to_string() },
+        TokenMeta {
+            symbol: "ETH".to_string(),
+            decimals: 18,
+            name: "Ether".to_string(),
+        },
     );
     custom.insert(
         1,
         "0xdac17f958d2ee523a2206206994597c13d831ec7",
-        TokenMeta { symbol: "USDT".to_string(), decimals: 6, name: "Tether USD".to_string() },
+        TokenMeta {
+            symbol: "USDT".to_string(),
+            decimals: 6,
+            name: "Tether USD".to_string(),
+        },
     );
     custom.insert(
         1,
         "0x8e42fe26fc1697f57076c9f2a8d1ff69cf7f6fda",
-        TokenMeta { symbol: "AGURI".to_string(), decimals: 9, name: "Aguri-Chan".to_string() },
+        TokenMeta {
+            symbol: "AGURI".to_string(),
+            decimals: 9,
+            name: "Aguri-Chan".to_string(),
+        },
     );
     CompositeDataProvider::new(vec![
         Box::new(custom),
@@ -75,12 +89,16 @@ fn print_model(model: &FormatOutcome, label: &str) {
             DisplayEntry::Item(item) => eprintln!("  [field] {}: {}", item.label, item.value),
             DisplayEntry::Group { label, items, .. } => {
                 eprintln!("  [group] {label}:");
-                for item in items { eprintln!("    [{}]: {}", item.label, item.value); }
+                for item in items {
+                    eprintln!("    [{}]: {}", item.label, item.value);
+                }
             }
             _ => eprintln!("  other entry"),
         }
     }
-    if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
+    if !model.diagnostics().is_empty() {
+        eprintln!("  diagnostics: {:?}", model.diagnostics());
+    }
 }
 
 // ── swap ────────────────────────────────────────────────────────────────
@@ -103,8 +121,11 @@ async fn smoke_1inch_v5_swap_eth_to_aguri() {
         implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &provider).await;
-    if let Ok(model) = &result { print_model(model, "swap ETH→AGURI"); }
-    else { eprintln!("FAIL: {:?}", result.as_ref().err()); }
+    if let Ok(model) = &result {
+        print_model(model, "swap ETH→AGURI");
+    } else {
+        eprintln!("FAIL: {:?}", result.as_ref().err());
+    }
     assert!(result.is_ok(), "swap ETH→AGURI failed: {:?}", result.err());
 }
 
@@ -126,8 +147,11 @@ async fn smoke_1inch_v5_swap_eth_to_usdt() {
         implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &provider).await;
-    if let Ok(model) = &result { print_model(model, "swap ETH→USDT"); }
-    else { eprintln!("FAIL: {:?}", result.as_ref().err()); }
+    if let Ok(model) = &result {
+        print_model(model, "swap ETH→USDT");
+    } else {
+        eprintln!("FAIL: {:?}", result.as_ref().err());
+    }
     assert!(result.is_ok(), "swap ETH→USDT failed: {:?}", result.err());
 }
 
@@ -150,9 +174,16 @@ async fn smoke_1inch_v5_uniswapV3Swap_0() {
         implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &provider).await;
-    if let Ok(model) = &result { print_model(model, "uniswapV3Swap #0"); }
-    else { eprintln!("FAIL: {:?}", result.as_ref().err()); }
-    assert!(result.is_ok(), "uniswapV3Swap #0 failed: {:?}", result.err());
+    if let Ok(model) = &result {
+        print_model(model, "uniswapV3Swap #0");
+    } else {
+        eprintln!("FAIL: {:?}", result.as_ref().err());
+    }
+    assert!(
+        result.is_ok(),
+        "uniswapV3Swap #0 failed: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -171,7 +202,14 @@ async fn smoke_1inch_v5_uniswapV3Swap_1() {
         implementation_address: None,
     };
     let result = format_calldata(&descriptors, &tx, &provider).await;
-    if let Ok(model) = &result { print_model(model, "uniswapV3Swap #1"); }
-    else { eprintln!("FAIL: {:?}", result.as_ref().err()); }
-    assert!(result.is_ok(), "uniswapV3Swap #1 failed: {:?}", result.err());
+    if let Ok(model) = &result {
+        print_model(model, "uniswapV3Swap #1");
+    } else {
+        eprintln!("FAIL: {:?}", result.as_ref().err());
+    }
+    assert!(
+        result.is_ok(),
+        "uniswapV3Swap #1 failed: {:?}",
+        result.err()
+    );
 }

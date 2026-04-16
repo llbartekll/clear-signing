@@ -103,9 +103,7 @@ impl From<ResolveError> for FormatFailure {
     fn from(value: ResolveError) -> Self {
         match value {
             ResolveError::NotFound { chain_id, address } => Self::InvalidDescriptor {
-                message: format!(
-                    "descriptor not found for chain_id={chain_id}, address={address}"
-                ),
+                message: format!("descriptor not found for chain_id={chain_id}, address={address}"),
                 retryable: false,
             },
             ResolveError::RegistryIndexMissing { url } => Self::ResolutionFailed {

@@ -15,6 +15,8 @@ The repository contains:
   - `fallback`: renderable but degraded / unverified output
   - `failure`: invalid input, invalid descriptor, resolution outage, or internal failure
 - Returns typed `FormatDiagnostic` entries for non-fatal degradation instead of string warnings.
+  `FormatDiagnostic.code` is the machine-readable contract for wallet policy and telemetry.
+  `FormatDiagnostic.message` is human-readable text and may evolve independently.
 - Resolves descriptors for direct calls and nested calldata flows via `DescriptorResolutionOutcome`.
 - Supports proxy-aware descriptor resolution through wallet-provided `DataProviderFfi`.
 - Delegates token, name, NFT, and block metadata lookups to the host wallet.
@@ -22,6 +24,11 @@ The repository contains:
 Provider callbacks are still best-effort in this phase:
 - missing token or name metadata can produce diagnostics
 - they do not automatically become hard failures
+
+Wallet policy should branch on diagnostic `code`, not parse diagnostic `message`.
+Example:
+- `token_metadata_not_found`: show degraded token presentation
+- `nested_descriptor_not_found`: show generic nested-call UI
 
 ## SDK Surfaces
 

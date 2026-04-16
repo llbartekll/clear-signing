@@ -80,6 +80,8 @@ The client performs descriptor resolution before formatting:
 - Proxy detection is delegated to your `DataProviderFfi.getImplementationAddress(...)`.
 - Missing token/name/NFT metadata stays best-effort and surfaces as diagnostics, not hard failures.
 
+Wallet policy should branch on `FormatDiagnostic.code`, not parse `FormatDiagnostic.message`.
+
 ## Implement DataProviderFfi
 
 `DataProviderFfi` is the wallet-owned callback surface. The SDK calls it synchronously across the FFI boundary whenever it needs metadata that only the host app can provide.
@@ -255,6 +257,18 @@ Fields:
 - `code`
 - `severity` (`info` or `warning`)
 - `message`
+
+Contract:
+- `code` is machine-readable and intended for wallet policy and telemetry
+- `message` is human-readable and may evolve independently
+
+Example:
+
+```swift
+if diagnostics.contains(where: { $0.code == "nested_descriptor_not_found" }) {
+    showGenericNestedCallBadge()
+}
+```
 
 ### DescriptorResolutionOutcome
 

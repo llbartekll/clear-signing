@@ -145,9 +145,7 @@ pub(crate) fn coerce_unsigned_decimal_string_from_argument_value(
     coerce_unsigned_biguint_from_argument_value(val).map(|n| n.to_string())
 }
 
-pub(crate) fn coerce_unsigned_biguint_from_typed_value(
-    val: &serde_json::Value,
-) -> Option<BigUint> {
+pub(crate) fn coerce_unsigned_biguint_from_typed_value(val: &serde_json::Value) -> Option<BigUint> {
     match val {
         serde_json::Value::Number(n) => n.as_u64().map(BigUint::from),
         serde_json::Value::String(s) => {

@@ -2,7 +2,9 @@
 #![allow(non_snake_case)]
 
 use clear_signing::resolver::ResolvedDescriptor;
-use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::token::{
+    CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource,
+};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::{format_calldata, DisplayEntry, TransactionContext};
 
@@ -28,22 +30,38 @@ fn token_source() -> CompositeDataProvider {
     custom.insert(
         1,
         "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-        TokenMeta { symbol: "ETH".to_string(), decimals: 18, name: "Ether".to_string() },
+        TokenMeta {
+            symbol: "ETH".to_string(),
+            decimals: 18,
+            name: "Ether".to_string(),
+        },
     );
     custom.insert(
         1,
         "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",
-        TokenMeta { symbol: "WETH".to_string(), decimals: 18, name: "Wrapped Ether".to_string() },
+        TokenMeta {
+            symbol: "WETH".to_string(),
+            decimals: 18,
+            name: "Wrapped Ether".to_string(),
+        },
     );
     custom.insert(
         1,
         "0x3845badade8e6dff049820680d1f14bd3903a5d0",
-        TokenMeta { symbol: "SAND".to_string(), decimals: 18, name: "The Sandbox".to_string() },
+        TokenMeta {
+            symbol: "SAND".to_string(),
+            decimals: 18,
+            name: "The Sandbox".to_string(),
+        },
     );
     custom.insert(
         1,
         "0x0f2d719407fdbeff09d87557abb7232601fd9f29",
-        TokenMeta { symbol: "SYN".to_string(), decimals: 18, name: "Synapse".to_string() },
+        TokenMeta {
+            symbol: "SYN".to_string(),
+            decimals: 18,
+            name: "Synapse".to_string(),
+        },
     );
     CompositeDataProvider::new(vec![
         Box::new(custom),
@@ -97,15 +115,21 @@ async fn smoke_1inch_v4_swap_eth_to_sand() {
             eprintln!("  owner: {:?}", model.owner);
             for entry in &model.entries {
                 match entry {
-                    DisplayEntry::Item(item) => eprintln!("  [field] {}: {}", item.label, item.value),
+                    DisplayEntry::Item(item) => {
+                        eprintln!("  [field] {}: {}", item.label, item.value)
+                    }
                     DisplayEntry::Group { label, items, .. } => {
                         eprintln!("  [group] {label}:");
-                        for item in items { eprintln!("    [{}]: {}", item.label, item.value); }
+                        for item in items {
+                            eprintln!("    [{}]: {}", item.label, item.value);
+                        }
                     }
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
+            }
         }
         Err(e) => eprintln!("FAIL swap ETH→SAND: {e}"),
     }
@@ -137,15 +161,21 @@ async fn smoke_1inch_v4_swap_syn_to_eth() {
             eprintln!("  owner: {:?}", model.owner);
             for entry in &model.entries {
                 match entry {
-                    DisplayEntry::Item(item) => eprintln!("  [field] {}: {}", item.label, item.value),
+                    DisplayEntry::Item(item) => {
+                        eprintln!("  [field] {}: {}", item.label, item.value)
+                    }
                     DisplayEntry::Group { label, items, .. } => {
                         eprintln!("  [group] {label}:");
-                        for item in items { eprintln!("    [{}]: {}", item.label, item.value); }
+                        for item in items {
+                            eprintln!("    [{}]: {}", item.label, item.value);
+                        }
                     }
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
+            }
         }
         Err(e) => eprintln!("FAIL swap SYN→ETH: {e}"),
     }
@@ -179,15 +209,21 @@ async fn smoke_1inch_v4_unoswap_weth() {
             eprintln!("  owner: {:?}", model.owner);
             for entry in &model.entries {
                 match entry {
-                    DisplayEntry::Item(item) => eprintln!("  [field] {}: {}", item.label, item.value),
+                    DisplayEntry::Item(item) => {
+                        eprintln!("  [field] {}: {}", item.label, item.value)
+                    }
                     DisplayEntry::Group { label, items, .. } => {
                         eprintln!("  [group] {label}:");
-                        for item in items { eprintln!("    [{}]: {}", item.label, item.value); }
+                        for item in items {
+                            eprintln!("    [{}]: {}", item.label, item.value);
+                        }
                     }
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
+            }
         }
         Err(e) => eprintln!("FAIL unoswap WETH: {e}"),
     }
@@ -219,15 +255,21 @@ async fn smoke_1inch_v4_unoswap_weth_1() {
             eprintln!("  owner: {:?}", model.owner);
             for entry in &model.entries {
                 match entry {
-                    DisplayEntry::Item(item) => eprintln!("  [field] {}: {}", item.label, item.value),
+                    DisplayEntry::Item(item) => {
+                        eprintln!("  [field] {}: {}", item.label, item.value)
+                    }
                     DisplayEntry::Group { label, items, .. } => {
                         eprintln!("  [group] {label}:");
-                        for item in items { eprintln!("    [{}]: {}", item.label, item.value); }
+                        for item in items {
+                            eprintln!("    [{}]: {}", item.label, item.value);
+                        }
                     }
                     _ => eprintln!("  other entry"),
                 }
             }
-            if !model.diagnostics().is_empty() { eprintln!("  diagnostics: {:?}", model.diagnostics()); }
+            if !model.diagnostics().is_empty() {
+                eprintln!("  diagnostics: {:?}", model.diagnostics());
+            }
         }
         Err(e) => eprintln!("FAIL unoswap WETH #1: {e}"),
     }

@@ -415,7 +415,10 @@ async fn safe_exec_transaction_depth_limit() {
     // Walk down to find the depth-limited entry
     fn find_depth_limited_nested(entries: &[DisplayEntry], depth: usize) -> bool {
         for entry in entries {
-            if let DisplayEntry::Nested { intent, entries, .. } = entry {
+            if let DisplayEntry::Nested {
+                intent, entries, ..
+            } = entry
+            {
                 if intent == "Unknown"
                     && entries.iter().any(|inner| {
                         matches!(
@@ -434,6 +437,13 @@ async fn safe_exec_transaction_depth_limit() {
         false
     }
 
+    assert!(
+        result
+            .diagnostics()
+            .iter()
+            .any(|diagnostic| diagnostic.code == "nested_calldata_degraded"),
+        "expected nested depth-limit diagnostic code"
+    );
     assert!(
         result
             .diagnostics()

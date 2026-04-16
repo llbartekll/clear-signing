@@ -282,7 +282,9 @@ pub async fn clear_signing_resolve_descriptor(
                 .map_err(|e| invalid_descriptor(format!("failed to serialize descriptor: {e}")))?;
             Ok(DescriptorResolutionOutcome::Found(vec![json]))
         }
-        Err(crate::error::ResolveError::NotFound { .. }) => Ok(DescriptorResolutionOutcome::NotFound),
+        Err(crate::error::ResolveError::NotFound { .. }) => {
+            Ok(DescriptorResolutionOutcome::NotFound)
+        }
         Err(e) => Err(FormatFailure::from(e)),
     }
 }
@@ -388,8 +390,7 @@ pub fn clear_signing_merge_descriptors(
     including_json: String,
     included_json: String,
 ) -> Result<String, FormatFailure> {
-    crate::merge::merge_descriptors(&including_json, &included_json)
-        .map_err(FormatFailure::from)
+    crate::merge::merge_descriptors(&including_json, &included_json).map_err(FormatFailure::from)
 }
 
 // ---------------------------------------------------------------------------
@@ -717,9 +718,10 @@ mod tests {
 
     #[tokio::test]
     async fn format_calldata_invalid_descriptor_json() {
-        let err = clear_signing_format_calldata(vec!["{".to_string()], transfer_transaction(), None)
-            .await
-            .expect_err("invalid descriptor should fail");
+        let err =
+            clear_signing_format_calldata(vec!["{".to_string()], transfer_transaction(), None)
+                .await
+                .expect_err("invalid descriptor should fail");
 
         assert!(matches!(err, FormatFailure::InvalidDescriptor { .. }));
     }
@@ -742,9 +744,10 @@ mod tests {
         let mut tx = transfer_transaction();
         tx.calldata_hex = "zz".to_string();
 
-        let err = clear_signing_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
-            .await
-            .expect_err("invalid calldata hex should fail");
+        let err =
+            clear_signing_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
+                .await
+                .expect_err("invalid calldata hex should fail");
 
         assert!(matches!(err, FormatFailure::InvalidInput { .. }));
     }
@@ -754,9 +757,10 @@ mod tests {
         let mut tx = transfer_transaction();
         tx.value_hex = Some("zz".to_string());
 
-        let err = clear_signing_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
-            .await
-            .expect_err("invalid value hex should fail");
+        let err =
+            clear_signing_format_calldata(vec![calldata_descriptor_json().to_string()], tx, None)
+                .await
+                .expect_err("invalid value hex should fail");
 
         assert!(matches!(err, FormatFailure::InvalidInput { .. }));
     }
@@ -1010,10 +1014,13 @@ mod tests {
         }"#;
 
         // Call through the FFI function with the round-tripped descriptor
-        let result =
-            clear_signing_format_typed_data(vec![round_tripped_json], typed_data_json.to_string(), None)
-                .await
-                .expect("typed data formatting should succeed");
+        let result = clear_signing_format_typed_data(
+            vec![round_tripped_json],
+            typed_data_json.to_string(),
+            None,
+        )
+        .await
+        .expect("typed data formatting should succeed");
 
         assert_eq!(result.intent, "Swap order");
         assert!(

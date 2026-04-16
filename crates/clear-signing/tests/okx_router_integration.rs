@@ -2,9 +2,13 @@
 //! Covers order-based swaps, beneficiary routing, Uniswap V3 routing, and UNX swaps.
 
 use clear_signing::resolver::ResolvedDescriptor;
-use clear_signing::token::{CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource};
+use clear_signing::token::{
+    CompositeDataProvider, StaticTokenSource, TokenMeta, WellKnownTokenSource,
+};
 use clear_signing::types::descriptor::Descriptor;
-use clear_signing::{format_calldata, DisplayEntry, DisplayModel, FormatOutcome, TransactionContext};
+use clear_signing::{
+    format_calldata, DisplayEntry, DisplayModel, FormatOutcome, TransactionContext,
+};
 
 const OKX_ADDR: &str = "0x5E1f62Dac767b0491e3CE72469C217365D5B48cC";
 
@@ -357,10 +361,7 @@ async fn okx_uniswap_v3_swap_to_with_base_request() {
         get_entry_value(&result, "Beneficiary"),
         "0xdBca0ae825815876AC0012C3a8FAb7D33b22EAcb"
     );
-    assert_eq!(
-        get_entry_value(&result, "Amount to Send"),
-        "495.75 USDT"
-    );
+    assert_eq!(get_entry_value(&result, "Amount to Send"), "495.75 USDT");
     assert_eq!(
         get_entry_value(&result, "Minimum to Receive"),
         "3798.969107763657060633 HKDB"
@@ -424,10 +425,7 @@ async fn okx_unxswap_to_with_base_request() {
         get_entry_value(&result, "Minimum to Receive"),
         "2287.662090428641808489 SAIYAN"
     );
-    assert_eq!(
-        get_entry_value(&result, "Amount to Send"),
-        "0.049575 ETH"
-    );
+    assert_eq!(get_entry_value(&result, "Amount to Send"), "0.049575 ETH");
     assert_eq!(
         get_entry_value(&result, "Deadline"),
         "2026-03-30 11:13:23 UTC"

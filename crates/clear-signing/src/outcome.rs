@@ -17,6 +17,56 @@ pub struct FormatDiagnostic {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RenderDiagnosticKind {
+    InterpolatedIntentSkipped,
+    DefinitionReferenceUnresolved,
+    ValueUnresolved,
+    TokenMetadataNotFound,
+    TokenTickerNotFound,
+    NftCollectionAddressMissing,
+    NftCollectionNameNotFound,
+    NestedCalldataDegraded,
+    NestedDescriptorNotFound,
+    NestedCalldataInvalidType,
+    InteroperableAddressNameFallback,
+    GenericRenderWarning,
+}
+
+impl RenderDiagnosticKind {
+    fn code(self) -> &'static str {
+        match self {
+            Self::InterpolatedIntentSkipped => "interpolated_intent_skipped",
+            Self::DefinitionReferenceUnresolved => "definition_reference_unresolved",
+            Self::ValueUnresolved => "value_unresolved",
+            Self::TokenMetadataNotFound => "token_metadata_not_found",
+            Self::TokenTickerNotFound => "token_ticker_not_found",
+            Self::NftCollectionAddressMissing => "nft_collection_address_missing",
+            Self::NftCollectionNameNotFound => "nft_collection_name_not_found",
+            Self::NestedCalldataDegraded => "nested_calldata_degraded",
+            Self::NestedDescriptorNotFound => "nested_descriptor_not_found",
+            Self::NestedCalldataInvalidType => "nested_calldata_invalid_type",
+            Self::InteroperableAddressNameFallback => "interoperable_address_name_fallback",
+            Self::GenericRenderWarning => "render_warning",
+        }
+    }
+
+    fn severity(self) -> DiagnosticSeverity {
+        DiagnosticSeverity::Warning
+    }
+}
+
+pub(crate) fn render_warning(
+    kind: RenderDiagnosticKind,
+    message: impl Into<String>,
+) -> FormatDiagnostic {
+    FormatDiagnostic {
+        code: kind.code().to_string(),
+        severity: kind.severity(),
+        message: message.into(),
+    }
+}
+
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum FallbackReason {
@@ -130,6 +180,10 @@ impl RenderState {
         self.push(code, DiagnosticSeverity::Warning, message.into());
     }
 
+    pub(crate) fn push_diagnostic(&mut self, diagnostic: FormatDiagnostic) {
+        self.diagnostics.push(diagnostic);
+    }
+
     pub(crate) fn mark_nested_fallback(&mut self) {
         if self.fallback_reason.is_none() {
             self.fallback_reason = Some(FallbackReason::NestedCallNotClearSigned);
@@ -158,5 +212,77 @@ impl RenderState {
             severity,
             message,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_warning, RenderDiagnosticKind};
+
+    #[test]
+    fn render_warning_code_does_not_depend_on_message_text() {
+        let first = render_warning(
+            RenderDiagnosticKind::TokenMetadataNotFound,
+            "token metadata not found for field 'Amount'",
+        );
+        let second = render_warning(
+            RenderDiagnosticKind::TokenMetadataNotFound,
+            "missing token metadata for field 'Amount'",
+        );
+
+        assert_eq!(first.code, "token_metadata_not_found");
+        assert_eq!(second.code, "token_metadata_not_found");
+    }
+
+    #[test]
+    fn render_warning_kinds_map_to_stable_codes() {
+        let cases = [
+            (
+                RenderDiagnosticKind::InterpolatedIntentSkipped,
+                "interpolated_intent_skipped",
+            ),
+            (
+                RenderDiagnosticKind::DefinitionReferenceUnresolved,
+                "definition_reference_unresolved",
+            ),
+            (RenderDiagnosticKind::ValueUnresolved, "value_unresolved"),
+            (
+                RenderDiagnosticKind::TokenMetadataNotFound,
+                "token_metadata_not_found",
+            ),
+            (
+                RenderDiagnosticKind::TokenTickerNotFound,
+                "token_ticker_not_found",
+            ),
+            (
+                RenderDiagnosticKind::NftCollectionAddressMissing,
+                "nft_collection_address_missing",
+            ),
+            (
+                RenderDiagnosticKind::NftCollectionNameNotFound,
+                "nft_collection_name_not_found",
+            ),
+            (
+                RenderDiagnosticKind::NestedCalldataDegraded,
+                "nested_calldata_degraded",
+            ),
+            (
+                RenderDiagnosticKind::NestedDescriptorNotFound,
+                "nested_descriptor_not_found",
+            ),
+            (
+                RenderDiagnosticKind::NestedCalldataInvalidType,
+                "nested_calldata_invalid_type",
+            ),
+            (
+                RenderDiagnosticKind::InteroperableAddressNameFallback,
+                "interoperable_address_name_fallback",
+            ),
+        ];
+
+        for (kind, expected_code) in cases {
+            let diagnostic = render_warning(kind, "example");
+            assert_eq!(diagnostic.code, expected_code);
+        }
     }
 }

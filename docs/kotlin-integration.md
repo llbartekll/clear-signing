@@ -93,6 +93,8 @@ The client performs descriptor resolution before formatting:
 - Proxy detection is delegated to your `DataProviderFfi.getImplementationAddress(...)`.
 - Missing token/name/NFT metadata stays best-effort and surfaces as diagnostics, not hard failures.
 
+Wallet policy should branch on `FormatDiagnostic.code`, not parse `FormatDiagnostic.message`.
+
 ## Implement DataProviderFfi
 
 `DataProviderFfi` is the wallet-owned callback surface used for token metadata, naming, NFT metadata, block timestamps, and proxy resolution.
@@ -264,6 +266,18 @@ Fields:
 - `code`
 - `severity`
 - `message`
+
+Contract:
+- `code` is machine-readable and intended for wallet policy and telemetry
+- `message` is human-readable and may evolve independently
+
+Example:
+
+```kotlin
+if (outcome.diagnostics.any { it.code == "nested_descriptor_not_found" }) {
+    showGenericNestedCallBadge()
+}
+```
 
 ### DescriptorResolutionOutcome
 
