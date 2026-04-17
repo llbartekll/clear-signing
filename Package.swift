@@ -2,12 +2,7 @@
 import Foundation
 import PackageDescription
 
-private let useLocalRustXCFramework = {
-    let value = ProcessInfo.processInfo.environment["USE_LOCAL_RUST_XCFRAMEWORK"]?
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-        .lowercased()
-    return ["1", "true", "yes"].contains(value)
-}()
+private let useLocalRustXCFramework = true
 
 let package = Package(
     name: "ClearSigning",

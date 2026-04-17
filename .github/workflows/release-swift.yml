@@ -45,26 +45,33 @@ jobs:
           CHECKSUM=$(swift package compute-checksum Output/libclear_signing.xcframework.zip)
           echo "checksum=$CHECKSUM" >> "$GITHUB_OUTPUT"
 
-      - name: Update Package.swift
+      - name: Update Package.swift for release
         env:
           VERSION: ${{ inputs.version }}
           CHECKSUM: ${{ steps.checksum.outputs.checksum }}
         run: |
+          # main keeps `useLocalRustXCFramework = true` for the local dev workflow;
+          # the release tag needs `false` so SPM consumers pull the published zip.
+          sed -i '' 's|useLocalRustXCFramework = true|useLocalRustXCFramework = false|' Package.swift
           sed -i '' "s|/download/[^/]*/libclear_signing|/download/$VERSION/libclear_signing|" Package.swift
           sed -i '' "s|checksum: \"[^\"]*\"|checksum: \"$CHECKSUM\"|" Package.swift
           echo "Updated Package.swift:"
+          grep 'useLocalRustXCFramework' Package.swift
           grep -A1 'url:' Package.swift
           grep 'checksum:' Package.swift
+          if grep -q 'useLocalRustXCFramework = true' Package.swift; then
+            echo "Release flip failed: Package.swift still has useLocalRustXCFramework = true" >&2
+            exit 1
+          fi
 
-      - name: Commit and tag
+      - name: Tag release
         env:
           VERSION: ${{ inputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Package.swift
-          git commit -m "Release $VERSION — update Package.swift checksum"
-          git push origin main
+          git commit -m "Release $VERSION"
           git tag "$VERSION"
           git push origin "$VERSION"
 
