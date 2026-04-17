@@ -38,10 +38,10 @@ dependencies: [
 Then add the `ClearSigning` product to your target dependencies.
 
 Current repo caveat:
-- The checked-in [Package.swift](../Package.swift) defaults to the release XCFramework URL.
-- Set `USE_LOCAL_RUST_XCFRAMEWORK=1` to make SwiftPM resolve the local XCFramework instead.
+- The checked-in [Package.swift](../Package.swift) on `main` defaults to the local XCFramework path.
+- Tagged releases use a CI-rewritten manifest that points at the published GitHub Release XCFramework zip and checksum.
 - The checked-in `Package.swift` currently declares `.iOS(.v14)`.
-- The release workflow updates the manifest URL and checksum when cutting a Swift release tag.
+- The Swift release workflow updates the manifest only on the tagged release commit; `main` stays in local-dev mode.
 
 ### Local Repo Development
 
@@ -58,13 +58,13 @@ That script:
 The local package target then resolves against the XCFramework at:
 - `target/ios/libclear_signing.xcframework`
 
-Enable local package resolution explicitly when using SwiftPM from the CLI:
+On `main`, SwiftPM commands use that local XCFramework directly:
 
 ```sh
-USE_LOCAL_RUST_XCFRAMEWORK=1 swift package describe
+swift package describe
 ```
 
-Any SwiftPM command can use the same environment variable, for example `swift build`, `swift test`, or `swift package describe`.
+Any SwiftPM command works the same way after the XCFramework is built, for example `swift build`, `swift test`, or `swift package describe`.
 
 ## Integration Flow
 

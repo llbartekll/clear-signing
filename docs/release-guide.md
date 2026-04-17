@@ -25,24 +25,27 @@ Workflow:
 
 What the workflow does:
 1. Checks out the repo with full git history.
-2. Installs the Rust toolchain with Apple targets:
+2. Fails early if the requested tag already exists on `origin`.
+3. Installs the Rust toolchain with Apple targets:
    - `aarch64-apple-ios`
    - `x86_64-apple-ios`
    - `aarch64-apple-ios-sim`
-3. Runs [scripts/build-xcframework.sh](../scripts/build-xcframework.sh).
-4. Zips `target/ios/libclear_signing.xcframework` into `Output/libclear_signing.xcframework.zip`.
-5. Computes the Swift package checksum with `swift package compute-checksum`.
-6. Rewrites [Package.swift](../Package.swift):
+4. Runs [scripts/build-xcframework.sh](../scripts/build-xcframework.sh).
+5. Zips `target/ios/libclear_signing.xcframework` into `Output/libclear_signing.xcframework.zip`.
+6. Computes the Swift package checksum with `swift package compute-checksum`.
+7. Rewrites [Package.swift](../Package.swift):
+   - flips `useLocalRustXCFramework` to `false`
    - release URL changed to `/download/<version>/libclear_signing.xcframework.zip`
    - `checksum` updated to the newly computed value
-7. Commits the `Package.swift` change to `main`.
-8. Creates and pushes the git tag.
-9. Creates a GitHub Release and uploads `Output/libclear_signing.xcframework.zip`.
+8. Validates the rewritten manifest semantically with `swift package dump-package`.
+9. Commits the rewritten `Package.swift` on the release commit only.
+10. Creates and pushes the git tag.
+11. Creates a GitHub Release and uploads `Output/libclear_signing.xcframework.zip`.
 
 Current packaging note:
-- The checked-in `Package.swift` defaults to the release XCFramework URL.
-- Local Swift development is enabled explicitly with `USE_LOCAL_RUST_XCFRAMEWORK=1`.
-- The release workflow is what turns the manifest into a release-consumable package definition for the tagged version.
+- The checked-in `Package.swift` on `main` defaults to the local XCFramework path.
+- The tagged release commit rewrites the manifest to the remote XCFramework URL and checksum.
+- The release workflow is what turns the manifest into a release-consumable package definition for the tagged version without updating `main`.
 
 ### Consumer Shape
 
@@ -52,10 +55,10 @@ Swift consumers integrate through the `ClearSigning` package product from the ta
 
 Local development:
 - Build the XCFramework locally with `./scripts/build-xcframework.sh`.
-- The package resolves against `target/ios/libclear_signing.xcframework`.
+- On `main`, the package resolves against `target/ios/libclear_signing.xcframework`.
 
 Published release:
-- Use the tagged repository version after the workflow has updated `Package.swift` and attached the XCFramework zip to the GitHub Release.
+- Use the tagged repository version after the workflow has rewritten `Package.swift` for that tag and attached the XCFramework zip to the GitHub Release.
 
 ## Kotlin Release
 
@@ -66,22 +69,27 @@ Workflow:
 
 What the workflow does:
 1. Checks out the repo.
-2. Installs the Rust toolchain with Android targets:
+2. Fails early unless the requested tag already exists on `origin`.
+3. Installs the Rust toolchain with Android targets:
    - `aarch64-linux-android`
    - `armv7-linux-androideabi`
    - `x86_64-linux-android`
-3. Installs Java 17 and the Android SDK/NDK.
-4. Installs `cargo-ndk`.
-5. Builds `libclear_signing.so` for the three Android targets.
-6. Generates Kotlin UniFFI bindings from the Android `.so` into `kotlin-bindings/`.
-7. Strips the Android shared libraries.
-8. Arranges release artifacts into:
+4. Installs Java 17 and the Android SDK/NDK.
+5. Installs `cargo-ndk`.
+6. Builds `libclear_signing.so` for the three Android targets.
+7. Generates Kotlin UniFFI bindings from the Android `.so` into `kotlin-bindings/`.
+8. Strips the Android shared libraries.
+9. Arranges release artifacts into:
    - `libs/arm64-v8a/`
    - `libs/armeabi-v7a/`
    - `libs/x86_64/`
    - `kotlin-bindings/`
-9. Packages those files into `kotlin-artifacts.zip`.
-10. Uploads `kotlin-artifacts.zip` to the GitHub Release for the specified tag.
+10. Packages those files into `kotlin-artifacts.zip`.
+11. Uploads `kotlin-artifacts.zip` to the GitHub Release for the specified tag.
+
+Release ordering note:
+- Run the Swift release workflow first so it creates the tag and release-consumable Swift manifest.
+- Run the Kotlin release workflow second so it attaches Android artifacts to that existing tag.
 
 ### Consumer Shape
 

@@ -37,8 +37,8 @@ Example:
 - Package product: `ClearSigning`
 - Integration style: Swift Package Manager
 - Main API: `ClearSigningClient`
-- Published release is the default package mode
-- Local development packaging: `target/ios/libclear_signing.xcframework` when `USE_LOCAL_RUST_XCFRAMEWORK=1`
+- `main` resolves the local XCFramework at `target/ios/libclear_signing.xcframework`
+- Tagged releases resolve the remote GitHub Release XCFramework zip
 
 See [docs/swift-integration.md](docs/swift-integration.md).
 
@@ -72,7 +72,7 @@ Swift local packaging:
 ```sh
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
-USE_LOCAL_RUST_XCFRAMEWORK=1 swift package describe
+swift package describe
 xcodebuild -project wallet/Wallet.xcodeproj -scheme Wallet -destination 'generic/platform=iOS Simulator' build
 ```
 
@@ -80,7 +80,7 @@ Android local packaging follows the same steps used in CI: build native librarie
 
 ## Repo Notes
 
-- The checked-in [Package.swift](Package.swift) defaults to the release XCFramework URL and currently declares `.iOS(.v14)`.
-- Set `USE_LOCAL_RUST_XCFRAMEWORK=1` to make SwiftPM resolve the local XCFramework at `target/ios/libclear_signing.xcframework`.
-- The Swift release workflow rewrites `Package.swift` to point at the tagged release artifact and checksum during release.
+- The checked-in [Package.swift](Package.swift) on `main` defaults to the local XCFramework and currently declares `.iOS(.v14)`.
+- The Swift release workflow rewrites `Package.swift` on the tagged release commit to point at the published artifact URL and checksum.
+- `main` remains the local-development manifest after release tagging.
 - The Android SDK consumes generated bindings and native libraries from `android/build/generated/clear-signing/`.

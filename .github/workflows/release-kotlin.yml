@@ -18,6 +18,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Ensure release tag already exists
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION does not exist on origin. Run the Swift release workflow first to create the release tag and Swift package manifest." >&2
+            exit 1
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:

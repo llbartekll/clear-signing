@@ -20,6 +20,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Ensure release tag does not already exist
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists on origin. Refusing to overwrite an existing release." >&2
+            exit 1
+          fi
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -52,17 +61,27 @@ jobs:
         run: |
           # main keeps `useLocalRustXCFramework = true` for the local dev workflow;
           # the release tag needs `false` so SPM consumers pull the published zip.
-          sed -i '' 's|useLocalRustXCFramework = true|useLocalRustXCFramework = false|' Package.swift
-          sed -i '' "s|/download/[^/]*/libclear_signing|/download/$VERSION/libclear_signing|" Package.swift
-          sed -i '' "s|checksum: \"[^\"]*\"|checksum: \"$CHECKSUM\"|" Package.swift
+          perl -0pi -e 's/private let useLocalRustXCFramework\s*=\s*true/private let useLocalRustXCFramework = false/' Package.swift
+          perl -0pi -e 's#/download/[^/\"]*/libclear_signing#/download/$ENV{VERSION}/libclear_signing#g' Package.swift
+          perl -0pi -e 's/checksum:\s*\"[^\"]*\"/checksum: \"$ENV{CHECKSUM}\"/g' Package.swift
+
+          MANIFEST_JSON=$(mktemp)
+          swift package dump-package > "$MANIFEST_JSON"
+
+          ruby -rjson -e '
+            manifest = JSON.parse(File.read(ARGV.fetch(0)))
+            target = manifest.fetch("targets").find { |entry| entry["name"] == "ClearSigningRust" } or abort("missing ClearSigningRust target in dump-package output")
+            abort("release manifest still points at a local path") if target.key?("path") && !target["path"].nil?
+
+            expected_url = "https://github.com/llbartekll/clear-signing/releases/download/#{ENV.fetch("VERSION")}/libclear_signing.xcframework.zip"
+            abort("release manifest URL mismatch: #{target["url"].inspect}") unless target["url"] == expected_url
+            abort("release manifest checksum mismatch: #{target["checksum"].inspect}") unless target["checksum"] == ENV.fetch("CHECKSUM")
+          ' "$MANIFEST_JSON"
+
           echo "Updated Package.swift:"
           grep 'useLocalRustXCFramework' Package.swift
           grep -A1 'url:' Package.swift
           grep 'checksum:' Package.swift
-          if grep -q 'useLocalRustXCFramework = true' Package.swift; then
-            echo "Release flip failed: Package.swift still has useLocalRustXCFramework = true" >&2
-            exit 1
-          fi
 
       - name: Tag release
         env:
