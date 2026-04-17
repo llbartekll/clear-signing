@@ -226,10 +226,25 @@ pub async fn clear_signing_format_calldata(
         Some(ref hex_value) => Some(decode_hex(hex_value, HexContext::Value)?),
         None => None,
     };
-    // Auto-detect proxy implementation address for descriptor matching.
-    let impl_addr = data_provider
-        .as_ref()
-        .and_then(|dp| dp.get_implementation_address(transaction.chain_id, transaction.to.clone()));
+    // Descriptors can be keyed at either the contract address (Aave V3 Pool) or the
+    // singleton implementation (Safe). Pre-check `tx.to` against the descriptor
+    // deployments and only ask the wallet for the implementation address when
+    // nothing matches — this avoids masking genuine render/descriptor errors with
+    // a misleading "no outer descriptor matches <impl>" message.
+    let to_has_match = descriptors.iter().any(|rd| {
+        rd.descriptor.context.deployments().iter().any(|dep| {
+            dep.chain_id == transaction.chain_id
+                && dep.address.eq_ignore_ascii_case(&transaction.to)
+        })
+    });
+    let impl_addr = if to_has_match {
+        None
+    } else {
+        data_provider.as_ref().and_then(|dp| {
+            dp.get_implementation_address(transaction.chain_id, transaction.to.clone())
+        })
+    };
+
     let provider = build_data_provider(data_provider);
     let tx = crate::TransactionContext {
         chain_id: transaction.chain_id,
@@ -906,6 +921,314 @@ mod tests {
             }
             _ => panic!("expected item entry"),
         }
+    }
+
+    /// DataProvider that reports a proxy → implementation mapping.
+    ///
+    /// Models the real Aave V3 Pool on Optimism: the descriptor in the registry is keyed
+    /// at the proxy address (0x794a6135…), but the wallet's proxy detection returns the
+    /// current implementation contract (0x9b8e56…). Regression coverage for the FFI path
+    /// in `clear_signing_format_calldata` when descriptor is keyed at the proxy.
+    struct ProxyAwareMockDataProviderFfi {
+        proxy: String,
+        implementation: String,
+    }
+
+    impl DataProviderFfi for ProxyAwareMockDataProviderFfi {
+        fn resolve_token(&self, _chain_id: u64, _address: String) -> Option<TokenMetaFfi> {
+            None
+        }
+        fn resolve_ens_name(
+            &self,
+            _address: String,
+            _chain_id: u64,
+            _types: Option<Vec<String>>,
+        ) -> Option<String> {
+            None
+        }
+        fn resolve_local_name(
+            &self,
+            _address: String,
+            _chain_id: u64,
+            _types: Option<Vec<String>>,
+        ) -> Option<String> {
+            None
+        }
+        fn resolve_nft_collection_name(
+            &self,
+            _collection_address: String,
+            _chain_id: u64,
+        ) -> Option<String> {
+            None
+        }
+        fn resolve_block_timestamp(&self, _chain_id: u64, _block_number: u64) -> Option<u64> {
+            None
+        }
+        fn get_implementation_address(&self, _chain_id: u64, address: String) -> Option<String> {
+            if address.to_lowercase() == self.proxy.to_lowercase() {
+                Some(self.implementation.clone())
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Regression: descriptor keyed at proxy address + wallet resolves implementation.
+    ///
+    /// Mirrors the Aave V3 Pool scenario on Optimism:
+    ///   - registry descriptor deployment is `{ chainId: 10, address: PROXY }`
+    ///   - wallet's `DataProviderFfi::get_implementation_address(PROXY)` returns IMPL
+    ///   - user signs a call to PROXY (the `to` address)
+    ///
+    /// Expected: formatting succeeds using the proxy-keyed descriptor. If the FFI layer
+    /// unconditionally substitutes IMPL into `match_address`, matching fails and this
+    /// test errors with "no outer descriptor matches chain_id=10 address=IMPL".
+    #[tokio::test]
+    async fn format_calldata_proxy_keyed_descriptor_survives_impl_lookup() {
+        const PROXY: &str = "0x794a61358d6845594f94dc1db02a252b5b4814ad";
+        const IMPL: &str = "0x9b8e56d890bffbbd385fe8b0e73803a82fcef2f1";
+        const CHAIN_ID: u64 = 10;
+
+        let descriptor_json = format!(
+            r#"{{
+                "context": {{
+                    "contract": {{
+                        "deployments": [
+                            {{ "chainId": {CHAIN_ID}, "address": "{PROXY}" }}
+                        ]
+                    }}
+                }},
+                "metadata": {{
+                    "owner": "Aave DAO",
+                    "contractName": "Aave V3 Pool",
+                    "enums": {{}},
+                    "constants": {{}},
+                    "addressBook": {{}},
+                    "maps": {{}}
+                }},
+                "display": {{
+                    "definitions": {{}},
+                    "formats": {{
+                        "transfer(address,uint256)": {{
+                            "intent": "Transfer tokens",
+                            "fields": [
+                                {{ "path": "@.0", "label": "To", "format": "raw" }},
+                                {{ "path": "@.1", "label": "Amount", "format": "number" }}
+                            ]
+                        }}
+                    }}
+                }}
+            }}"#
+        );
+
+        let tx = TransactionInput {
+            chain_id: CHAIN_ID,
+            to: PROXY.to_string(),
+            calldata_hex: transfer_calldata_hex().to_string(),
+            value_hex: None,
+            from_address: Some("0xbf01daf454dce008d3e2bfd47d5e186f71477253".to_string()),
+        };
+
+        let provider: Arc<dyn DataProviderFfi> = Arc::new(ProxyAwareMockDataProviderFfi {
+            proxy: PROXY.to_string(),
+            implementation: IMPL.to_string(),
+        });
+
+        let result = clear_signing_format_calldata(vec![descriptor_json], tx, Some(provider))
+            .await
+            .expect(
+                "proxy-keyed descriptor must format successfully even when the wallet \
+                 resolves an implementation address for the proxy (Aave V3 Pool pattern)",
+            );
+
+        assert_eq!(result.intent, "Transfer tokens");
+        assert_eq!(result.entries.len(), 2);
+    }
+
+    /// Regression guard against masking unrelated descriptor errors.
+    ///
+    /// When a descriptor is keyed at `tx.to`, the FFI must NOT call
+    /// `get_implementation_address` nor retry against an implementation address on
+    /// descriptor/render errors that are unrelated to proxy matching (e.g. duplicate
+    /// selectors, malformed fields). Otherwise the caller sees a misleading
+    /// "no outer descriptor matches <impl>" instead of the real error.
+    #[tokio::test]
+    async fn format_calldata_does_not_retry_on_unrelated_descriptor_error() {
+        const CONTRACT: &str = "0xdac17f958d2ee523a2206206994597c13d831ec7";
+        const CHAIN_ID: u64 = 1;
+
+        // Two format keys sharing selector 0xa9059cbb — the engine rejects this
+        // with Error::Descriptor("duplicate selectors..."), which converts to
+        // FormatFailure::InvalidDescriptor. The pre-check must see a match at
+        // `tx.to` and skip the impl lookup entirely.
+        let descriptor_json = format!(
+            r#"{{
+                "context": {{
+                    "contract": {{
+                        "deployments": [
+                            {{ "chainId": {CHAIN_ID}, "address": "{CONTRACT}" }}
+                        ]
+                    }}
+                }},
+                "metadata": {{
+                    "owner": "test",
+                    "contractName": "Dup",
+                    "enums": {{}},
+                    "constants": {{}},
+                    "addressBook": {{}},
+                    "maps": {{}}
+                }},
+                "display": {{
+                    "definitions": {{}},
+                    "formats": {{
+                        "transfer(address,uint256)": {{
+                            "intent": "Transfer A",
+                            "fields": [
+                                {{ "path": "@.0", "label": "To", "format": "raw" }},
+                                {{ "path": "@.1", "label": "Amount", "format": "number" }}
+                            ]
+                        }},
+                        "transfer(address dst, uint256 wad)": {{
+                            "intent": "Transfer B",
+                            "fields": [
+                                {{ "path": "dst", "label": "Dest", "format": "raw" }},
+                                {{ "path": "wad", "label": "Wad", "format": "number" }}
+                            ]
+                        }}
+                    }}
+                }}
+            }}"#
+        );
+
+        struct PanicOnImplLookup;
+        impl DataProviderFfi for PanicOnImplLookup {
+            fn resolve_token(&self, _: u64, _: String) -> Option<TokenMetaFfi> {
+                None
+            }
+            fn resolve_ens_name(
+                &self,
+                _: String,
+                _: u64,
+                _: Option<Vec<String>>,
+            ) -> Option<String> {
+                None
+            }
+            fn resolve_local_name(
+                &self,
+                _: String,
+                _: u64,
+                _: Option<Vec<String>>,
+            ) -> Option<String> {
+                None
+            }
+            fn resolve_nft_collection_name(&self, _: String, _: u64) -> Option<String> {
+                None
+            }
+            fn resolve_block_timestamp(&self, _: u64, _: u64) -> Option<u64> {
+                None
+            }
+            fn get_implementation_address(&self, _: u64, _: String) -> Option<String> {
+                panic!(
+                    "get_implementation_address must not be called when tx.to already \
+                     matches a descriptor deployment"
+                );
+            }
+        }
+
+        let provider: Arc<dyn DataProviderFfi> = Arc::new(PanicOnImplLookup);
+
+        let tx = TransactionInput {
+            chain_id: CHAIN_ID,
+            to: CONTRACT.to_string(),
+            calldata_hex: transfer_calldata_hex().to_string(),
+            value_hex: None,
+            from_address: None,
+        };
+
+        let err = clear_signing_format_calldata(vec![descriptor_json], tx, Some(provider))
+            .await
+            .expect_err("duplicate selectors must surface the real error");
+
+        match err {
+            FormatFailure::InvalidDescriptor { message, .. } => {
+                assert!(
+                    message.contains("duplicate selectors"),
+                    "expected duplicate-selector message, got: {message}"
+                );
+                assert!(
+                    !message.contains("no outer descriptor matches"),
+                    "FFI must not retry against impl address on unrelated descriptor errors; \
+                     got: {message}"
+                );
+            }
+            other => panic!("expected InvalidDescriptor, got {other:?}"),
+        }
+    }
+
+    /// Regression guard: descriptor keyed at the singleton implementation address
+    /// (Safe pattern) — every deployed Safe proxy delegatecalls the same singleton,
+    /// so the registry keys one descriptor at the impl address. The FFI must fall
+    /// back from `tx.to` to the wallet-provided implementation address to find it.
+    #[tokio::test]
+    async fn format_calldata_safe_pattern_descriptor_resolves_via_implementation() {
+        const PROXY: &str = "0x1111111111111111111111111111111111111111";
+        const IMPL: &str = "0x6666666666666666666666666666666666666666";
+        const CHAIN_ID: u64 = 1;
+
+        let descriptor_json = format!(
+            r#"{{
+                "context": {{
+                    "contract": {{
+                        "deployments": [
+                            {{ "chainId": {CHAIN_ID}, "address": "{IMPL}" }}
+                        ]
+                    }}
+                }},
+                "metadata": {{
+                    "owner": "Safe",
+                    "contractName": "Safe Singleton",
+                    "enums": {{}},
+                    "constants": {{}},
+                    "addressBook": {{}},
+                    "maps": {{}}
+                }},
+                "display": {{
+                    "definitions": {{}},
+                    "formats": {{
+                        "transfer(address,uint256)": {{
+                            "intent": "Transfer tokens",
+                            "fields": [
+                                {{ "path": "@.0", "label": "To", "format": "raw" }},
+                                {{ "path": "@.1", "label": "Amount", "format": "number" }}
+                            ]
+                        }}
+                    }}
+                }}
+            }}"#
+        );
+
+        let tx = TransactionInput {
+            chain_id: CHAIN_ID,
+            to: PROXY.to_string(),
+            calldata_hex: transfer_calldata_hex().to_string(),
+            value_hex: None,
+            from_address: None,
+        };
+
+        let provider: Arc<dyn DataProviderFfi> = Arc::new(ProxyAwareMockDataProviderFfi {
+            proxy: PROXY.to_string(),
+            implementation: IMPL.to_string(),
+        });
+
+        let result = clear_signing_format_calldata(vec![descriptor_json], tx, Some(provider))
+            .await
+            .expect(
+                "Safe-pattern descriptor (keyed at impl singleton) must format when \
+                 `tx.to` is the proxy and the wallet resolves the impl address",
+            );
+
+        assert_eq!(result.intent, "Transfer tokens");
+        assert_eq!(result.entries.len(), 2);
     }
 
     /// Simulates the exact wallet flow: descriptor JSON → serde round-trip → format_typed_data.
