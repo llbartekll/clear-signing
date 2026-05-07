@@ -40,11 +40,13 @@ final class WalletViewModel: ObservableObject {
     @Published var showScanner = false
 
     private var keyManager: KeyManager?
+    let metadataProvider: DataProviderFfi
     private let clearSigning: ClearSigningService
     private let wc = WalletConnectService.shared
     @Published var wcConfigured = false
 
     init(metadataProvider: DataProviderFfi) {
+        self.metadataProvider = metadataProvider
         clearSigning = ClearSigningService(dataProvider: metadataProvider)
         if let restored = KeyManager.restore() {
             keyManager = restored

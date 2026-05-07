@@ -4,6 +4,7 @@ final class WalletMetadataProviderTests: XCTestCase {
     private let tokenAddress = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
     private let walletAddress = "0xbf01daf454dce008d3e2bfd47d5e186f71477253"
     private let ensAddress = "0xd8da6bf26964af9d7eed9e03e53415d37aa96045"
+    private let transactionHash = "0x675a2e96e48b77e5d8edc16bfc4dc2ea7547f950edb76fdeff40e8af250d897e"
 
     override func tearDown() {
         MockURLProtocol.reset()
@@ -37,7 +38,7 @@ final class WalletMetadataProviderTests: XCTestCase {
         }
 
         let provider = makeProvider(
-            seedEntries: [LookupKey.tokenKey(chainId: 1, address: tokenAddress): TokenMetadata(symbol: "USDC", decimals: 6, name: "USD Coin")],
+            seedEntries: [LookupKey.token(chainId: 1, address: tokenAddress): TokenMetadata(symbol: "USDC", decimals: 6, name: "USD Coin")],
             persistentCache: persistentCache,
             session: makeSession()
         )
@@ -179,7 +180,7 @@ final class WalletMetadataProviderTests: XCTestCase {
             let json = try XCTUnwrap(Self.jsonObject(from: request))
             XCTAssertEqual(json["method"] as? String, "eth_getBlockByNumber")
             let params = try XCTUnwrap(json["params"] as? [Any])
-            XCTAssertEqual(params.first as? String, "0x1298d40")
+            XCTAssertEqual(params.first as? String, "0x1298be0")
 
             return Self.jsonResponse(
                 url: request.url!,
@@ -187,7 +188,7 @@ final class WalletMetadataProviderTests: XCTestCase {
                     "jsonrpc": "2.0",
                     "id": 1,
                     "result": [
-                        "timestamp": "0x65ec89c0",
+                        "timestamp": "0x65ec8780",
                     ],
                 ]
             )
@@ -265,6 +266,188 @@ final class WalletMetadataProviderTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.requests.count, 0)
     }
 
+    func testFetchTransactionByHashDecodesEip1559Transaction() throws {
+        MockURLProtocol.handler = { request in
+            let json = try XCTUnwrap(Self.jsonObject(from: request))
+            XCTAssertEqual(json["method"] as? String, "eth_getTransactionByHash")
+            let params = try XCTUnwrap(json["params"] as? [Any])
+            XCTAssertEqual(params.first as? String, self.transactionHash)
+
+            return Self.jsonResponse(
+                url: request.url!,
+                body: [
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": Self.transactionResult(
+                        hash: self.transactionHash,
+                        type: "0x2",
+                        feeFields: [
+                            "maxFeePerGas": "0x59682f00",
+                            "maxPriorityFeePerGas": "0x3b9aca00",
+                        ]
+                    ),
+                ]
+            )
+        }
+
+        let transaction = try requireValue(
+            AlchemyClient(apiKey: "demo", session: makeSession())
+                .fetchTransactionByHash(chainId: 1, hash: transactionHash)
+        )
+
+        XCTAssertEqual(transaction.hash, transactionHash)
+        XCTAssertEqual(transaction.to, "0xae7ab96520de3a18e5e111b5eaab095312d7fe84")
+        XCTAssertEqual(transaction.valueHex, "0xde0b6b3a7640000")
+        XCTAssertEqual(transaction.valueDisplay, "1 ETH")
+        XCTAssertEqual(transaction.typeDisplay, "eip1559")
+        XCTAssertEqual(transaction.maxFeePerGasHex, "0x59682f00")
+        XCTAssertEqual(transaction.maxPriorityFeePerGasHex, "0x3b9aca00")
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
+    }
+
+    func testFetchTransactionByHashDecodesLegacyGasPrice() throws {
+        let hash = "0x450c5259de51e99ad030963694108287f28d6114e3c74d2bebb8b2c4a5e962ff"
+        MockURLProtocol.handler = { request in
+            Self.jsonResponse(
+                url: request.url!,
+                body: [
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": Self.transactionResult(
+                        hash: hash,
+                        type: "0x0",
+                        feeFields: ["gasPrice": "0x3b9aca00"]
+                    ),
+                ]
+            )
+        }
+
+        let transaction = try requireValue(
+            AlchemyClient(apiKey: "demo", session: makeSession())
+                .fetchTransactionByHash(chainId: 1, hash: hash)
+        )
+
+        XCTAssertEqual(transaction.typeDisplay, "legacy")
+        XCTAssertEqual(transaction.gasPriceHex, "0x3b9aca00")
+        XCTAssertNil(transaction.maxFeePerGasHex)
+        XCTAssertNil(transaction.maxPriorityFeePerGasHex)
+    }
+
+    func testFetchTransactionByHashAllowsContractCreationRecipient() throws {
+        let hash = "0x7fd3cca7ea85567a7741fed3d6ca181d1ffd6e8002e6771d15c8911ebfde872d"
+        MockURLProtocol.handler = { request in
+            var result = Self.transactionResult(hash: hash, type: "0x2", feeFields: [:])
+            result["to"] = NSNull()
+            return Self.jsonResponse(
+                url: request.url!,
+                body: [
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": result,
+                ]
+            )
+        }
+
+        let transaction = try requireValue(
+            AlchemyClient(apiKey: "demo", session: makeSession())
+                .fetchTransactionByHash(chainId: 1, hash: hash)
+        )
+
+        XCTAssertNil(transaction.to)
+        XCTAssertEqual(transaction.input, "0xa1903eab")
+    }
+
+    func testFetchTransactionByHashReturnsNotFoundForNullResult() {
+        MockURLProtocol.handler = { request in
+            Self.jsonResponse(
+                url: request.url!,
+                body: [
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": NSNull(),
+                ]
+            )
+        }
+
+        assertNotFound(
+            AlchemyClient(apiKey: "demo", session: makeSession())
+                .fetchTransactionByHash(chainId: 1, hash: transactionHash)
+        )
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
+    }
+
+    func testFetchTransactionByHashRejectsInvalidHashBeforeRPC() {
+        assertNotFound(
+            AlchemyClient(apiKey: "demo", session: makeSession())
+                .fetchTransactionByHash(chainId: 1, hash: "0x1234")
+        )
+        XCTAssertEqual(MockURLProtocol.requests.count, 0)
+    }
+
+    func testFetchTransactionByHashRejectsUnicodeHexLikeHashBeforeRPC() {
+        let fullwidthHash = "0x" + String(repeating: "１", count: 64)
+
+        assertNotFound(
+            AlchemyClient(apiKey: "demo", session: makeSession())
+                .fetchTransactionByHash(chainId: 1, hash: fullwidthHash)
+        )
+        XCTAssertEqual(MockURLProtocol.requests.count, 0)
+    }
+
+    private func requireValue(
+        _ lookup: RemoteLookup<DebugRawTransaction>,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> DebugRawTransaction {
+        switch lookup {
+        case .value(let transaction):
+            return transaction
+        case .notFound:
+            XCTFail("expected transaction, got notFound", file: file, line: line)
+        case .unavailable:
+            XCTFail("expected transaction, got unavailable", file: file, line: line)
+        }
+        throw NSError(domain: "WalletMetadataProviderTests", code: 1)
+    }
+
+    private func assertNotFound(
+        _ lookup: RemoteLookup<DebugRawTransaction>,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        if case .notFound = lookup {
+            return
+        }
+        XCTFail("expected notFound", file: file, line: line)
+    }
+
+    private static func transactionResult(
+        hash: String,
+        type: String,
+        feeFields: [String: String]
+    ) -> [String: Any] {
+        var result: [String: Any] = [
+            "hash": hash,
+            "from": "0x84aac1001bac1ef90ee65b94de14397412845c1c",
+            "to": "0xae7ab96520de3a18e5e111b5eaab095312d7fe84",
+            "value": "0xde0b6b3a7640000",
+            "input": "0xa1903eab",
+            "nonce": "0x1",
+            "gas": "0x1adb0",
+            "blockNumber": "0x17954eb",
+            "blockHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+            "transactionIndex": "0x5",
+            "chainId": "0x1",
+            "type": type,
+        ]
+
+        for (key, value) in feeFields {
+            result[key] = value
+        }
+
+        return result
+    }
+
     private func makeProvider(
         seedEntries: [String: TokenMetadata],
         persistentCache: PersistentResolutionCache? = nil,
@@ -330,7 +513,16 @@ final class WalletMetadataProviderTests: XCTestCase {
     }
 
     private static func jsonObject(from request: URLRequest) -> [String: Any]? {
-        guard let body = request.httpBody else {
+        let body: Data?
+        if let httpBody = request.httpBody {
+            body = httpBody
+        } else if let stream = request.httpBodyStream {
+            body = Data(reading: stream)
+        } else {
+            body = nil
+        }
+
+        guard let body else {
             return nil
         }
 
@@ -464,5 +656,26 @@ final class MockURLProtocol: URLProtocol {
     static func reset() {
         handler = nil
         requests = []
+    }
+}
+
+private extension Data {
+    init(reading stream: InputStream) {
+        self.init()
+
+        stream.open()
+        defer { stream.close() }
+
+        let bufferSize = 1_024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+
+        while stream.hasBytesAvailable {
+            let count = stream.read(buffer, maxLength: bufferSize)
+            if count <= 0 {
+                break
+            }
+            append(buffer, count: count)
+        }
     }
 }

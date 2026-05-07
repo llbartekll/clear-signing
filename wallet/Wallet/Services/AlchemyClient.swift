@@ -1,5 +1,188 @@
 import Foundation
 
+struct DebugRawTransaction: Identifiable, Codable, Equatable {
+    let hash: String
+    let from: String
+    let to: String?
+    let valueHex: String
+    let input: String
+    let nonceHex: String
+    let gasHex: String
+    let gasPriceHex: String?
+    let maxFeePerGasHex: String?
+    let maxPriorityFeePerGasHex: String?
+    let blockNumberHex: String?
+    let blockHash: String?
+    let transactionIndexHex: String?
+    let chainIdHex: String?
+    let typeHex: String
+
+    var id: String { hash }
+
+    var valueDisplay: String {
+        Self.ethValueString(fromWeiHex: valueHex) ?? valueHex
+    }
+
+    var nonceDisplay: String {
+        Self.decimalString(fromHexQuantity: nonceHex) ?? nonceHex
+    }
+
+    var gasDisplay: String {
+        Self.decimalString(fromHexQuantity: gasHex) ?? gasHex
+    }
+
+    var blockNumberDisplay: String? {
+        guard let blockNumberHex else { return nil }
+        return Self.decimalString(fromHexQuantity: blockNumberHex) ?? blockNumberHex
+    }
+
+    var typeDisplay: String {
+        switch typeHex.lowercased() {
+        case "0x0":
+            return "legacy"
+        case "0x1":
+            return "accessList"
+        case "0x2":
+            return "eip1559"
+        case "0x3":
+            return "blob"
+        default:
+            return typeHex
+        }
+    }
+
+    var rawJSONString: String? {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(self) else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
+    }
+
+    static func fromRPCResult(_ result: [String: Any]) -> DebugRawTransaction? {
+        guard let hash = string(result["hash"]),
+              let from = string(result["from"]),
+              let valueHex = string(result["value"]),
+              let input = string(result["input"]) ?? string(result["data"]),
+              let nonceHex = string(result["nonce"]),
+              let gasHex = string(result["gas"]) else {
+            return nil
+        }
+
+        return DebugRawTransaction(
+            hash: hash,
+            from: from,
+            to: optionalString(result["to"]),
+            valueHex: valueHex,
+            input: input,
+            nonceHex: nonceHex,
+            gasHex: gasHex,
+            gasPriceHex: optionalString(result["gasPrice"]),
+            maxFeePerGasHex: optionalString(result["maxFeePerGas"]),
+            maxPriorityFeePerGasHex: optionalString(result["maxPriorityFeePerGas"]),
+            blockNumberHex: optionalString(result["blockNumber"]),
+            blockHash: optionalString(result["blockHash"]),
+            transactionIndexHex: optionalString(result["transactionIndex"]),
+            chainIdHex: optionalString(result["chainId"]),
+            typeHex: string(result["type"]) ?? "0x0"
+        )
+    }
+
+    static func isValidTransactionHash(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count == 66, trimmed.hasPrefix("0x") else {
+            return false
+        }
+
+        return trimmed.dropFirst(2).allSatisfy { character in
+            character.isASCII && character.isHexDigit
+        }
+    }
+
+    static func decimalString(fromHexQuantity hex: String) -> String? {
+        let trimmed = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = trimmed.hasPrefix("0x") ? String(trimmed.dropFirst(2)) : trimmed
+        guard !body.isEmpty, body.allSatisfy({ $0.isHexDigit }) else {
+            return nil
+        }
+
+        var digits = [0]
+        for scalar in body.lowercased().unicodeScalars {
+            guard let value = Int(String(scalar), radix: 16) else {
+                return nil
+            }
+            multiplyDecimalDigits(&digits, by: 16)
+            addDecimalDigits(&digits, value)
+        }
+
+        return digits.reversed().map(String.init).joined()
+    }
+
+    static func ethValueString(fromWeiHex hex: String) -> String? {
+        guard let decimal = decimalString(fromHexQuantity: hex) else {
+            return nil
+        }
+
+        let padded = String(repeating: "0", count: max(0, 19 - decimal.count)) + decimal
+        let whole = String(padded.dropLast(18))
+        var fraction = String(padded.suffix(18))
+        while fraction.last == "0" {
+            fraction.removeLast()
+        }
+
+        if fraction.isEmpty {
+            return "\(whole) ETH"
+        }
+        return "\(whole).\(fraction) ETH"
+    }
+
+    private static func string(_ value: Any?) -> String? {
+        guard let string = value as? String else {
+            return nil
+        }
+
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func optionalString(_ value: Any?) -> String? {
+        if value == nil || value is NSNull {
+            return nil
+        }
+        return string(value)
+    }
+
+    private static func multiplyDecimalDigits(_ digits: inout [Int], by multiplier: Int) {
+        var carry = 0
+        for index in digits.indices {
+            let product = digits[index] * multiplier + carry
+            digits[index] = product % 10
+            carry = product / 10
+        }
+
+        while carry > 0 {
+            digits.append(carry % 10)
+            carry /= 10
+        }
+    }
+
+    private static func addDecimalDigits(_ digits: inout [Int], _ addend: Int) {
+        var carry = addend
+        var index = 0
+        while carry > 0 {
+            if index == digits.count {
+                digits.append(0)
+            }
+
+            let sum = digits[index] + carry
+            digits[index] = sum % 10
+            carry = sum / 10
+            index += 1
+        }
+    }
+}
+
 final class AlchemyClient {
     private enum NetworkError: Error {
         case timedOut
@@ -11,10 +194,10 @@ final class AlchemyClient {
     private let session: URLSession
     private let timeout: TimeInterval
 
-    init(apiKey: String, session: URLSession = AlchemyClient.makeSession(), timeout: TimeInterval = 1.5) {
+    init(apiKey: String, session: URLSession? = nil, timeout: TimeInterval = 1.5) {
         self.apiKey = apiKey
-        self.session = session
         self.timeout = timeout
+        self.session = session ?? Self.makeSession(timeout: timeout)
     }
 
     static func makeSession(timeout: TimeInterval = 1.5) -> URLSession {
@@ -177,6 +360,43 @@ final class AlchemyClient {
         }
 
         return .value(timestamp)
+    }
+
+    func fetchTransactionByHash(chainId: UInt64, hash: String) -> RemoteLookup<DebugRawTransaction> {
+        let trimmedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard DebugRawTransaction.isValidTransactionHash(trimmedHash) else {
+            return .notFound
+        }
+
+        guard let url = rpcURL(for: chainId) else {
+            return .unavailable
+        }
+
+        let payload: [String: Any] = [
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "eth_getTransactionByHash",
+            "params": [trimmedHash]
+        ]
+
+        guard let json = performJSONRequest(url: url, method: "POST", jsonBody: payload) else {
+            return .unavailable
+        }
+
+        if json["error"] != nil {
+            return .unavailable
+        }
+
+        guard let result = json["result"], !(result is NSNull) else {
+            return .notFound
+        }
+
+        guard let object = result as? [String: Any],
+              let transaction = DebugRawTransaction.fromRPCResult(object) else {
+            return .unavailable
+        }
+
+        return .value(transaction)
     }
 
     private func performJSONRequest(url: URL, method: String, jsonBody: [String: Any]?) -> [String: Any]? {

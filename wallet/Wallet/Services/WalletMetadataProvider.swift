@@ -59,11 +59,11 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         lookupToken(chainId: chainId, address: address)?.ffiValue
     }
 
-    func resolveEnsName(address: String, chainId: UInt64, types: [String]?) -> String? {
+    func resolveEnsName(address: String, chainId: UInt64, types: [String]? = nil) -> String? {
         lookupENSName(address: address, chainId: chainId)
     }
 
-    func resolveLocalName(address: String, chainId: UInt64, types: [String]?) -> String? {
+    func resolveLocalName(address: String, chainId: UInt64, types: [String]? = nil) -> String? {
         guard let resolved = normalizedAddress(address),
               let wallet = normalizedAddress(walletAddressProvider()) else { return nil }
         return resolved == wallet ? Self.localWalletName : nil

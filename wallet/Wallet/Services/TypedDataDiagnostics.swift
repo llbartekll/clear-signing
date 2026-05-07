@@ -1,6 +1,8 @@
 import Foundation
 import ClearSigning
+#if !WALLET_TESTS
 import ReownWalletKit
+#endif
 
 struct TypedDataSummary: Codable {
     let primaryType: String?
@@ -86,6 +88,7 @@ struct TypedDataCapture: Identifiable, Codable {
     var signerError: String?
     var notes: [String]
 
+    #if !WALLET_TESTS
     init(request: Request, rawParamsJson: String?) {
         self.id = UUID()
         self.timestamp = Date()
@@ -117,6 +120,7 @@ struct TypedDataCapture: Identifiable, Codable {
         self.signerError = nil
         self.notes = []
     }
+    #endif
 
     init(
         method: String,

@@ -1,6 +1,8 @@
 import Foundation
 import ClearSigning
+#if !WALLET_TESTS
 import ReownWalletKit
+#endif
 
 struct CalldataCapture: Identifiable, Codable {
     enum Outcome: String, Codable {
@@ -52,6 +54,7 @@ struct CalldataCapture: Identifiable, Codable {
     var signingError: String?
     var notes: [String]
 
+    #if !WALLET_TESTS
     init(request: Request, rawParamsJson: String?) {
         self.id = UUID()
         self.timestamp = Date()
@@ -89,6 +92,7 @@ struct CalldataCapture: Identifiable, Codable {
         self.signingError = nil
         self.notes = []
     }
+    #endif
 
     init(
         method: String,

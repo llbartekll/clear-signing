@@ -6,6 +6,20 @@ struct ContentView: View {
     @ObservedObject var viewModel: WalletViewModel
 
     var body: some View {
+        TabView {
+            walletView
+                .tabItem {
+                    Label("Wallet", systemImage: "wallet.pass")
+                }
+
+            TransactionDebugView(metadataProvider: viewModel.metadataProvider)
+                .tabItem {
+                    Label("Debug", systemImage: "wrench.and.screwdriver")
+                }
+        }
+    }
+
+    private var walletView: some View {
         NavigationStack {
             Form {
                 KeyImportSection(viewModel: viewModel)
