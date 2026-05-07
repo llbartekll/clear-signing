@@ -257,6 +257,7 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
         interpolated_intent: None,
         entries,
         owner: None,
+        contract_name: None,
     }
 }
 

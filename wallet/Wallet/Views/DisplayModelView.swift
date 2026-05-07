@@ -23,8 +23,8 @@ struct DisplayModelView: View {
                     .foregroundStyle(.secondary)
             }
 
-            if let owner = model.owner {
-                itemRow(DisplayItem(label: "Contract", value: owner))
+            if let label = model.contractName ?? model.owner {
+                itemRow(DisplayItem(label: "Interacting with", value: label))
             }
 
             ForEach(Array(model.entries.enumerated()), id: \.offset) { _, entry in

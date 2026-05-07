@@ -1004,17 +1004,19 @@ public struct DisplayModel: Equatable, Hashable {
      * Owner of the descriptor that produced this model (from `metadata.owner`).
      */
     public var owner: String?
+    public var contractName: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(intent: String, interpolatedIntent: String?, entries: [DisplayEntry], 
         /**
          * Owner of the descriptor that produced this model (from `metadata.owner`).
-         */owner: String?) {
+         */owner: String?, contractName: String?) {
         self.intent = intent
         self.interpolatedIntent = interpolatedIntent
         self.entries = entries
         self.owner = owner
+        self.contractName = contractName
     }
 
     
@@ -1036,7 +1038,8 @@ public struct FfiConverterTypeDisplayModel: FfiConverterRustBuffer {
                 intent: FfiConverterString.read(from: &buf), 
                 interpolatedIntent: FfiConverterOptionString.read(from: &buf), 
                 entries: FfiConverterSequenceTypeDisplayEntry.read(from: &buf), 
-                owner: FfiConverterOptionString.read(from: &buf)
+                owner: FfiConverterOptionString.read(from: &buf), 
+                contractName: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -1045,6 +1048,7 @@ public struct FfiConverterTypeDisplayModel: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.interpolatedIntent, into: &buf)
         FfiConverterSequenceTypeDisplayEntry.write(value.entries, into: &buf)
         FfiConverterOptionString.write(value.owner, into: &buf)
+        FfiConverterOptionString.write(value.contractName, into: &buf)
     }
 }
 

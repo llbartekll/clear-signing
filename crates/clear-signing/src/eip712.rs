@@ -240,6 +240,7 @@ pub(crate) async fn format_typed_data_with_format(
         },
         entries,
         owner: descriptor.metadata.owner.clone(),
+        contract_name: descriptor.metadata.contract_name.clone(),
     };
 
     crate::engine::record_diagnostics(state, &warnings);
@@ -1000,6 +1001,7 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
         interpolated_intent: None,
         entries,
         owner: None,
+        contract_name: None,
     }
 }
 

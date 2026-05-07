@@ -37,6 +37,7 @@ pub struct DisplayModel {
     pub entries: Vec<DisplayEntry>,
     /// Owner of the descriptor that produced this model (from `metadata.owner`).
     pub owner: Option<String>,
+    pub contract_name: Option<String>,
 }
 
 /// A display entry — either a flat item, a group of items, or a nested calldata call.
@@ -140,6 +141,7 @@ pub(crate) async fn format_calldata(
         interpolated_intent: interpolated,
         entries,
         owner: descriptor.metadata.owner.clone(),
+        contract_name: descriptor.metadata.contract_name.clone(),
     };
 
     record_diagnostics(state, &warnings);
