@@ -21,10 +21,12 @@ async fn runner_pipeline_executes_and_reports_failures() {
         .iter()
         .map(|f| match f {
             Failure::IntentMismatch { .. } => "intent",
+            Failure::InterpolatedIntentMismatch { .. } => "interpolatedIntent",
             Failure::OwnerMismatch { .. } => "owner",
             Failure::FieldMissing { .. } => "missing",
             Failure::FieldExtra { .. } => "extra",
             Failure::FieldValueMismatch { .. } => "value",
+            Failure::FieldKindMismatch { .. } => "kind",
             Failure::AmbiguousLabel { .. } => "ambiguous",
         })
         .collect();

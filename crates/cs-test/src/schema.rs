@@ -45,10 +45,27 @@ pub struct Eip712Case {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Expected {
     pub intent: String,
+    #[serde(default, rename = "interpolatedIntent", skip_serializing_if = "Option::is_none")]
+    pub interpolated_intent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default)]
-    pub fields: IndexMap<String, String>,
+    pub fields: IndexMap<String, FieldExpected>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FieldExpected {
+    Value(String),
+    Nested(NestedExpected),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NestedExpected {
+    pub intent: String,
+    #[serde(default)]
+    pub fields: IndexMap<String, FieldExpected>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
