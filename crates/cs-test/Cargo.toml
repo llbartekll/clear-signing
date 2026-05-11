@@ -1,0 +1,26 @@
+[package]
+name = "cs-test"
+version = "0.1.0"
+edition = "2021"
+description = "CLI test runner for ERC-7730 descriptors using the clear-signing engine"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "cs-test"
+path = "src/main.rs"
+
+[lib]
+name = "cs_test"
+path = "src/lib.rs"
+
+[dependencies]
+clear-signing = { path = "../clear-signing" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+indexmap = { version = "2", features = ["serde"] }
+rlp = "0.5"
+similar = "2"
+hex = "0.4"

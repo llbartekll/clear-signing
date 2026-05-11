@@ -1,0 +1,23 @@
+{
+  "descriptor": "../../../clear-signing/tests/fixtures/aave-lpv2.json",
+  "dataProvider": {
+    "tokens": {
+      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {
+        "symbol": "USDC",
+        "decimals": 6,
+        "name": "USD Coin"
+      }
+    }
+  },
+  "tests": [
+    {
+      "description": "calldata pipeline (intentionally wrong expectations)",
+      "rawTx": "0x02f8ad018189830186a084028c8c9c830493e0947d2768de32b0b80b7a3454c06bdac94a69ddc7a980b884573ade81000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00000000000000000000000000000000000000000000000000000000000000020000000000000000000000002fec9b58d089447d3e5e50578b9f71321713a470c0",
+      "expected": {
+        "intent": "WRONG_INTENT_FOR_SMOKE",
+        "owner": "WRONG_OWNER_FOR_SMOKE",
+        "fields": {}
+      }
+    }
+  ]
+}
