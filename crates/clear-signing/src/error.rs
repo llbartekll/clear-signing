@@ -125,3 +125,203 @@ impl From<ResolveError> for FormatFailure {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_failure_from_error_decode() {
+        let f = FormatFailure::from(Error::Decode(DecodeError::CalldataTooShort {
+            expected: 4,
+            actual: 2,
+        }));
+        match f {
+            FormatFailure::InvalidInput { message, retryable } => {
+                assert!(message.contains("calldata too short"));
+                assert!(!retryable);
+            }
+            other => panic!("expected InvalidInput, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_error_descriptor() {
+        let f = FormatFailure::from(Error::Descriptor("bad".into()));
+        match f {
+            FormatFailure::InvalidDescriptor { message, retryable } => {
+                assert_eq!(message, "bad");
+                assert!(!retryable);
+            }
+            other => panic!("expected InvalidDescriptor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_error_resolve_forwards() {
+        let f = FormatFailure::from(Error::Resolve(ResolveError::NotFound {
+            chain_id: 1,
+            address: "0xabc".into(),
+        }));
+        match f {
+            FormatFailure::InvalidDescriptor { message, retryable } => {
+                assert!(message.contains("chain_id=1"));
+                assert!(message.contains("0xabc"));
+                assert!(!retryable);
+            }
+            other => panic!("expected InvalidDescriptor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_error_token_registry() {
+        let f = FormatFailure::from(Error::TokenRegistry("rate limit".into()));
+        match f {
+            FormatFailure::ResolutionFailed { message, retryable } => {
+                assert!(message.starts_with("token registry error:"));
+                assert!(message.contains("rate limit"));
+                assert!(retryable);
+            }
+            other => panic!("expected ResolutionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_error_render() {
+        let f = FormatFailure::from(Error::Render("nope".into()));
+        match f {
+            FormatFailure::InvalidDescriptor { message, retryable } => {
+                assert_eq!(message, "nope");
+                assert!(!retryable);
+            }
+            other => panic!("expected InvalidDescriptor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_resolve_not_found() {
+        let f = FormatFailure::from(ResolveError::NotFound {
+            chain_id: 137,
+            address: "0xdead".into(),
+        });
+        match f {
+            FormatFailure::InvalidDescriptor { message, retryable } => {
+                assert!(message.contains("chain_id=137"));
+                assert!(message.contains("0xdead"));
+                assert!(!retryable);
+            }
+            other => panic!("expected InvalidDescriptor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_resolve_index_missing() {
+        let f = FormatFailure::from(ResolveError::RegistryIndexMissing {
+            url: "https://example/idx".into(),
+        });
+        match f {
+            FormatFailure::ResolutionFailed { message, retryable } => {
+                assert!(message.contains("registry index missing"));
+                assert!(message.contains("https://example/idx"));
+                assert!(retryable);
+            }
+            other => panic!("expected ResolutionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_resolve_descriptor_missing() {
+        let f = FormatFailure::from(ResolveError::RegistryDescriptorMissing {
+            url: "https://example/d.json".into(),
+        });
+        match f {
+            FormatFailure::ResolutionFailed { message, retryable } => {
+                assert!(message.contains("registry descriptor missing"));
+                assert!(retryable);
+            }
+            other => panic!("expected ResolutionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_resolve_io() {
+        let f = FormatFailure::from(ResolveError::RegistryIo("timeout".into()));
+        match f {
+            FormatFailure::ResolutionFailed { message, retryable } => {
+                assert!(message.contains("registry io error"));
+                assert!(message.contains("timeout"));
+                assert!(retryable);
+            }
+            other => panic!("expected ResolutionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn format_failure_from_resolve_parse() {
+        let f = FormatFailure::from(ResolveError::Parse("bad json".into()));
+        match f {
+            FormatFailure::ResolutionFailed { message, retryable } => {
+                assert!(message.contains("parse error"));
+                assert!(message.contains("bad json"));
+                assert!(!retryable);
+            }
+            other => panic!("expected ResolutionFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_error_display() {
+        assert!(DecodeError::InvalidSignature("foo".into())
+            .to_string()
+            .contains("invalid function signature"));
+        assert!(DecodeError::SelectorMismatch {
+            expected: "a".into(),
+            actual: "b".into(),
+        }
+        .to_string()
+        .contains("selector mismatch"));
+        assert!(DecodeError::InvalidEncoding("e".into())
+            .to_string()
+            .contains("invalid ABI encoding"));
+        assert!(DecodeError::UnsupportedType("t".into())
+            .to_string()
+            .contains("unsupported type"));
+    }
+
+    #[test]
+    fn resolve_error_display() {
+        assert!(ResolveError::NotFound {
+            chain_id: 1,
+            address: "x".into(),
+        }
+        .to_string()
+        .contains("chain_id=1"));
+        assert!(ResolveError::RegistryIndexMissing { url: "u".into() }
+            .to_string()
+            .contains("index missing"));
+        assert!(
+            ResolveError::RegistryDescriptorMissing { url: "u".into() }
+                .to_string()
+                .contains("descriptor missing")
+        );
+        assert!(ResolveError::RegistryIo("e".into())
+            .to_string()
+            .contains("io error"));
+        assert!(ResolveError::Parse("p".into())
+            .to_string()
+            .contains("parse error"));
+    }
+
+    #[test]
+    fn error_display() {
+        assert!(Error::Descriptor("d".into())
+            .to_string()
+            .contains("descriptor error"));
+        assert!(Error::TokenRegistry("t".into())
+            .to_string()
+            .contains("token registry"));
+        assert!(Error::Render("r".into())
+            .to_string()
+            .contains("render error"));
+    }
+}

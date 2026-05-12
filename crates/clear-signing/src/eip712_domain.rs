@@ -539,3 +539,289 @@ fn keccak256(bytes: &[u8]) -> [u8; 32] {
     hasher.finalize(&mut output);
     output
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn build_descriptor(
+        domain: Option<serde_json::Value>,
+        domain_separator: Option<&str>,
+    ) -> Descriptor {
+        let mut eip712 = json!({ "deployments": [] });
+        if let Some(d) = domain {
+            eip712["domain"] = d;
+        }
+        if let Some(ds) = domain_separator {
+            eip712["domainSeparator"] = json!(ds);
+        }
+        serde_json::from_value(json!({
+            "context": { "eip712": eip712 },
+            "metadata": {},
+            "display": { "formats": {} }
+        }))
+        .unwrap()
+    }
+
+    fn build_calldata_descriptor() -> Descriptor {
+        serde_json::from_value(json!({
+            "context": { "contract": { "deployments": [] } },
+            "metadata": {},
+            "display": { "formats": {} }
+        }))
+        .unwrap()
+    }
+
+    fn build_typed_data(domain: serde_json::Value, types: serde_json::Value) -> TypedData {
+        serde_json::from_value(json!({
+            "types": types,
+            "primaryType": "X",
+            "domain": domain,
+            "message": {}
+        }))
+        .unwrap()
+    }
+
+    fn err_message(err: Error) -> String {
+        match err {
+            Error::Descriptor(m) => m,
+            other => panic!("expected Error::Descriptor, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_non_eip712_context() {
+        let descriptor = build_calldata_descriptor();
+        let data = build_typed_data(json!({}), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("must use eip712 context"));
+    }
+
+    #[test]
+    fn name_mismatch() {
+        let descriptor = build_descriptor(Some(json!({ "name": "A" })), None);
+        let data = build_typed_data(json!({ "name": "B" }), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.name mismatch"));
+    }
+
+    #[test]
+    fn name_missing_in_typed_data() {
+        let descriptor = build_descriptor(Some(json!({ "name": "A" })), None);
+        let data = build_typed_data(json!({}), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.name is required"));
+    }
+
+    #[test]
+    fn version_mismatch() {
+        let descriptor = build_descriptor(Some(json!({ "version": "1" })), None);
+        let data = build_typed_data(json!({ "version": "2" }), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.version mismatch"));
+    }
+
+    #[test]
+    fn version_missing_in_typed_data() {
+        let descriptor = build_descriptor(Some(json!({ "version": "1" })), None);
+        let data = build_typed_data(json!({}), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.version is required"));
+    }
+
+    #[test]
+    fn chain_id_mismatch() {
+        let descriptor = build_descriptor(Some(json!({ "chainId": 1 })), None);
+        let data = build_typed_data(json!({ "chainId": 2 }), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.chainId mismatch"));
+    }
+
+    #[test]
+    fn chain_id_missing_in_typed_data() {
+        let descriptor = build_descriptor(Some(json!({ "chainId": 1 })), None);
+        let data = build_typed_data(json!({}), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.chainId is required"));
+    }
+
+    #[test]
+    fn verifying_contract_mismatch() {
+        let descriptor = build_descriptor(
+            Some(json!({ "verifyingContract": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
+            None,
+        );
+        let data = build_typed_data(
+            json!({ "verifyingContract": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }),
+            json!({}),
+        );
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.verifyingContract mismatch"));
+    }
+
+    #[test]
+    fn verifying_contract_case_insensitive_match() {
+        let descriptor = build_descriptor(
+            Some(json!({ "verifyingContract": "0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa" })),
+            None,
+        );
+        let data = build_typed_data(
+            json!({ "verifyingContract": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }),
+            json!({}),
+        );
+        assert!(validate_descriptor_eip712_context(&descriptor, &data).is_ok());
+    }
+
+    #[test]
+    fn verifying_contract_missing_in_typed_data() {
+        let descriptor = build_descriptor(
+            Some(json!({ "verifyingContract": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })),
+            None,
+        );
+        let data = build_typed_data(json!({}), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.verifyingContract is required"));
+    }
+
+    #[test]
+    fn salt_mismatch() {
+        let descriptor = build_descriptor(
+            Some(json!({ "salt": "0x1111111111111111111111111111111111111111111111111111111111111111" })),
+            None,
+        );
+        let data = build_typed_data(
+            json!({ "salt": "0x2222222222222222222222222222222222222222222222222222222222222222" }),
+            json!({}),
+        );
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.salt mismatch"));
+    }
+
+    #[test]
+    fn salt_missing_in_typed_data() {
+        let descriptor = build_descriptor(
+            Some(json!({ "salt": "0x1111111111111111111111111111111111111111111111111111111111111111" })),
+            None,
+        );
+        let data = build_typed_data(json!({}), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domain.salt is required"));
+    }
+
+    #[test]
+    fn salt_uppercase_prefix_normalized() {
+        let descriptor = build_descriptor(
+            Some(json!({ "salt": "0X1111111111111111111111111111111111111111111111111111111111111111" })),
+            None,
+        );
+        let data = build_typed_data(
+            json!({ "salt": "0x1111111111111111111111111111111111111111111111111111111111111111" }),
+            json!({}),
+        );
+        assert!(validate_descriptor_eip712_context(&descriptor, &data).is_ok());
+    }
+
+    #[test]
+    fn full_domain_happy_path() {
+        let descriptor = build_descriptor(
+            Some(json!({
+                "name": "A",
+                "version": "1",
+                "chainId": 1,
+                "verifyingContract": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            })),
+            None,
+        );
+        let data = build_typed_data(
+            json!({
+                "name": "A",
+                "version": "1",
+                "chainId": 1,
+                "verifyingContract": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }),
+            json!({}),
+        );
+        assert!(validate_descriptor_eip712_context(&descriptor, &data).is_ok());
+    }
+
+    #[test]
+    fn descriptor_with_no_domain_constraints_passes() {
+        let descriptor = build_descriptor(None, None);
+        let data = build_typed_data(json!({ "name": "anything" }), json!({}));
+        assert!(validate_descriptor_eip712_context(&descriptor, &data).is_ok());
+    }
+
+    #[test]
+    fn domain_separator_missing_prefix_is_rejected() {
+        let descriptor = build_descriptor(
+            None,
+            Some("1111111111111111111111111111111111111111111111111111111111111111"),
+        );
+        let data = build_typed_data(
+            json!({}),
+            json!({ "EIP712Domain": [{ "name": "name", "type": "string" }] }),
+        );
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("32-byte hex"));
+    }
+
+    #[test]
+    fn domain_separator_invalid_hex_is_rejected() {
+        let descriptor = build_descriptor(None, Some("0xZZ"));
+        let data = build_typed_data(
+            json!({}),
+            json!({ "EIP712Domain": [{ "name": "name", "type": "string" }] }),
+        );
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("32-byte hex"));
+    }
+
+    #[test]
+    fn domain_separator_wrong_length_is_rejected() {
+        let descriptor = build_descriptor(None, Some("0xdeadbeef"));
+        let data = build_typed_data(
+            json!({}),
+            json!({ "EIP712Domain": [{ "name": "name", "type": "string" }] }),
+        );
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("32-byte hex"));
+    }
+
+    #[test]
+    fn domain_separator_requires_eip712_domain_type() {
+        let descriptor = build_descriptor(
+            None,
+            Some("0x1111111111111111111111111111111111111111111111111111111111111111"),
+        );
+        let data = build_typed_data(json!({ "name": "A" }), json!({}));
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("types.EIP712Domain"));
+    }
+
+    #[test]
+    fn domain_separator_mismatch_exercises_compute_path() {
+        let descriptor = build_descriptor(
+            None,
+            Some("0x1111111111111111111111111111111111111111111111111111111111111111"),
+        );
+        let data = build_typed_data(
+            json!({
+                "name": "A",
+                "version": "1",
+                "chainId": 1,
+                "verifyingContract": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }),
+            json!({
+                "EIP712Domain": [
+                    { "name": "name", "type": "string" },
+                    { "name": "version", "type": "string" },
+                    { "name": "chainId", "type": "uint256" },
+                    { "name": "verifyingContract", "type": "address" }
+                ]
+            }),
+        );
+        let err = validate_descriptor_eip712_context(&descriptor, &data).unwrap_err();
+        assert!(err_message(err).contains("domainSeparator mismatch"));
+    }
+}
