@@ -29,6 +29,25 @@ jobs:
       - name: Test
         run: cargo test -p clear-signing --features uniffi,github-registry
 
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Generate coverage
+        run: cargo llvm-cov -p clear-signing --features uniffi,github-registry --summary-only
+
   android:
     name: Android
     runs-on: ubuntu-latest
