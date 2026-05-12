@@ -13,7 +13,7 @@ use crate::resolver::{DescriptorSource, GitHubRegistrySource};
 
 #[cfg(feature = "github-registry")]
 const DEFAULT_REGISTRY_URL: &str =
-    "https://raw.githubusercontent.com/llbartekll/clear-signing-erc7730-registry/v3";
+    "https://raw.githubusercontent.com/ethereum/clear-signing-erc7730-registry/master";
 
 #[cfg(feature = "github-registry")]
 static REGISTRY_SOURCE: tokio::sync::OnceCell<GitHubRegistrySource> =
