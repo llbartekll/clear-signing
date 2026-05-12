@@ -2,8 +2,19 @@
 name = "clear-signing"
 version = "0.1.0"
 edition = "2021"
-description = "ERC-7730 v2 clear signing library"
+authors = ["Bartosz Rozwarski"]
+description = "ERC-7730 v2 clear signing library: decodes and formats Ethereum calldata and EIP-712 typed data for human-readable display."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/llbartekll/clear-signing"
+homepage = "https://github.com/llbartekll/clear-signing"
+documentation = "https://docs.rs/clear-signing"
+readme = "README.md"
+keywords = ["erc7730", "ethereum", "clear-signing", "calldata", "eip712"]
+categories = ["cryptography::cryptocurrencies", "encoding"]
+exclude = ["tests/fixtures/**"]
+
+[package.metadata.docs.rs]
+features = ["uniffi", "github-registry"]
 
 [lib]
 name = "clear_signing"
