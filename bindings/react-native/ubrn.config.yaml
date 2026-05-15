@@ -1,0 +1,33 @@
+rust:
+  directory: ../../crates/clear-signing
+  manifestPath: Cargo.toml
+
+bindings:
+  cpp: cpp
+  ts: src/generated
+
+turboModule:
+  cpp: cpp
+  android: android/src/main
+  ios: ios
+
+ios:
+  frameworkName: ClearSigning
+  targets:
+    - aarch64-apple-ios
+    - aarch64-apple-ios-sim
+    - x86_64-apple-ios
+  cargoExtras:
+    - "--features"
+    - "uniffi,github-registry"
+
+android:
+  targets:
+    - arm64-v8a
+    - armeabi-v7a
+    - x86
+    - x86_64
+  cargoExtras:
+    - "--features"
+    - "uniffi,github-registry"
+

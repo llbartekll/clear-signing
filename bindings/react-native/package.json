@@ -1,0 +1,60 @@
+{
+  "name": "react-native-clear-signing",
+  "version": "0.0.1",
+  "description": "ERC-7730 v2 clear-signing for React Native (iOS + Android) — JSI/TurboModule bindings over the Rust core.",
+  "main": "src/index.tsx",
+  "types": "src/index.tsx",
+  "react-native": "src/index.tsx",
+  "files": [
+    "src",
+    "cpp",
+    "ios",
+    "android",
+    "ubrn.config.yaml",
+    "*.podspec",
+    "README.md",
+    "!**/*.test.*",
+    "!example",
+    "!**/.*"
+  ],
+  "scripts": {
+    "ubrn:ios": "ubrn build ios --and-generate",
+    "ubrn:android": "ubrn build android --and-generate",
+    "ubrn:clean": "rm -rfv cpp/ android/CMakeLists.txt android/src/main/java android/*.cpp ios/ src/Native* src/index.ffi.* src/generated/",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "react-native",
+    "erc7730",
+    "ethereum",
+    "clear-signing",
+    "wallet"
+  ],
+  "license": "MIT OR Apache-2.0",
+  "author": "Bartosz Rozwarski",
+  "homepage": "https://github.com/llbartekll/clear-signing#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/llbartekll/clear-signing.git",
+    "directory": "bindings/react-native"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.4.0",
+    "uniffi-bindgen-react-native": "0.31.0-2"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "codegenConfig": {
+    "name": "RNNativeModuleSpec",
+    "type": "modules",
+    "jsSrcsDir": "src"
+  }
+}
