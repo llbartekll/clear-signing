@@ -2,7 +2,7 @@
 import Foundation
 import PackageDescription
 
-private let useLocalRustXCFramework = true
+private let useLocalRustXCFramework = false
 
 let package = Package(
     name: "ClearSigning",
@@ -20,8 +20,8 @@ let package = Package(
             )
             : .binaryTarget(
                 name: "ClearSigningRust",
-                url: "https://github.com/llbartekll/clear-signing/releases/download/0.0.3/libclear_signing.xcframework.zip",
-                checksum: "110c9a60fee7b563a4644902508a28e246a2870f252369d8c3936b7c9ffe7031"
+                url: "https://github.com/llbartekll/clear-signing/releases/download/0.1.3/libclear_signing.xcframework.zip",
+                checksum: "b219ea366092fe7c41c004af0a3417af6f0ffd364263aa6e97a9c5a5ddd1e06f"
             ),
         .target(
             name: "ClearSigning",
