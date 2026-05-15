@@ -1,0 +1,117 @@
+name: Release React Native (iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (strict semver, e.g. 0.1.0). Must match an existing Swift release tag.'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release-react-native-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Validate version
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version '$VERSION' — must match ^[0-9]+\\.[0-9]+\\.[0-9]+\$" >&2
+            exit 1
+          fi
+
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version }}
+          fetch-depth: 0
+
+      - name: Ensure Swift release for this tag exists with xcframework asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "$VERSION" --json assets --jq '.assets[].name' | grep -q '^libclear_signing\.xcframework\.zip$'; then
+            echo "::error::Release $VERSION exists but is missing libclear_signing.xcframework.zip. Re-run the Swift release first." >&2
+            exit 1
+          fi
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install npm deps
+        working-directory: bindings/react-native
+        run: npm ci
+
+      - name: Regenerate JSI bridge + bindings (full release build)
+        working-directory: bindings/react-native
+        run: npx ubrn build ios --release --and-generate --config ubrn.config.yaml
+
+      - name: Restore podspec to local-dev shape (for drift guard)
+        run: ./scripts/prepare-rn-podspec.sh
+
+      - name: Drift guard — committed bindings must match regeneration
+        run: |
+          git diff --quiet bindings/react-native/cpp \
+                            bindings/react-native/ios \
+                            bindings/react-native/src/generated \
+                            bindings/react-native/react-native-clear-signing.podspec || {
+            echo "::error::Regenerated bindings drift from committed state." >&2
+            echo "Run scripts/build-rn-ios.sh locally and commit the result before releasing." >&2
+            git --no-pager diff bindings/react-native/cpp bindings/react-native/ios bindings/react-native/src/generated bindings/react-native/react-native-clear-signing.podspec | head -200 >&2
+            exit 1
+          }
+
+      - name: Zip RN-flavored XCFramework
+        run: |
+          mkdir -p Output
+          cd bindings/react-native
+          zip -r ../../Output/libclear_signing-rn.xcframework.zip ClearSigning.xcframework
+
+      - name: Compute xcframework SHA-256
+        id: checksum
+        run: |
+          SHA="$(shasum -a 256 Output/libclear_signing-rn.xcframework.zip | awk '{print $1}')"
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Attach xcframework to GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          files: Output/libclear_signing-rn.xcframework.zip
+
+      - name: Apply release-mode podspec patches (with checksum)
+        env:
+          CHECKSUM: ${{ steps.checksum.outputs.sha256 }}
+        run: ./scripts/prepare-rn-podspec.sh "$VERSION" "$CHECKSUM"
+
+      - name: Bump package.json version
+        working-directory: bindings/react-native
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm
+        working-directory: bindings/react-native
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance

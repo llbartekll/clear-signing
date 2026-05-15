@@ -40,7 +40,8 @@
   },
   "peerDependencies": {
     "react": "*",
-    "react-native": "*"
+    "react-native": "*",
+    "uniffi-bindgen-react-native": "0.31.0-2"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",
