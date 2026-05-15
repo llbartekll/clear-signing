@@ -7,12 +7,6 @@ on:
         description: 'Version to release (must match crates/clear-signing/Cargo.toml, e.g. 0.1.0)'
         required: true
         type: string
-  workflow_call:
-    inputs:
-      version:
-        description: 'Version to release (must match crates/clear-signing/Cargo.toml, e.g. 0.1.0)'
-        required: true
-        type: string
 
 permissions:
   contents: write

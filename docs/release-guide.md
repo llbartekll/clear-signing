@@ -2,11 +2,11 @@
 
 This document describes the release workflows as implemented in:
 
-- [.github/workflows/release-all.yml](../.github/workflows/release-all.yml) — orchestrator (one click ships every platform)
-- [.github/workflows/release-crate.yml](../.github/workflows/release-crate.yml) — Rust crate → crates.io
+- [.github/workflows/release-all.yml](../.github/workflows/release-all.yml) — orchestrator for the SDK bindings (Swift + Kotlin + React Native)
 - [.github/workflows/release-swift.yml](../.github/workflows/release-swift.yml) — Swift Package + XCFramework → GitHub Release
 - [.github/workflows/release-kotlin.yml](../.github/workflows/release-kotlin.yml) — Kotlin/Android artifacts → GitHub Release (consumed via JitPack)
 - [.github/workflows/release-react-native.yml](../.github/workflows/release-react-native.yml) — React Native package → npm
+- [.github/workflows/release-crate.yml](../.github/workflows/release-crate.yml) — Rust crate → crates.io (standalone, not part of the orchestrator)
 
 It documents the repo as it exists today, including local-development packaging vs. published packaging.
 
@@ -15,39 +15,38 @@ It documents the repo as it exists today, including local-development packaging 
 - Swift, Kotlin, and React Native share one semver tag: `<version>` (e.g. `0.1.0`).
 - The Swift workflow creates that git tag and the corresponding GitHub Release.
 - The Kotlin and React Native workflows upload assets to that same release.
-- The Crate workflow uses a separate tag namespace: `crate-<version>` (e.g. `crate-0.1.0`). It runs independently of the others.
+- The Crate workflow uses a separate tag namespace: `crate-<version>` (e.g. `crate-0.1.0`). It is released on its own cadence.
 
-## Unified Release (recommended)
+## Unified Release (recommended for SDK bindings)
 
 Workflow:
 
 - `Release All Platforms`
 - Trigger: manual `workflow_dispatch`
 - Input: `version` (strict semver `^[0-9]+\.[0-9]+\.[0-9]+$`, e.g. `0.1.0`)
+- Scope: Swift + Kotlin + React Native. Cargo is intentionally excluded — see the Crate Release section below.
 
 What it does:
 
 1. Validates the `version` input against the strict semver regex up front.
-2. Starts `cargo` and `swift` jobs in parallel — both depend only on validation.
-3. After Swift succeeds, starts `kotlin` and `rn` jobs in parallel — both `needs: swift`.
+2. Runs `swift` (depends only on validation).
+3. After Swift succeeds, starts `kotlin` and `rn` in parallel — both `needs: swift`.
 4. Each job calls the corresponding standalone workflow via `workflow_call`. Same code path as triggering each one manually.
 
 Dependency graph:
 
 ```
-        validate
-        /      \
-    cargo    swift
-              /  \
-         kotlin   rn
+validate
+   └── swift
+         ├── kotlin
+         └── rn
 ```
 
 Failure semantics:
 
-- `cargo` failure → `swift`/`kotlin`/`rn` proceed (cargo has no downstream).
-- `swift` failure → `kotlin`/`rn` are skipped automatically (their tag check would fail anyway). `cargo` still completes.
-- `kotlin` failure → `cargo`/`swift`/`rn` are unaffected.
-- `rn` failure → `cargo`/`swift`/`kotlin` already completed independently.
+- `swift` failure → `kotlin`/`rn` are skipped automatically (their tag check would fail anyway).
+- `kotlin` failure → `swift`/`rn` are unaffected.
+- `rn` failure → `swift`/`kotlin` already completed independently.
 
 The orchestrator's overall run status reflects the worst child outcome — any single failure shows the run as red. Successful jobs are still done and their releases live.
 
@@ -56,8 +55,8 @@ The orchestrator's overall run status reflects the worst child outcome — any s
 When the orchestrator finishes red:
 
 1. Open the run in the Actions UI and identify which child job(s) failed.
-2. For each failed platform, re-trigger its **standalone** workflow (`release-crate.yml`, `release-swift.yml`, `release-kotlin.yml`, or `release-react-native.yml`) via `workflow_dispatch` with the same `version` input.
-3. Cargo's standalone workflow refuses to overwrite an existing `crate-<version>` tag — if it succeeded once already, don't re-run it. The Swift workflow has the same guard for `<version>`.
+2. For each failed platform, re-trigger its **standalone** workflow (`release-swift.yml`, `release-kotlin.yml`, or `release-react-native.yml`) via `workflow_dispatch` with the same `version` input.
+3. The Swift workflow refuses to overwrite an existing `<version>` tag — if it succeeded once already, don't re-run it.
 4. Kotlin and RN re-runs upload to the existing GitHub Release. If the asset is already attached from a previous attempt, delete it from the release first to let the upload step replace it cleanly.
 
 ### When to skip the orchestrator
@@ -66,16 +65,19 @@ Use the standalone workflows directly when:
 
 - You only want to ship one platform (e.g. RN-only fix).
 - A previous orchestrator run partially succeeded and you're recovering specific platforms.
-- You want to pre-publish the crate ahead of cutting a coordinated release across the bindings.
+
+The Crate workflow always runs standalone — it's never part of `release-all.yml`.
 
 ## Crate Release
 
 Workflow:
 
 - `Release Crate (crates.io)`
-- Trigger: `workflow_dispatch` (manual) or `workflow_call` (from `release-all.yml`)
+- Trigger: `workflow_dispatch` (manual)
 - Input: `version`
 - Required secret: `CARGO_REGISTRY_TOKEN`
+
+Cargo is intentionally not part of `release-all.yml` — it requires a manifest bump on `main` first, which doesn't fit the orchestrator's tag-driven release model.
 
 What the workflow does:
 
@@ -96,6 +98,7 @@ Workflow:
 - `Release Swift (iOS)`
 - Trigger: `workflow_dispatch` (manual) or `workflow_call` (from `release-all.yml`)
 - Input: `version`
+- Note: when invoked via the orchestrator, this is the first job to run; Kotlin and RN gate on its success.
 
 What the workflow does:
 
@@ -267,7 +270,7 @@ Published release:
 
 ### Orchestrator Failures
 
-- The `Release All Platforms` run shows red whenever any child job fails. Click into the run and inspect each `cargo`/`swift`/`kotlin`/`rn` job to see which one failed.
+- The `Release All Platforms` run shows red whenever any child job fails. Click into the run and inspect the `swift`/`kotlin`/`rn` jobs to see which one failed.
 - Skipped jobs (yellow/grey) downstream of a failed Swift job are normal — re-run Swift first, then re-run Kotlin and RN standalone.
 - Re-runs go through the standalone workflows (`release-X.yml` with `workflow_dispatch`), not by re-triggering `release-all.yml` (which would try to re-publish anything that already succeeded).
 

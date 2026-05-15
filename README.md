@@ -53,7 +53,8 @@ See [docs/kotlin-integration.md](docs/kotlin-integration.md).
 
 ## Release Docs
 
-- One-click cross-platform release: trigger [`Release All Platforms`](.github/workflows/release-all.yml) (`workflow_dispatch`) — fans out to cargo + Swift + Kotlin + React Native in dependency order.
+- One-click SDK-bindings release: trigger [`Release All Platforms`](.github/workflows/release-all.yml) (`workflow_dispatch`) — fans out to Swift + Kotlin + React Native in dependency order.
+- Cargo crate releases stay standalone via [`release-crate.yml`](.github/workflows/release-crate.yml) — manifest bump on `main` is required first, so it doesn't fit the orchestrator's tag-driven model.
 - Per-platform standalone workflows stay individually triggerable for hotfixes.
 - Full procedure + recovery notes: [docs/release-guide.md](docs/release-guide.md)
 
