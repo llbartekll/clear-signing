@@ -328,3 +328,8 @@ try {
 - [android/clear-signing/src/main/kotlin/com/clearsigning/ClearSigningTypes.kt](../android/clear-signing/src/main/kotlin/com/clearsigning/ClearSigningTypes.kt)
 - [android/clear-signing/build.gradle](../android/clear-signing/build.gradle)
 - [android-consumer-smoke/app/src/main/java/com/clearsigning/smoke/Smoke.kt](../android-consumer-smoke/app/src/main/java/com/clearsigning/smoke/Smoke.kt)
+
+Peer platform docs:
+- [docs/swift-integration.md](swift-integration.md) — Swift / iOS
+- [docs/react-native-integration.md](react-native-integration.md) — React Native
+- [docs/release-guide.md](release-guide.md) — release workflows for all three platforms

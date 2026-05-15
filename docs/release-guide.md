@@ -253,7 +253,7 @@ npm install react-native-clear-signing uniffi-bindgen-react-native
 
 iOS adds `pod 'uniffi-bindgen-react-native', :path => '../node_modules/uniffi-bindgen-react-native'` to the Podfile and runs `bundle exec pod install`. Android picks up the package via autolinking; consumer's gradle/CMake links the bundled `.a` files with the JSI bridge during the first build.
 
-See [bindings/react-native/README.md](../bindings/react-native/README.md) for the full consumer integration story.
+See [docs/react-native-integration.md](react-native-integration.md) for the full integration guide (install, `DataProviderFfi` skeleton, API usage, returned types, error shape) and [bindings/react-native/README.md](../bindings/react-native/README.md) for the npm-package quickstart.
 
 ### Local Development vs Release
 

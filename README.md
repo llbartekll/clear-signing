@@ -51,6 +51,15 @@ See [docs/swift-integration.md](docs/swift-integration.md).
 
 See [docs/kotlin-integration.md](docs/kotlin-integration.md).
 
+### React Native
+
+- npm package: `react-native-clear-signing`
+- Integration style: JSI / TurboModule via `uniffi-bindgen-react-native`; iOS Podfile peer-pod entry, Android autolinking
+- Main API: bare `clearSigning*` async functions (no handwritten client wrapper); `DataProviderFfi` callbacks are synchronous across the FFI boundary
+- Local-dev consumer: `bindings/react-native/example/` (file:.. link, mirrors the iOS Wallet Debug tab)
+
+See [docs/react-native-integration.md](docs/react-native-integration.md).
+
 ## Release Docs
 
 - One-click SDK-bindings release: trigger [`Release All Platforms`](.github/workflows/release-all.yml) (`workflow_dispatch`) — fans out to Swift + Kotlin + React Native in dependency order.

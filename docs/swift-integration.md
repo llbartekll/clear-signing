@@ -323,3 +323,8 @@ do {
 - [bindings/swift/clear_signing.swift](../bindings/swift/clear_signing.swift)
 - [Package.swift](../Package.swift)
 - [wallet/Wallet/Services/WalletMetadataProvider.swift](../wallet/Wallet/Services/WalletMetadataProvider.swift)
+
+Peer platform docs:
+- [docs/kotlin-integration.md](kotlin-integration.md) — Kotlin / Android
+- [docs/react-native-integration.md](react-native-integration.md) — React Native
+- [docs/release-guide.md](release-guide.md) — release workflows for all three platforms
