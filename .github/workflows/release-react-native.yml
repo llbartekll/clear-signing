@@ -1,4 +1,4 @@
-name: Release React Native (iOS)
+name: Release React Native (iOS + Android)
 
 on:
   workflow_dispatch:
@@ -21,6 +21,8 @@ jobs:
     runs-on: macos-15
     env:
       VERSION: ${{ inputs.version }}
+      ANDROID_NDK_VERSION: 27.0.12077973
+      CARGO_NDK_VERSION: 4.1.2
     steps:
       - name: Validate version
         run: |
@@ -44,10 +46,10 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Rust
+      - name: Setup Rust (iOS + Android targets)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim
+          targets: aarch64-apple-ios,x86_64-apple-ios,aarch64-apple-ios-sim,aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
@@ -60,28 +62,85 @@ jobs:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Setup Java 17 (for sdkmanager)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK + pinned NDK 27.0.12077973 (parity with release-kotlin.yml)
+        uses: android-actions/setup-android@v3
+      - run: sdkmanager "ndk;$ANDROID_NDK_VERSION"
+
+      - name: Wire ANDROID_NDK_HOME + install cargo-ndk
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --version "$CARGO_NDK_VERSION" --locked
+
       - name: Install npm deps
         working-directory: bindings/react-native
         run: npm ci
 
-      - name: Regenerate JSI bridge + bindings (full release build)
+      - name: Regenerate iOS JSI bridge + bindings (full release build)
         working-directory: bindings/react-native
         run: npx ubrn build ios --release --and-generate --config ubrn.config.yaml
 
       - name: Restore podspec to local-dev shape (for drift guard)
         run: ./scripts/prepare-rn-podspec.sh
 
-      - name: Drift guard — committed bindings must match regeneration
+      - name: Drift guard — committed iOS bindings must match regeneration
         run: |
-          git diff --quiet bindings/react-native/cpp \
-                            bindings/react-native/ios \
-                            bindings/react-native/src/generated \
-                            bindings/react-native/react-native-clear-signing.podspec || {
-            echo "::error::Regenerated bindings drift from committed state." >&2
+          git diff --quiet -- \
+            bindings/react-native/cpp \
+            bindings/react-native/ios \
+            bindings/react-native/src/generated \
+            bindings/react-native/react-native-clear-signing.podspec || {
+            echo "::error::Regenerated iOS bindings drift from committed state." >&2
             echo "Run scripts/build-rn-ios.sh locally and commit the result before releasing." >&2
-            git --no-pager diff bindings/react-native/cpp bindings/react-native/ios bindings/react-native/src/generated bindings/react-native/react-native-clear-signing.podspec | head -200 >&2
+            git --no-pager diff -- \
+              bindings/react-native/cpp \
+              bindings/react-native/ios \
+              bindings/react-native/src/generated \
+              bindings/react-native/react-native-clear-signing.podspec | head -200 >&2
             exit 1
           }
+
+      - name: Regenerate Android JSI bridge + bindings + cross-compiled Rust .a
+        working-directory: bindings/react-native
+        run: npx ubrn build android --release --and-generate --config ubrn.config.yaml
+
+      - name: Re-apply 16 KB common-page-size CMake patch
+        run: ./scripts/prepare-rn-android-cmake.sh
+
+      - name: Drift guard — committed Android bindings must match regeneration
+        run: |
+          git diff --quiet -- \
+            bindings/react-native/cpp \
+            bindings/react-native/src/generated \
+            bindings/react-native/android \
+            ':!bindings/react-native/android/src/main/jniLibs' || {
+            echo "::error::Regenerated Android bindings drift from committed state." >&2
+            echo "Run scripts/build-rn-android.sh locally and commit the result before releasing." >&2
+            git --no-pager diff -- \
+              bindings/react-native/cpp \
+              bindings/react-native/src/generated \
+              bindings/react-native/android \
+              ':!bindings/react-native/android/src/main/jniLibs' | head -200 >&2
+            exit 1
+          }
+
+      - name: Strip Android .a files (--strip-debug)
+        run: |
+          STRIP="$(find -L "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt" -path '*/bin/llvm-strip' -type f | head -1)"
+          if [ -z "$STRIP" ]; then
+            echo "::error::llvm-strip not found under $ANDROID_NDK_HOME/toolchains/llvm/prebuilt" >&2
+            exit 1
+          fi
+          echo "Using llvm-strip: $STRIP"
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            "$STRIP" --strip-debug "bindings/react-native/android/src/main/jniLibs/$abi/libclear_signing.a"
+          done
+          ls -la bindings/react-native/android/src/main/jniLibs/*/libclear_signing.a
 
       - name: Zip RN-flavored XCFramework
         run: |
@@ -109,6 +168,24 @@ jobs:
       - name: Bump package.json version
         working-directory: bindings/react-native
         run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Audit npm tarball before publish
+        working-directory: bindings/react-native
+        run: |
+          npm pack --dry-run --json > /tmp/pack.json
+          SIZE=$(jq '.[0].size' /tmp/pack.json)
+          UNPACKED=$(jq '.[0].unpackedSize' /tmp/pack.json)
+          echo "Tarball: $SIZE bytes compressed, $UNPACKED bytes unpacked"
+          if [ "$SIZE" -gt 62914560 ]; then
+            echo "::error::Tarball $SIZE bytes exceeds 60 MB ceiling" >&2
+            exit 1
+          fi
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            jq -e --arg p "android/src/main/jniLibs/$abi/libclear_signing.a" \
+              '.[0].files[] | select(.path == $p)' /tmp/pack.json > /dev/null \
+              || { echo "::error::Tarball missing $abi/libclear_signing.a" >&2; exit 1; }
+          done
+          echo "All 3 ABI .a files present in tarball."
 
       - name: Publish to npm
         working-directory: bindings/react-native
