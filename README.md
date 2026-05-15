@@ -53,7 +53,9 @@ See [docs/kotlin-integration.md](docs/kotlin-integration.md).
 
 ## Release Docs
 
-- [docs/release-guide.md](docs/release-guide.md)
+- One-click cross-platform release: trigger [`Release All Platforms`](.github/workflows/release-all.yml) (`workflow_dispatch`) — fans out to cargo + Swift + Kotlin + React Native in dependency order.
+- Per-platform standalone workflows stay individually triggerable for hotfixes.
+- Full procedure + recovery notes: [docs/release-guide.md](docs/release-guide.md)
 
 ## Local Development
 
