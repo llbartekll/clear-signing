@@ -7,8 +7,16 @@ ClearSigning.xcframework/
 # Per-ABI Rust static archives — populated locally by ubrn or in CI by the workflow's cross-compile step
 android/src/main/jniLibs/
 
-# Smoke-test app harness — recreate with @react-native-community/cli init + npm install
-example/
+# Per-app build artifacts that shouldn't be committed but live under example/
+example/node_modules/
+example/ios/Pods/
+example/ios/build/
+example/ios/.xcode.env.local
+example/android/build/
+example/android/app/build/
+example/android/.gradle/
+example/android/local.properties
+example/vendor/
 
 # Misc
 *.log

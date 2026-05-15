@@ -150,19 +150,7 @@ The iOS wrapper runs `ubrn build ios --sim-only --and-generate` and re-applies t
 
 The Android wrapper runs `ubrn build android --and-generate`, then re-applies the 16 KB page-size CMake patch via `scripts/prepare-rn-android-cmake.sh`. The Rust static archives land under `bindings/react-native/android/src/main/jniLibs/` (gitignored).
 
-To smoke-test against a fresh RN app:
-
-```sh
-npx @react-native-community/cli init ClearSigningExample \
-  --version 0.81.5 --skip-install --skip-git-init --pm npm
-# Add to its package.json: "react-native-clear-signing": "file:../bindings/react-native"
-# Add to its ios/Podfile: pod 'uniffi-bindgen-react-native', :path => '../node_modules/uniffi-bindgen-react-native'
-cd ClearSigningExample
-npm install
-cd ios && bundle exec pod install && cd ..
-npx react-native run-ios
-npx react-native run-android
-```
+A bare RN debug app lives at [`example/`](./example) and consumes the package via `file:..`. It mirrors the iOS Wallet Debug tab — pick a bundled transaction, see the formatted clear-signing render. Run it with `cd example && npm install && npm run ios` (or `npm run android`); see [`example/README.md`](./example/README.md) for full setup.
 
 ## Related
 
