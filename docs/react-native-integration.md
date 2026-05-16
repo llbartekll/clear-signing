@@ -15,7 +15,6 @@ import {
   clearSigningResolveDescriptor,
   clearSigningResolveDescriptorsForTx,
   clearSigningResolveDescriptorsForTypedData,
-  clearSigningMergeDescriptors,
   type DataProviderFfi,
   type TransactionInput,
   type TokenMetaFfi,
@@ -34,13 +33,12 @@ import {
 } from 'react-native-clear-signing';
 ```
 
-App-facing entrypoints (all async except `clearSigningMergeDescriptors`):
+App-facing entrypoints (all async):
 - `clearSigningFormatCalldata`
 - `clearSigningFormatTypedData`
 - `clearSigningResolveDescriptor`
 - `clearSigningResolveDescriptorsForTx`
 - `clearSigningResolveDescriptorsForTypedData`
-- `clearSigningMergeDescriptors`
 
 App-facing types:
 - `DataProviderFfi` (interface — wallet-owned callback surface)
@@ -261,16 +259,6 @@ if (outcome.tag === DescriptorResolutionOutcome_Tags.Found) {
 ```
 
 Use this when your app wants a direct lookup against the registry without a transaction context.
-
-### Merge Two Descriptor JSONs
-
-```ts
-import {clearSigningMergeDescriptors} from 'react-native-clear-signing';
-
-const merged = clearSigningMergeDescriptors(includingJson, includedJson);
-```
-
-Used for the `includes` mechanism. Synchronous. The including JSON wins on conflicts; field arrays merge by `path`.
 
 ### Cancellation
 
