@@ -42,6 +42,11 @@ pub use resolver::{
 pub use token::{CompositeDataProvider, TokenMeta, WellKnownTokenSource};
 pub use types::descriptor::Descriptor;
 
+/// Library crate version (`CARGO_PKG_VERSION`). Exposed for runners and
+/// integration tools that need to report which clear-signing build they are
+/// driving.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Transaction context for calldata formatting.
 pub struct TransactionContext<'a> {
     pub chain_id: u64,

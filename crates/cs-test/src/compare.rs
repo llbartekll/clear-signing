@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use clear_signing::engine::{DisplayEntry, DisplayItem};
+use clear_signing::engine::{DisplayEntry, DisplayItem, DisplayModel};
 use clear_signing::outcome::FormatOutcome;
 
 use crate::schema::{Expected, FieldExpected, NestedExpected};
@@ -10,6 +10,14 @@ pub struct CaseResult {
     pub description: String,
     pub passed: bool,
     pub failures: Vec<Failure>,
+    /// Actual model rendered by the engine, when formatting succeeded.
+    /// Absent only when the runner failed before producing a model (decode error,
+    /// engine error, etc.) — in that case [`Self::error`] is set.
+    pub model: Option<DisplayModel>,
+    /// Set when the runner could not produce a model for this case at all.
+    /// Distinguishes "ran and diverged" (`passed = false`, `error = None`) from
+    /// "could not run" (`error = Some(_)`).
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,7 +98,101 @@ pub fn compare(description: &str, expected: &Expected, outcome: &FormatOutcome) 
         &mut failures,
     );
 
-    CaseResult { description: description.to_string(), passed: failures.is_empty(), failures }
+    CaseResult {
+        description: description.to_string(),
+        passed: failures.is_empty(),
+        failures,
+        model: Some(model.clone()),
+        error: None,
+    }
+}
+
+/// Build a CaseResult representing a runner-level error for a single case
+/// (decode failure, engine error, etc.). Such a case has no rendered model.
+pub fn case_error(description: &str, message: impl Into<String>) -> CaseResult {
+    CaseResult {
+        description: description.to_string(),
+        passed: false,
+        failures: Vec::new(),
+        model: None,
+        error: Some(message.into()),
+    }
+}
+
+/// Concise human-readable description of the first divergence between expected
+/// and rendered. Used in `results.json` on `fail` status. Returns `None` when
+/// the case passed.
+pub fn first_failure_message(result: &CaseResult) -> Option<String> {
+    result.failures.first().map(failure_short_message)
+}
+
+fn failure_short_message(f: &Failure) -> String {
+    match f {
+        Failure::IntentMismatch { path, expected, actual } => {
+            if path.is_empty() {
+                format!("intent: expected {expected:?}, got {actual:?}")
+            } else {
+                format!("intent at {}: expected {expected:?}, got {actual:?}", path.join(" > "))
+            }
+        }
+        Failure::InterpolatedIntentMismatch { expected, actual } => {
+            format!(
+                "interpolatedIntent: expected {expected:?}, got {}",
+                opt_str_debug(actual.as_deref())
+            )
+        }
+        Failure::OwnerMismatch { expected, actual } => {
+            format!(
+                "owner: expected {}, got {}",
+                opt_str_debug(expected.as_deref()),
+                opt_str_debug(actual.as_deref())
+            )
+        }
+        Failure::FieldMissing { path, label, expected_kind } => {
+            format!("missing {} field {}", expected_kind.as_str(), labeled_for_msg(path, label))
+        }
+        Failure::FieldExtra { path, label, actual_summary } => {
+            format!("unexpected field {} = {actual_summary:?}", labeled_for_msg(path, label))
+        }
+        Failure::FieldValueMismatch { path, label, expected, actual } => {
+            format!(
+                "field {}: expected {expected:?}, got {actual:?}",
+                labeled_for_msg(path, label)
+            )
+        }
+        Failure::FieldKindMismatch { path, label, expected_kind, actual_kind } => {
+            format!(
+                "field kind {}: expected {}, got {}",
+                labeled_for_msg(path, label),
+                expected_kind.as_str(),
+                actual_kind.as_str()
+            )
+        }
+        Failure::AmbiguousLabel { path, label, actual_values } => {
+            format!(
+                "ambiguous field {}: rendered {} times with values {:?}",
+                labeled_for_msg(path, label),
+                actual_values.len(),
+                actual_values
+            )
+        }
+    }
+}
+
+fn opt_str_debug(value: Option<&str>) -> String {
+    match value {
+        Some(v) => format!("{v:?}"),
+        None => "<none>".to_string(),
+    }
+}
+
+fn labeled_for_msg(path: &[String], label: &str) -> String {
+    if path.is_empty() {
+        format!("{label:?}")
+    } else {
+        let joined = path.join(" > ");
+        format!("\"{joined} > {label}\"")
+    }
 }
 
 fn compare_level(
