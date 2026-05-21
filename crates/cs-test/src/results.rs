@@ -52,6 +52,8 @@ pub enum CaseStatus {
 #[derive(Debug, Serialize)]
 pub struct Rendered {
     pub intent: String,
+    #[serde(rename = "interpolatedIntent", skip_serializing_if = "Option::is_none")]
+    pub interpolated_intent: Option<String>,
     pub owner: String,
     pub fields: IndexMap<String, FieldValue>,
 }
@@ -108,6 +110,7 @@ fn build_case_entry(result: &CaseResult) -> CaseEntry {
 fn render_model(model: &DisplayModel) -> Rendered {
     Rendered {
         intent: model.intent.clone(),
+        interpolated_intent: model.interpolated_intent.clone(),
         owner: model.owner.clone().unwrap_or_default(),
         fields: render_entries(&model.entries),
     }
@@ -212,6 +215,30 @@ mod tests {
         assert!(
             !rendered.fields.contains_key("g"),
             "group label must not appear as its own field"
+        );
+    }
+
+    #[test]
+    fn interpolated_intent_serializes_when_present() {
+        let mut m = model_with(vec![]);
+        m.interpolated_intent = Some("Swap 100 USDC for 99.5 DAI".into());
+        let r = pass_result(m);
+        let file = build_results_file(std::slice::from_ref(&r));
+        let body = serde_json::to_string(&file).unwrap();
+        assert!(
+            body.contains("\"interpolatedIntent\":\"Swap 100 USDC for 99.5 DAI\""),
+            "interpolatedIntent missing from output: {body}"
+        );
+    }
+
+    #[test]
+    fn interpolated_intent_omitted_when_absent() {
+        let r = pass_result(model_with(vec![]));
+        let file = build_results_file(std::slice::from_ref(&r));
+        let body = serde_json::to_string(&file).unwrap();
+        assert!(
+            !body.contains("interpolatedIntent"),
+            "interpolatedIntent should be omitted, got: {body}"
         );
     }
 
