@@ -48,6 +48,9 @@
 		F1000001000000000030 /* ClearSigningService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000014 /* ClearSigningService.swift */; };
 		F1000001000000000031 /* TypedDataDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000070 /* TypedDataDiagnostics.swift */; };
 		F1000001000000000032 /* CalldataDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1000001000000000072 /* CalldataDiagnostics.swift */; };
+		E3000001000000000001 /* SeedContractStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000001000000000011 /* SeedContractStore.swift */; };
+		E3000001000000000002 /* SeedContractStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000001000000000011 /* SeedContractStore.swift */; };
+		E3000001000000000003 /* known-contracts.json in Resources */ = {isa = PBXBuildFile; fileRef = E3000001000000000012 /* known-contracts.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -80,6 +83,8 @@
 		F1000001000000000013 /* AlchemyClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlchemyClient.swift; sourceTree = "<group>"; };
 		F1000001000000000014 /* ENSResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ENSResolver.swift; sourceTree = "<group>"; };
 		F1000001000000000021 /* TransactionDebugView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransactionDebugView.swift; sourceTree = "<group>"; };
+		E3000001000000000011 /* SeedContractStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SeedContractStore.swift; sourceTree = "<group>"; };
+		E3000001000000000012 /* known-contracts.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "known-contracts.json"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -135,10 +140,19 @@
 				D1000001000000000011 /* WalletViewModel.swift */,
 				D1000001000000000020 /* Services */,
 				D1000001000000000021 /* Views */,
+				E3000001000000000020 /* Resources */,
 				C1000001233456780013 /* Info.plist */,
 				D1000001000000000041 /* Wallet.entitlements */,
 			);
 			path = Wallet;
+			sourceTree = "<group>";
+		};
+		E3000001000000000020 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				E3000001000000000012 /* known-contracts.json */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		C100000123345678000F /* Products */ = {
@@ -165,6 +179,7 @@
 				F1000001000000000012 /* MetadataCache.swift */,
 				F1000001000000000013 /* AlchemyClient.swift */,
 				F1000001000000000014 /* ENSResolver.swift */,
+				E3000001000000000011 /* SeedContractStore.swift */,
 				E2000001000000000012 /* tokens.json */,
 			);
 			path = Services;
@@ -292,6 +307,7 @@
 			files = (
 				A3000001000000000001 /* Assets.xcassets in Resources */,
 				E2000001000000000002 /* tokens.json in Resources */,
+				E3000001000000000003 /* known-contracts.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -324,6 +340,7 @@
 				F1000001000000000003 /* MetadataCache.swift in Sources */,
 				F1000001000000000005 /* AlchemyClient.swift in Sources */,
 				F1000001000000000007 /* ENSResolver.swift in Sources */,
+				E3000001000000000001 /* SeedContractStore.swift in Sources */,
 				D1000001000000000005 /* DisplayModelView.swift in Sources */,
 				D1000001000000000006 /* KeyImportSection.swift in Sources */,
 				D1000001000000000007 /* QRScannerSheet.swift in Sources */,
@@ -343,6 +360,7 @@
 				F1000001000000000004 /* MetadataCache.swift in Sources */,
 				F1000001000000000006 /* AlchemyClient.swift in Sources */,
 				F1000001000000000008 /* ENSResolver.swift in Sources */,
+				E3000001000000000002 /* SeedContractStore.swift in Sources */,
 				F1000001000000000030 /* ClearSigningService.swift in Sources */,
 				F1000001000000000031 /* TypedDataDiagnostics.swift in Sources */,
 				F1000001000000000032 /* CalldataDiagnostics.swift in Sources */,

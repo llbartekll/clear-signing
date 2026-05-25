@@ -38,6 +38,10 @@ struct SynthField {
     path: &'static str,
     label: &'static str,
     format: SynthFieldFormat,
+    /// Spec-defined `addressName.types` hint (e.g. `["contract"]`). Passed
+    /// through to `resolve_local_name` so wallets can route lookups by role.
+    /// `None` means no hint (wallet checks all sources).
+    address_types: Option<&'static [&'static str]>,
 }
 
 #[derive(Clone, Copy)]
@@ -46,16 +50,20 @@ enum SynthFieldFormat {
     TokenAmount,
 }
 
+const CONTRACT_TYPE: &[&str] = &["contract"];
+
 const TRANSFER_FIELDS: &[SynthField] = &[
     SynthField {
         path: "to",
         label: "To",
         format: SynthFieldFormat::AddressName,
+        address_types: None,
     },
     SynthField {
         path: "amount",
         label: "Amount",
         format: SynthFieldFormat::TokenAmount,
+        address_types: None,
     },
 ];
 
@@ -64,11 +72,15 @@ const APPROVE_FIELDS: &[SynthField] = &[
         path: "spender",
         label: "Spender",
         format: SynthFieldFormat::AddressName,
+        // Approval targets are unambiguously contracts; hint lets the wallet
+        // scope the local-name lookup to its known-contracts table.
+        address_types: Some(CONTRACT_TYPE),
     },
     SynthField {
         path: "amount",
         label: "Amount",
         format: SynthFieldFormat::TokenAmount,
+        address_types: None,
     },
 ];
 
@@ -77,16 +89,19 @@ const TRANSFER_FROM_FIELDS: &[SynthField] = &[
         path: "from",
         label: "From",
         format: SynthFieldFormat::AddressName,
+        address_types: None,
     },
     SynthField {
         path: "to",
         label: "To",
         format: SynthFieldFormat::AddressName,
+        address_types: None,
     },
     SynthField {
         path: "amount",
         label: "Amount",
         format: SynthFieldFormat::TokenAmount,
+        address_types: None,
     },
 ];
 
@@ -185,7 +200,7 @@ fn build_field(spec: &SynthField) -> DisplayField {
     let (format, params) = match spec.format {
         SynthFieldFormat::AddressName => (
             FieldFormat::AddressName,
-            Some(address_name_params_sender("@.from")),
+            Some(address_name_params("@.from", spec.address_types)),
         ),
         SynthFieldFormat::TokenAmount => {
             (FieldFormat::TokenAmount, Some(token_amount_params("@.to")))
@@ -249,9 +264,10 @@ fn token_amount_params(token_path: &str) -> FormatParams {
     }
 }
 
-fn address_name_params_sender(sender_path: &str) -> FormatParams {
+fn address_name_params(sender_path: &str, types: Option<&[&str]>) -> FormatParams {
     FormatParams {
         sender_address: Some(SenderAddress::Single(sender_path.to_string())),
+        types: types.map(|t| t.iter().map(|s| s.to_string()).collect()),
         ..empty_format_params()
     }
 }
@@ -464,6 +480,72 @@ mod tests {
                 address_fields_checked > 0,
                 "format {format_key} should have at least one AddressName field"
             );
+        }
+    }
+
+    /// `approve.spender` carries `types: ["contract"]` because approval targets
+    /// are unambiguously contracts. All other address fields leave `types` unset
+    /// so the wallet checks every source.
+    #[test]
+    fn synthesize_address_fields_carry_role_types_hint() {
+        // approve.spender → ["contract"]
+        let approve = synthesize_erc20(1, USDC_ADDR, [0x09, 0x5e, 0xa7, 0xb3], &usdc_meta())
+            .expect("approve synth");
+        let spender_field = approve
+            .descriptor
+            .display
+            .formats
+            .get("approve(address spender,uint256 amount)")
+            .and_then(|f| f.fields.first())
+            .expect("spender field");
+        let DisplayField::Simple { params, .. } = spender_field else {
+            panic!("expected Simple field");
+        };
+        let params = params.as_ref().expect("params");
+        assert_eq!(
+            params.types.as_deref(),
+            Some(vec!["contract".to_string()]).as_deref(),
+            "approve.spender should carry types: [\"contract\"]"
+        );
+
+        // transfer.to and transferFrom.{from,to} → types is None
+        let other_cases = [
+            (
+                [0xa9, 0x05, 0x9c, 0xbb],
+                "transfer(address to,uint256 amount)",
+            ),
+            (
+                [0x23, 0xb8, 0x72, 0xdd],
+                "transferFrom(address from,address to,uint256 amount)",
+            ),
+        ];
+        for (selector, format_key) in other_cases {
+            let resolved = synthesize_erc20(1, USDC_ADDR, selector, &usdc_meta()).expect("synth");
+            let format = resolved
+                .descriptor
+                .display
+                .formats
+                .get(format_key)
+                .expect("format");
+            for field in &format.fields {
+                let DisplayField::Simple {
+                    format: fmt,
+                    params,
+                    ..
+                } = field
+                else {
+                    continue;
+                };
+                if !matches!(fmt, Some(FieldFormat::AddressName)) {
+                    continue;
+                }
+                let params = params.as_ref().expect("params");
+                assert!(
+                    params.types.is_none(),
+                    "{format_key} address field should leave types unset, got {:?}",
+                    params.types
+                );
+            }
         }
     }
 
