@@ -1,0 +1,18 @@
+{
+  "tx_hash": "0xseed-transferfrom-25",
+  "chain_id": 1,
+  "to": "0xA0b86991C6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "from": "0x8eb8a3b98659cce290402893d0123abb75e3ab28",
+  "calldata_hex": "0x23b872dd000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb0000000000000000000000000000000000000000000000000000000001312d00",
+  "value_hex": "0x00",
+  "token_meta": { "symbol": "USDC", "decimals": 6, "name": "USD Coin" },
+  "expected": {
+    "intent": "Transfer tokens",
+    "interpolated_intent": "Transfer 20 USDC from 0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa to 0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB",
+    "fields": [
+      { "label": "From",   "value": "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa" },
+      { "label": "To",     "value": "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB" },
+      { "label": "Amount", "value": "20 USDC" }
+    ]
+  }
+}

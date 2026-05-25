@@ -5,6 +5,7 @@
 
 mod nested_resolution;
 mod source;
+mod standard_token;
 mod typed_selection;
 
 #[cfg(feature = "github-registry")]

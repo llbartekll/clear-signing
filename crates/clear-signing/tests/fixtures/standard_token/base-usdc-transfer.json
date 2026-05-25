@@ -1,0 +1,17 @@
+{
+  "tx_hash": "0xseed-base-usdc-transfer-25",
+  "chain_id": 8453,
+  "to": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "from": "0x8eb8a3b98659cce290402893d0123abb75e3ab28",
+  "calldata_hex": "0xa9059cbb000000000000000000000000abcdef0123456789abcdef0123456789abcdef0100000000000000000000000000000000000000000000000000000000017d7840",
+  "value_hex": "0x00",
+  "token_meta": { "symbol": "USDC", "decimals": 6, "name": "USD Coin" },
+  "expected": {
+    "intent": "Transfer tokens",
+    "interpolated_intent": "Transfer 25 USDC to 0xabCDeF0123456789AbcdEf0123456789aBCDEF01",
+    "fields": [
+      { "label": "To",     "value": "0xabCDeF0123456789AbcdEf0123456789aBCDEF01" },
+      { "label": "Amount", "value": "25 USDC" }
+    ]
+  }
+}

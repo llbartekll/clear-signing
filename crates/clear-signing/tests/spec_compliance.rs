@@ -5531,7 +5531,7 @@ async fn test_resolver_finds_nested_descriptor_with_constant_callee_and_chain_id
         from: None,
         implementation_address: None,
     };
-    let descriptors = clear_signing::resolve_descriptors_for_tx(&tx, &source)
+    let descriptors = clear_signing::resolve_descriptors_for_tx(&tx, &source, None)
         .await
         .unwrap();
     assert_eq!(descriptors.len(), 2);
