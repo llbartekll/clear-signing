@@ -51,6 +51,7 @@
 		E3000001000000000001 /* SeedContractStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000001000000000011 /* SeedContractStore.swift */; };
 		E3000001000000000002 /* SeedContractStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3000001000000000011 /* SeedContractStore.swift */; };
 		E3000001000000000003 /* known-contracts.json in Resources */ = {isa = PBXBuildFile; fileRef = E3000001000000000012 /* known-contracts.json */; };
+		E3000001000000000004 /* known-contracts.json in Resources */ = {isa = PBXBuildFile; fileRef = E3000001000000000012 /* known-contracts.json */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -315,6 +316,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E3000001000000000004 /* known-contracts.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

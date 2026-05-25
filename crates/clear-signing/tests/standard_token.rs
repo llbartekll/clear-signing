@@ -113,6 +113,14 @@ fn transfer_calldata(to: &str, amount: u128) -> Vec<u8> {
     out
 }
 
+/// Build transfer calldata with an explicit 32-byte amount — for testing uint256 max etc.
+fn transfer_calldata_raw_amount(to: &str, amount_word: [u8; 32]) -> Vec<u8> {
+    let mut out = vec![0xa9, 0x05, 0x9c, 0xbb];
+    out.extend_from_slice(&address_word(to));
+    out.extend_from_slice(&amount_word);
+    out
+}
+
 fn approve_calldata(spender: &str, amount: u128) -> Vec<u8> {
     let mut out = vec![0x09, 0x5e, 0xa7, 0xb3];
     out.extend_from_slice(&address_word(spender));
@@ -718,6 +726,45 @@ async fn approve_with_uint256_max_minus_one_renders_full_amount() {
     );
     // The full decimal of (2^256 - 1) / 10^6 ends in ".639935" — check the
     // synth still rendered a numeric amount via tokenAmount.
+    assert!(
+        interpolated.contains("USDC"),
+        "expected the token ticker in the rendered output: '{interpolated}'"
+    );
+}
+
+#[tokio::test]
+async fn transfer_with_uint256_max_renders_full_amount() {
+    // Locks the Unlimited scoping: only `approve.amount` collapses at the cap.
+    // A literal cap-valued transfer (rare, but possible — e.g. an attacker
+    // crafting calldata to obscure UX) must render as the full decimal, not
+    // "Unlimited", because `transfer` is not an allowance grant.
+    let source = RecordingSource::new();
+    let tokens = tokens_with_usdc();
+
+    let calldata = transfer_calldata_raw_amount(SPENDER, [0xff; 32]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: USDC_ADDR,
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let descriptors = resolve_descriptors_for_tx(&tx, &source, Some(&tokens))
+        .await
+        .expect("resolve");
+    let model = format_calldata(&descriptors, &tx, &tokens)
+        .await
+        .expect("format");
+    let interpolated = model
+        .interpolated_intent
+        .clone()
+        .expect("interpolated intent");
+    assert!(
+        !interpolated.contains("Unlimited"),
+        "transfer must NOT trigger Unlimited: '{interpolated}'"
+    );
     assert!(
         interpolated.contains("USDC"),
         "expected the token ticker in the rendered output: '{interpolated}'"

@@ -75,15 +75,19 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
             return Self.localWalletName
         }
 
-        // 2. Known DeFi contract from the bundled seed. Runs regardless of `types`:
-        //    the library's hint is `["contract"]` for approve.spender but `None`
-        //    for transfer.to / transferFrom.{from,to} — and a transfer to a known
-        //    router should still get labeled. Always-check is cheap (small dict).
-        if let known = seedContractStore.contract(chainId: chainId, address: resolved) {
+        // 2. Known DeFi contract from the bundled seed — gated on the library's
+        //    `types` hint so an explicit EOA-only lookup skips the contract table.
+        if Self.consultsContractStore(for: types),
+           let known = seedContractStore.contract(chainId: chainId, address: resolved) {
             return known.name
         }
 
         return nil
+    }
+
+    private static func consultsContractStore(for types: [String]?) -> Bool {
+        guard let types else { return true }
+        return types.contains { $0.lowercased() == "contract" }
     }
 
     func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -> String? {

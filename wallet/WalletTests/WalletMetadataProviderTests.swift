@@ -359,6 +359,60 @@ final class WalletMetadataProviderTests: XCTestCase {
         )
     }
 
+    /// When the library hints `types: ["eoa"]` the lookup must skip the
+    /// contract-only seed entirely, even if a matching address is present.
+    func testResolveLocalNameSkipsContractStoreWhenTypesIsEoa() {
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 10, address: optimismAavePool):
+                        ContractMetadata(name: "Aave V3 Pool"),
+                ]
+            )
+        )
+        XCTAssertNil(
+            provider.resolveLocalName(
+                address: optimismAavePool,
+                chainId: 10,
+                types: ["eoa"]
+            )
+        )
+    }
+
+    /// When the hint includes "contract" the lookup proceeds — locks the
+    /// positive direction so future gating changes can't quietly suppress
+    /// the contract table.
+    func testResolveLocalNameConsultsContractStoreWhenTypesIncludesContract() {
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 10, address: optimismAavePool):
+                        ContractMetadata(name: "Aave V3 Pool"),
+                ]
+            )
+        )
+        XCTAssertEqual(
+            provider.resolveLocalName(
+                address: optimismAavePool,
+                chainId: 10,
+                types: ["contract"]
+            ),
+            "Aave V3 Pool"
+        )
+    }
+
+    /// Canary: the actually-bundled `known-contracts.json` must be packaged
+    /// with the WalletTests resources and decode cleanly. Catches a rename
+    /// or a stale `project.pbxproj` Resources phase that would silently turn
+    /// every contract lookup into a fallthrough.
+    func testSeedContractStoreLoadsBundledKnownContractsJSON() {
+        let store = SeedContractStore(bundle: Bundle(for: type(of: self)))
+        XCTAssertEqual(
+            store.contract(chainId: 10, address: optimismAavePool)?.name,
+            "Aave V3 Pool"
+        )
+    }
+
     private func makeProviderWithContractStore(_ store: SeedContractStore) -> WalletMetadataProvider {
         WalletMetadataProvider(
             seedTokenStore: SeedTokenStore(data: Data("{}".utf8)),

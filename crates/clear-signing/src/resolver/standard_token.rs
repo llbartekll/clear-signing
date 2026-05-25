@@ -2,8 +2,10 @@
 //! when the wallet supplies token metadata.
 //!
 //! Edge cases handled here:
-//! - `amount = 2^256 - 1` (DeFi infinite approval) → `tokenAmount` params carry
-//!   `threshold` + `message`, engine renders "Unlimited {ticker}".
+//! - `approve.amount = 2^256 - 1` (DeFi infinite approval) → the approve amount
+//!   field carries `threshold` + `message`, engine renders "Unlimited {ticker}".
+//!   `transfer.amount` and `transferFrom.amount` do NOT carry the threshold —
+//!   a literal cap-valued transfer renders as its full decimal.
 //! - Address fields equal to `tx.from` → `addressName` params carry
 //!   `senderAddress: "@.from"`, engine renders "Sender" instead of the address.
 //!
@@ -38,32 +40,27 @@ struct SynthField {
     path: &'static str,
     label: &'static str,
     format: SynthFieldFormat,
-    /// Spec-defined `addressName.types` hint (e.g. `["contract"]`). Passed
-    /// through to `resolve_local_name` so wallets can route lookups by role.
-    /// `None` means no hint (wallet checks all sources).
-    address_types: Option<&'static [&'static str]>,
 }
 
 #[derive(Clone, Copy)]
 enum SynthFieldFormat {
     AddressName,
     TokenAmount,
+    /// Approve amount only — adds `threshold = uint256.max` + `message = "Unlimited"`
+    /// so the engine collapses infinite-approval calls.
+    TokenAmountUnlimited,
 }
-
-const CONTRACT_TYPE: &[&str] = &["contract"];
 
 const TRANSFER_FIELDS: &[SynthField] = &[
     SynthField {
         path: "to",
         label: "To",
         format: SynthFieldFormat::AddressName,
-        address_types: None,
     },
     SynthField {
         path: "amount",
         label: "Amount",
         format: SynthFieldFormat::TokenAmount,
-        address_types: None,
     },
 ];
 
@@ -72,15 +69,11 @@ const APPROVE_FIELDS: &[SynthField] = &[
         path: "spender",
         label: "Spender",
         format: SynthFieldFormat::AddressName,
-        // Approval targets are unambiguously contracts; hint lets the wallet
-        // scope the local-name lookup to its known-contracts table.
-        address_types: Some(CONTRACT_TYPE),
     },
     SynthField {
         path: "amount",
         label: "Amount",
-        format: SynthFieldFormat::TokenAmount,
-        address_types: None,
+        format: SynthFieldFormat::TokenAmountUnlimited,
     },
 ];
 
@@ -89,19 +82,16 @@ const TRANSFER_FROM_FIELDS: &[SynthField] = &[
         path: "from",
         label: "From",
         format: SynthFieldFormat::AddressName,
-        address_types: None,
     },
     SynthField {
         path: "to",
         label: "To",
         format: SynthFieldFormat::AddressName,
-        address_types: None,
     },
     SynthField {
         path: "amount",
         label: "Amount",
         format: SynthFieldFormat::TokenAmount,
-        address_types: None,
     },
 ];
 
@@ -200,11 +190,15 @@ fn build_field(spec: &SynthField) -> DisplayField {
     let (format, params) = match spec.format {
         SynthFieldFormat::AddressName => (
             FieldFormat::AddressName,
-            Some(address_name_params("@.from", spec.address_types)),
+            Some(address_name_params("@.from")),
         ),
         SynthFieldFormat::TokenAmount => {
             (FieldFormat::TokenAmount, Some(token_amount_params("@.to")))
         }
+        SynthFieldFormat::TokenAmountUnlimited => (
+            FieldFormat::TokenAmount,
+            Some(token_amount_params_unlimited("@.to")),
+        ),
     };
     DisplayField::Simple {
         path: Some(spec.path.to_string()),
@@ -258,16 +252,22 @@ fn empty_format_params() -> FormatParams {
 fn token_amount_params(token_path: &str) -> FormatParams {
     FormatParams {
         token_path: Some(token_path.to_string()),
+        ..empty_format_params()
+    }
+}
+
+fn token_amount_params_unlimited(token_path: &str) -> FormatParams {
+    FormatParams {
+        token_path: Some(token_path.to_string()),
         threshold: Some(UINT256_MAX_HEX.to_string()),
         message: Some("Unlimited".to_string()),
         ..empty_format_params()
     }
 }
 
-fn address_name_params(sender_path: &str, types: Option<&[&str]>) -> FormatParams {
+fn address_name_params(sender_path: &str) -> FormatParams {
     FormatParams {
         sender_address: Some(SenderAddress::Single(sender_path.to_string())),
-        types: types.map(|t| t.iter().map(|s| s.to_string()).collect()),
         ..empty_format_params()
     }
 }
@@ -380,19 +380,39 @@ mod tests {
         assert_eq!(params.token_path.as_deref(), Some("@.to"));
     }
 
-    /// Every synth's amount field carries `threshold` + `message` so the
-    /// engine renders the 2^256-1 "infinite approval" pattern as
-    /// "Unlimited {ticker}" rather than the 70-digit decimal expansion.
+    /// Only `approve.amount` carries `threshold` + `message`. The engine
+    /// collapses the 2^256-1 "infinite approval" pattern to "Unlimited {ticker}".
     #[test]
-    fn synthesize_amount_field_carries_threshold_and_message() {
+    fn synthesize_approve_amount_carries_unlimited_threshold() {
+        let resolved = synthesize_erc20(1, USDC_ADDR, [0x09, 0x5e, 0xa7, 0xb3], &usdc_meta())
+            .expect("approve synth");
+        let format = resolved
+            .descriptor
+            .display
+            .formats
+            .get("approve(address spender,uint256 amount)")
+            .expect("format present");
+        let DisplayField::Simple { params, .. } = format.fields.last().expect("amount field")
+        else {
+            panic!("expected Simple field");
+        };
+        let params = params.as_ref().expect("params present");
+        assert_eq!(
+            params.threshold.as_deref(),
+            Some("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+        );
+        assert_eq!(params.message.as_deref(), Some("Unlimited"));
+    }
+
+    /// `transfer.amount` and `transferFrom.amount` must NOT carry `threshold`
+    /// or `message` — a literal cap-valued transfer renders as the full decimal,
+    /// not "Unlimited". Only allowances collapse at the cap.
+    #[test]
+    fn synthesize_transfer_amounts_omit_threshold_and_message() {
         let cases = [
             (
                 [0xa9, 0x05, 0x9c, 0xbb],
                 "transfer(address to,uint256 amount)",
-            ),
-            (
-                [0x09, 0x5e, 0xa7, 0xb3],
-                "approve(address spender,uint256 amount)",
             ),
             (
                 [0x23, 0xb8, 0x72, 0xdd],
@@ -413,15 +433,15 @@ mod tests {
                 panic!("expected Simple field");
             };
             let params = params.as_ref().expect("params present");
-            assert_eq!(
-                params.threshold.as_deref(),
-                Some("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
-                "format_key={format_key}"
+            assert!(
+                params.threshold.is_none(),
+                "{format_key} amount should have no threshold, got {:?}",
+                params.threshold
             );
-            assert_eq!(
-                params.message.as_deref(),
-                Some("Unlimited"),
-                "format_key={format_key}"
+            assert!(
+                params.message.is_none(),
+                "{format_key} amount should have no message, got {:?}",
+                params.message
             );
         }
     }
@@ -483,43 +503,28 @@ mod tests {
         }
     }
 
-    /// `approve.spender` carries `types: ["contract"]` because approval targets
-    /// are unambiguously contracts. All other address fields leave `types` unset
-    /// so the wallet checks every source.
+    /// The synth must NOT unilaterally set `addressName.types`. Real registry
+    /// descriptors do not set it on `approve.spender` either; a hint forces
+    /// wallets to route lookups by role and could suppress ENS reverse-resolution.
+    /// Leaving `types` unset lets the wallet consult every source.
     #[test]
-    fn synthesize_address_fields_carry_role_types_hint() {
-        // approve.spender → ["contract"]
-        let approve = synthesize_erc20(1, USDC_ADDR, [0x09, 0x5e, 0xa7, 0xb3], &usdc_meta())
-            .expect("approve synth");
-        let spender_field = approve
-            .descriptor
-            .display
-            .formats
-            .get("approve(address spender,uint256 amount)")
-            .and_then(|f| f.fields.first())
-            .expect("spender field");
-        let DisplayField::Simple { params, .. } = spender_field else {
-            panic!("expected Simple field");
-        };
-        let params = params.as_ref().expect("params");
-        assert_eq!(
-            params.types.as_deref(),
-            Some(vec!["contract".to_string()]).as_deref(),
-            "approve.spender should carry types: [\"contract\"]"
-        );
-
-        // transfer.to and transferFrom.{from,to} → types is None
-        let other_cases = [
+    fn synthesize_address_fields_omit_types_hint() {
+        let cases = [
             (
                 [0xa9, 0x05, 0x9c, 0xbb],
                 "transfer(address to,uint256 amount)",
+            ),
+            (
+                [0x09, 0x5e, 0xa7, 0xb3],
+                "approve(address spender,uint256 amount)",
             ),
             (
                 [0x23, 0xb8, 0x72, 0xdd],
                 "transferFrom(address from,address to,uint256 amount)",
             ),
         ];
-        for (selector, format_key) in other_cases {
+
+        for (selector, format_key) in cases {
             let resolved = synthesize_erc20(1, USDC_ADDR, selector, &usdc_meta()).expect("synth");
             let format = resolved
                 .descriptor
