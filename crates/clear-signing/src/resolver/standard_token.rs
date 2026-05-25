@@ -1,5 +1,17 @@
 //! Synthesize ERC-7730 descriptors on-the-fly for standard ERC-20 functions
 //! when the wallet supplies token metadata.
+//!
+//! Edge cases handled here:
+//! - `amount = 2^256 - 1` (DeFi infinite approval) → `tokenAmount` params carry
+//!   `threshold` + `message`, engine renders "Unlimited {ticker}".
+//! - Address fields equal to `tx.from` → `addressName` params carry
+//!   `senderAddress: "@.from"`, engine renders "Sender" instead of the address.
+//!
+//! Considered but deferred to wallet UX: `approve(spender, 0)` renders as
+//! "Approve {spender} to spend 0 {ticker}" which is accurate but doesn't
+//! signal "you are revoking approval". A spec-compliant single descriptor
+//! cannot switch its intent based on amount; the wallet's display layer is
+//! the right place to override.
 
 use std::collections::HashMap;
 
@@ -7,7 +19,8 @@ use crate::token::TokenMeta;
 use crate::types::context::{ContractContext, ContractInfo, Deployment, DescriptorContext};
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
-    DescriptorDisplay, DisplayField, DisplayFormat, FieldFormat, FormatParams, VisibleRule,
+    DescriptorDisplay, DisplayField, DisplayFormat, FieldFormat, FormatParams, SenderAddress,
+    VisibleRule,
 };
 use crate::types::metadata::{Metadata, TokenInfo};
 
@@ -170,7 +183,10 @@ pub(crate) fn synthesize_erc20(
 
 fn build_field(spec: &SynthField) -> DisplayField {
     let (format, params) = match spec.format {
-        SynthFieldFormat::AddressName => (FieldFormat::AddressName, None),
+        SynthFieldFormat::AddressName => (
+            FieldFormat::AddressName,
+            Some(address_name_params_sender("@.from")),
+        ),
         SynthFieldFormat::TokenAmount => {
             (FieldFormat::TokenAmount, Some(token_amount_params("@.to")))
         }
@@ -186,9 +202,14 @@ fn build_field(spec: &SynthField) -> DisplayField {
     }
 }
 
-fn token_amount_params(token_path: &str) -> FormatParams {
+/// uint256 max — sentinel value used by every common DeFi "infinite approval" flow
+/// (1inch, Uniswap, OpenSea, Permit2 aggregators). Engine comparison is `>=`, so
+/// the exact-max case is included.
+const UINT256_MAX_HEX: &str = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+
+fn empty_format_params() -> FormatParams {
     FormatParams {
-        token_path: Some(token_path.to_string()),
+        token_path: None,
         token: None,
         native_currency_address: None,
         chain_id: None,
@@ -216,6 +237,22 @@ fn token_amount_params(token_path: &str) -> FormatParams {
         sender_address: None,
         collection_path: None,
         collection: None,
+    }
+}
+
+fn token_amount_params(token_path: &str) -> FormatParams {
+    FormatParams {
+        token_path: Some(token_path.to_string()),
+        threshold: Some(UINT256_MAX_HEX.to_string()),
+        message: Some("Unlimited".to_string()),
+        ..empty_format_params()
+    }
+}
+
+fn address_name_params_sender(sender_path: &str) -> FormatParams {
+    FormatParams {
+        sender_address: Some(SenderAddress::Single(sender_path.to_string())),
+        ..empty_format_params()
     }
 }
 
@@ -325,6 +362,109 @@ mod tests {
         assert_eq!(path.as_deref(), Some("amount"));
         let params = params.as_ref().expect("params present");
         assert_eq!(params.token_path.as_deref(), Some("@.to"));
+    }
+
+    /// Every synth's amount field carries `threshold` + `message` so the
+    /// engine renders the 2^256-1 "infinite approval" pattern as
+    /// "Unlimited {ticker}" rather than the 70-digit decimal expansion.
+    #[test]
+    fn synthesize_amount_field_carries_threshold_and_message() {
+        let cases = [
+            (
+                [0xa9, 0x05, 0x9c, 0xbb],
+                "transfer(address to,uint256 amount)",
+            ),
+            (
+                [0x09, 0x5e, 0xa7, 0xb3],
+                "approve(address spender,uint256 amount)",
+            ),
+            (
+                [0x23, 0xb8, 0x72, 0xdd],
+                "transferFrom(address from,address to,uint256 amount)",
+            ),
+        ];
+
+        for (selector, format_key) in cases {
+            let resolved = synthesize_erc20(1, USDC_ADDR, selector, &usdc_meta()).expect("synth");
+            let format = resolved
+                .descriptor
+                .display
+                .formats
+                .get(format_key)
+                .expect("format present");
+            let DisplayField::Simple { params, .. } = format.fields.last().expect("amount field")
+            else {
+                panic!("expected Simple field");
+            };
+            let params = params.as_ref().expect("params present");
+            assert_eq!(
+                params.threshold.as_deref(),
+                Some("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                "format_key={format_key}"
+            );
+            assert_eq!(
+                params.message.as_deref(),
+                Some("Unlimited"),
+                "format_key={format_key}"
+            );
+        }
+    }
+
+    /// Every `addressName` field in every synth carries `senderAddress: "@.from"`
+    /// so the engine renders "Sender" when the field address equals `tx.from`.
+    #[test]
+    fn synthesize_address_fields_carry_sender_address_from() {
+        let cases = [
+            (
+                [0xa9, 0x05, 0x9c, 0xbb],
+                "transfer(address to,uint256 amount)",
+            ),
+            (
+                [0x09, 0x5e, 0xa7, 0xb3],
+                "approve(address spender,uint256 amount)",
+            ),
+            (
+                [0x23, 0xb8, 0x72, 0xdd],
+                "transferFrom(address from,address to,uint256 amount)",
+            ),
+        ];
+
+        for (selector, format_key) in cases {
+            let resolved = synthesize_erc20(1, USDC_ADDR, selector, &usdc_meta()).expect("synth");
+            let format = resolved
+                .descriptor
+                .display
+                .formats
+                .get(format_key)
+                .expect("format present");
+
+            let mut address_fields_checked = 0;
+            for field in &format.fields {
+                let DisplayField::Simple {
+                    format: fmt,
+                    params,
+                    ..
+                } = field
+                else {
+                    continue;
+                };
+                if !matches!(fmt, Some(FieldFormat::AddressName)) {
+                    continue;
+                }
+                let params = params.as_ref().expect("params present on address field");
+                match params.sender_address.as_ref().expect("sender_address set") {
+                    SenderAddress::Single(path) => {
+                        assert_eq!(path.as_str(), "@.from", "format_key={format_key}")
+                    }
+                    SenderAddress::Multiple(_) => panic!("expected Single variant"),
+                }
+                address_fields_checked += 1;
+            }
+            assert!(
+                address_fields_checked > 0,
+                "format {format_key} should have at least one AddressName field"
+            );
+        }
     }
 
     #[test]

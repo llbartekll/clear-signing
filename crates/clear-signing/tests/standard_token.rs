@@ -120,6 +120,22 @@ fn approve_calldata(spender: &str, amount: u128) -> Vec<u8> {
     out
 }
 
+/// Build approve calldata with an explicit 32-byte amount — for testing uint256 max etc.
+fn approve_calldata_raw_amount(spender: &str, amount_word: [u8; 32]) -> Vec<u8> {
+    let mut out = vec![0x09, 0x5e, 0xa7, 0xb3];
+    out.extend_from_slice(&address_word(spender));
+    out.extend_from_slice(&amount_word);
+    out
+}
+
+fn transfer_from_calldata(from: &str, to: &str, amount: u128) -> Vec<u8> {
+    let mut out = vec![0x23, 0xb8, 0x72, 0xdd];
+    out.extend_from_slice(&address_word(from));
+    out.extend_from_slice(&address_word(to));
+    out.extend_from_slice(&uint_word(amount));
+    out
+}
+
 fn exec_transaction_calldata(target: &str, inner: &[u8]) -> Vec<u8> {
     // execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)
     let selector = clear_signing::decoder::parse_signature(
@@ -620,5 +636,146 @@ async fn nested_safe_exec_transaction_synthesizes_inner_approve() {
     assert_eq!(
         nested, "Approve token spending",
         "nested rendering uses the plain intent, not the interpolated form"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Edge-case rendering: threshold/message + senderAddress
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn approve_with_uint256_max_renders_unlimited() {
+    // Standard DeFi "infinite approval" — 1inch, Uniswap, Permit2 aggregators all
+    // emit approve(spender, 2^256 - 1). The synth's threshold + message wires
+    // the engine to render this as "Unlimited USDC" rather than the 70-digit
+    // decimal expansion of the raw amount.
+    let source = RecordingSource::new();
+    let tokens = tokens_with_usdc();
+
+    let calldata = approve_calldata_raw_amount(SPENDER, [0xff; 32]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: USDC_ADDR,
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let descriptors = resolve_descriptors_for_tx(&tx, &source, Some(&tokens))
+        .await
+        .expect("resolve");
+    let model = format_calldata(&descriptors, &tx, &tokens)
+        .await
+        .expect("format");
+    let interpolated = model
+        .interpolated_intent
+        .clone()
+        .expect("interpolated intent");
+    assert!(
+        interpolated.ends_with("to spend Unlimited USDC"),
+        "expected 'to spend Unlimited USDC' suffix, got '{interpolated}'"
+    );
+    assert!(
+        !interpolated.contains("115792089"),
+        "the 70-digit decimal must not appear: '{interpolated}'"
+    );
+}
+
+#[tokio::test]
+async fn approve_with_uint256_max_minus_one_renders_full_amount() {
+    // Locks the `>= max` semantics: exactly one less than uint256 max should
+    // NOT trigger the "Unlimited" branch — it renders as the full decimal.
+    // Prevents a future change from quietly loosening the bound.
+    let source = RecordingSource::new();
+    let tokens = tokens_with_usdc();
+
+    let mut amount_word = [0xff_u8; 32];
+    amount_word[31] = 0xfe;
+    let calldata = approve_calldata_raw_amount(SPENDER, amount_word);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: USDC_ADDR,
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let descriptors = resolve_descriptors_for_tx(&tx, &source, Some(&tokens))
+        .await
+        .expect("resolve");
+    let model = format_calldata(&descriptors, &tx, &tokens)
+        .await
+        .expect("format");
+    let interpolated = model
+        .interpolated_intent
+        .clone()
+        .expect("interpolated intent");
+    assert!(
+        !interpolated.contains("Unlimited"),
+        "uint256_max - 1 must NOT trigger Unlimited: '{interpolated}'"
+    );
+    // The full decimal of (2^256 - 1) / 10^6 ends in ".639935" — check the
+    // synth still rendered a numeric amount via tokenAmount.
+    assert!(
+        interpolated.contains("USDC"),
+        "expected the token ticker in the rendered output: '{interpolated}'"
+    );
+}
+
+#[tokio::test]
+async fn transfer_from_with_sender_as_from_renders_sender_label() {
+    // senderAddress: "@.from" on every addressName field makes the engine
+    // render "Sender" when the field address equals tx.from. Common in
+    // delegated transferFrom flows where the caller controls the source.
+    let source = RecordingSource::new();
+    let tokens = tokens_with_usdc();
+
+    // sender_addr is both `tx.from` AND the `from` argument of transferFrom.
+    let sender_addr = "0xbf01daf454dce008d3e2bfd47d5e186f71477253";
+    let calldata = transfer_from_calldata(sender_addr, RECIPIENT, 1_000_000);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: USDC_ADDR,
+        calldata: &calldata,
+        value: None,
+        from: Some(sender_addr),
+        implementation_address: None,
+    };
+
+    let descriptors = resolve_descriptors_for_tx(&tx, &source, Some(&tokens))
+        .await
+        .expect("resolve");
+    let model = format_calldata(&descriptors, &tx, &tokens)
+        .await
+        .expect("format");
+
+    let from_item = model
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            DisplayEntry::Item(item) if item.label == "From" => Some(item.clone()),
+            _ => None,
+        })
+        .expect("From field present");
+    assert_eq!(
+        from_item.value, "Sender",
+        "from field matching tx.from should render as 'Sender'"
+    );
+
+    // Sanity-check the recipient field DOES still render as a checksummed
+    // address (it doesn't match tx.from).
+    let to_item = model
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            DisplayEntry::Item(item) if item.label == "To" => Some(item.clone()),
+            _ => None,
+        })
+        .expect("To field present");
+    assert_ne!(
+        to_item.value, "Sender",
+        "to field NOT matching tx.from should render the address"
     );
 }

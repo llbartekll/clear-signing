@@ -1,0 +1,17 @@
+{
+  "tx_hash": "0xseed-approve-unlimited",
+  "chain_id": 10,
+  "to": "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58",
+  "from": "0xbf01daf454dce008d3e2bfd47d5e186f71477253",
+  "calldata_hex": "0x095ea7b3000000000000000000000000794a61358d6845594f94dc1db02a252b5b4814adffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "value_hex": "0x0",
+  "token_meta": { "symbol": "USDT", "decimals": 6, "name": "Tether USD" },
+  "expected": {
+    "intent": "Approve token spending",
+    "interpolated_intent": "Approve 0x794a61358D6845594F94dc1DB02A252b5b4814aD to spend Unlimited USDT",
+    "fields": [
+      { "label": "Spender", "value": "0x794a61358D6845594F94dc1DB02A252b5b4814aD" },
+      { "label": "Amount",  "value": "Unlimited USDT" }
+    ]
+  }
+}
