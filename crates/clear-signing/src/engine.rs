@@ -1792,7 +1792,7 @@ fn eip55_checksum(addr: &[u8; 20]) -> String {
     let mut result = String::with_capacity(42);
     result.push_str("0x");
     for (i, c) in hex_addr.chars().enumerate() {
-        let hash_nibble = if i % 2 == 0 {
+        let hash_nibble = if i.is_multiple_of(2) {
             (hash[i / 2] >> 4) & 0x0f
         } else {
             hash[i / 2] & 0x0f

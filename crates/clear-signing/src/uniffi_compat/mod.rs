@@ -426,7 +426,7 @@ fn decode_hex(input: &str, context: HexContext) -> Result<Vec<u8>, FormatFailure
 
     // Pad odd-length hex strings with a leading zero (e.g. "0x0" → "00")
     let padded;
-    let hex_str = if normalized.len() % 2 != 0 {
+    let hex_str = if !normalized.len().is_multiple_of(2) {
         padded = format!("0{}", normalized);
         &padded
     } else {
