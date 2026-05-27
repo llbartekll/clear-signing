@@ -1,9 +1,8 @@
 //! Registry-compatible `results.json` emission.
 //!
-//! Output format is defined by the `manuelwedler/clear-signing-erc7730-registry`
-//! CI contract at `.github/test-results/`. The `runner` field is the harness
-//! category (literal `@ethereum-sourcify/clear-signing-test-runner`), and
-//! `implementation` identifies the clear-signing build under test.
+//! Output format follows the CI contract at the ERC-7730 registry's
+//! `.github/test-results/`. `runner` identifies this harness;
+//! `implementation` identifies the clear-signing build it drives.
 
 use std::path::Path;
 
@@ -14,8 +13,8 @@ use serde::Serialize;
 
 use crate::compare::{first_failure_message, CaseResult};
 
-/// Harness category literal expected by the registry CI.
-pub const RUNNER_ID: &str = "@ethereum-sourcify/clear-signing-test-runner";
+/// Identifier of this test runner harness.
+pub const RUNNER_ID: &str = "@llbartekll/cs-test";
 
 /// `implementation` field for the registry results: identifies the
 /// clear-signing crate version this runner is bound to.

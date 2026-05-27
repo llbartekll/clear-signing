@@ -74,6 +74,8 @@ pub struct DataProviderStub {
     pub tokens: HashMap<String, TokenStub>,
     #[serde(default, rename = "addressNames")]
     pub address_names: HashMap<String, String>,
+    #[serde(default, rename = "ensNames")]
+    pub ens_names: HashMap<String, String>,
     #[serde(default, rename = "nftCollectionNames")]
     pub nft_collection_names: HashMap<String, String>,
     #[serde(default, rename = "blockTimestamps")]
@@ -97,6 +99,9 @@ impl DataProviderStub {
             }
             for (k, v) in &case.address_names {
                 out.address_names.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &case.ens_names {
+                out.ens_names.insert(k.clone(), v.clone());
             }
             for (k, v) in &case.nft_collection_names {
                 out.nft_collection_names.insert(k.clone(), v.clone());
