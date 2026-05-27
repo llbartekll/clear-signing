@@ -277,7 +277,12 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         .expect("expected Nested entry for Transaction");
 
     match nested {
-        DisplayEntry::Nested { label, intent, owner, .. } => {
+        DisplayEntry::Nested {
+            label,
+            intent,
+            owner,
+            ..
+        } => {
             assert_eq!(label, "Transaction");
             assert!(
                 intent.contains("Unknown function"),

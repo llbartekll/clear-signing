@@ -19,13 +19,15 @@ impl StubDataProvider {
         addr.trim_start_matches("0x").to_ascii_lowercase()
     }
 
-    fn lookup_in(
-        map: &std::collections::HashMap<String, String>,
-        address: &str,
-    ) -> Option<String> {
+    fn lookup_in(map: &std::collections::HashMap<String, String>, address: &str) -> Option<String> {
         let key = Self::normalize(address);
-        map.iter()
-            .find_map(|(k, v)| if Self::normalize(k) == key { Some(v.clone()) } else { None })
+        map.iter().find_map(|(k, v)| {
+            if Self::normalize(k) == key {
+                Some(v.clone())
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -118,14 +120,20 @@ mod tests {
     #[tokio::test]
     async fn ens_lookup_reads_only_ens_names() {
         let p = stub(&[(ADDR, "alice.eth")], &[]);
-        assert_eq!(p.resolve_ens_name(ADDR, 1, None).await, Some("alice.eth".into()));
+        assert_eq!(
+            p.resolve_ens_name(ADDR, 1, None).await,
+            Some("alice.eth".into())
+        );
         assert_eq!(p.resolve_local_name(ADDR, 1, None).await, None);
     }
 
     #[tokio::test]
     async fn local_lookup_reads_only_address_names() {
         let p = stub(&[], &[(ADDR, "Treasury")]);
-        assert_eq!(p.resolve_local_name(ADDR, 1, None).await, Some("Treasury".into()));
+        assert_eq!(
+            p.resolve_local_name(ADDR, 1, None).await,
+            Some("Treasury".into())
+        );
         assert_eq!(p.resolve_ens_name(ADDR, 1, None).await, None);
     }
 
@@ -134,7 +142,13 @@ mod tests {
         // Same address has distinct entries in both maps; each method returns
         // its own map's entry, not the other's.
         let p = stub(&[(ADDR, "alice.eth")], &[(ADDR, "Treasury")]);
-        assert_eq!(p.resolve_ens_name(ADDR, 1, None).await, Some("alice.eth".into()));
-        assert_eq!(p.resolve_local_name(ADDR, 1, None).await, Some("Treasury".into()));
+        assert_eq!(
+            p.resolve_ens_name(ADDR, 1, None).await,
+            Some("alice.eth".into())
+        );
+        assert_eq!(
+            p.resolve_local_name(ADDR, 1, None).await,
+            Some("Treasury".into())
+        );
     }
 }

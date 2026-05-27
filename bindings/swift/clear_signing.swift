@@ -1398,7 +1398,7 @@ public enum DisplayEntry: Equatable, Hashable {
     )
     case group(label: String, iteration: GroupIteration, items: [DisplayItem]
     )
-    case nested(label: String, intent: String, 
+    case nested(label: String, intent: String,
         /**
          * Owner string for the inner call (the inner descriptor's `metadata.owner`),
          * when a matching descriptor was found. `None` for raw/fallback frames where

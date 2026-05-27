@@ -49,7 +49,10 @@ pub fn decode_signed(raw_hex: &str) -> Result<DecodedTx> {
     let gas_limit: u64 = rlp.val_at(4).context("gas_limit")?;
     let to_bytes: Vec<u8> = rlp.val_at(5).context("to")?;
     if to_bytes.len() != 20 {
-        return Err(anyhow!("`to` is not a 20-byte address (got {} bytes)", to_bytes.len()));
+        return Err(anyhow!(
+            "`to` is not a 20-byte address (got {} bytes)",
+            to_bytes.len()
+        ));
     }
     let value: Vec<u8> = rlp.val_at(6).context("value")?;
     let data: Vec<u8> = rlp.val_at(7).context("data")?;

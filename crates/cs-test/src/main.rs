@@ -9,7 +9,11 @@ use cs_test::results::{build_results_file, write_results_file};
 use cs_test::runner::run_file;
 
 #[derive(Parser)]
-#[command(name = "cs-test", version, about = "ERC-7730 test runner using the clear-signing engine")]
+#[command(
+    name = "cs-test",
+    version,
+    about = "ERC-7730 test runner using the clear-signing engine"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -35,7 +39,12 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.cmd {
-        Cmd::Run { file, case, json, output } => match dispatch(file, case, json, output) {
+        Cmd::Run {
+            file,
+            case,
+            json,
+            output,
+        } => match dispatch(file, case, json, output) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::from(1),
             Err(e) => {
@@ -52,7 +61,9 @@ fn dispatch(
     json: bool,
     output: Option<PathBuf>,
 ) -> Result<bool> {
-    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
     let results = runtime.block_on(run_file(&file, case.as_deref()))?;
     if let Some(output_path) = output {
         // Registry mode: well-formed `results.json` is the contract. Per-case

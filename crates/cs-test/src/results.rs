@@ -128,7 +128,12 @@ fn render_entries(entries: &[DisplayEntry]) -> IndexMap<String, FieldValue> {
                     out.insert(label.clone(), FieldValue::Value(value.clone()));
                 }
             }
-            DisplayEntry::Nested { label, intent, owner, entries } => {
+            DisplayEntry::Nested {
+                label,
+                intent,
+                owner,
+                entries,
+            } => {
                 out.insert(
                     label.clone(),
                     FieldValue::Nested(NestedRendered {
@@ -146,11 +151,9 @@ fn render_entries(entries: &[DisplayEntry]) -> IndexMap<String, FieldValue> {
 /// Atomic write: serialize and write to `<path>.tmp` then rename to `path`.
 /// Avoids leaving a half-written results file if the runner crashes mid-write.
 pub fn write_results_file(path: &Path, results_file: &ResultsFile) -> Result<()> {
-    let body = serde_json::to_string_pretty(results_file)
-        .context("serialize results.json")?;
+    let body = serde_json::to_string_pretty(results_file).context("serialize results.json")?;
     let tmp = tmp_path(path);
-    std::fs::write(&tmp, &body)
-        .with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::write(&tmp, &body).with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     Ok(())
@@ -199,8 +202,14 @@ mod tests {
             label: "g".into(),
             iteration: GroupIteration::Bundled,
             items: vec![
-                DisplayItem { label: "A".into(), value: "1".into() },
-                DisplayItem { label: "B".into(), value: "2".into() },
+                DisplayItem {
+                    label: "A".into(),
+                    value: "1".into(),
+                },
+                DisplayItem {
+                    label: "B".into(),
+                    value: "2".into(),
+                },
             ],
         }]);
         let r = pass_result(m);

@@ -299,11 +299,9 @@ mod tests {
         assert!(ResolveError::RegistryIndexMissing { url: "u".into() }
             .to_string()
             .contains("index missing"));
-        assert!(
-            ResolveError::RegistryDescriptorMissing { url: "u".into() }
-                .to_string()
-                .contains("descriptor missing")
-        );
+        assert!(ResolveError::RegistryDescriptorMissing { url: "u".into() }
+            .to_string()
+            .contains("descriptor missing"));
         assert!(ResolveError::RegistryIo("e".into())
             .to_string()
             .contains("io error"));

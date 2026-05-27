@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use clear_signing::TransactionContext;
-use clear_signing::{format_calldata, format_typed_data};
 use clear_signing::eip712::TypedData;
 use clear_signing::merge::merge_descriptors;
 use clear_signing::resolver::ResolvedDescriptor;
 use clear_signing::types::descriptor::Descriptor;
+use clear_signing::TransactionContext;
+use clear_signing::{format_calldata, format_typed_data};
 
 use crate::compare::{case_error, compare, CaseResult};
 use crate::provider::StubDataProvider;
@@ -45,7 +45,8 @@ pub async fn run_file(path: &Path, case_filter: Option<&str>) -> Result<Vec<Case
 
     let mut results = Vec::new();
     for case in matching {
-        let provider_stub = DataProviderStub::merged(file.data_provider.as_ref(), case.case_provider());
+        let provider_stub =
+            DataProviderStub::merged(file.data_provider.as_ref(), case.case_provider());
         let provider = StubDataProvider::new(provider_stub);
         let result = match case {
             TestCase::Calldata(c) => run_calldata(c, &descriptor, &provider).await,
@@ -134,7 +135,10 @@ fn resolve_includes(descriptor_json: &str, descriptor_path: &Path, depth: u8) ->
         ));
     }
     let value: serde_json::Value = serde_json::from_str(descriptor_json)?;
-    let include_ref = value.get("includes").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let include_ref = value
+        .get("includes")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let Some(rel) = include_ref else {
         return Ok(descriptor_json.to_string());
     };
