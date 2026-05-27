@@ -222,7 +222,7 @@ fn compare_level(
                     actual_pairs.push((label.clone(), ActualField::Scalar(value.as_str())));
                 }
             }
-            DisplayEntry::Nested { label, intent, entries } => {
+            DisplayEntry::Nested { label, intent, entries, .. } => {
                 actual_pairs.push((label.clone(), ActualField::Nested(intent.as_str(), entries.as_slice())));
             }
         }
@@ -352,7 +352,12 @@ mod tests {
     }
 
     fn nested(label: &str, intent: &str, entries: Vec<DisplayEntry>) -> DisplayEntry {
-        DisplayEntry::Nested { label: label.to_string(), intent: intent.to_string(), entries }
+        DisplayEntry::Nested {
+            label: label.to_string(),
+            intent: intent.to_string(),
+            owner: None,
+            entries,
+        }
     }
 
     fn expected_with(intent: &str, fields: IndexMap<String, FieldExpected>) -> Expected {

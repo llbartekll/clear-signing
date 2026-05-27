@@ -318,7 +318,7 @@ type DisplayModel = {
 Variants:
 - `DisplayEntry_Tags.Item` — `inner: [DisplayItem]` (tuple of one)
 - `DisplayEntry_Tags.Group` — `inner: { label: string, iteration: GroupIteration, items: DisplayItem[] }`
-- `DisplayEntry_Tags.Nested` — `inner: { label: string, intent: string, entries: DisplayEntry[] }` (recursive for nested calldata)
+- `DisplayEntry_Tags.Nested` — `inner: { label: string, intent: string, owner?: string, entries: DisplayEntry[] }` (recursive for nested calldata; `owner` is the inner descriptor's `metadata.owner`, omitted on raw/fallback frames)
 
 `DisplayItem` is the leaf row: `{ label: string, value: string }`.
 

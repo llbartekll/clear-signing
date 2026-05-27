@@ -84,13 +84,18 @@ struct DisplayModelView: View {
                         .padding(.leading, 12)
                 }
             }
-        case .nested(let label, let intent, let entries):
+        case .nested(let label, let intent, let owner, let entries):
             VStack(alignment: .leading, spacing: 6) {
                 Text(label)
                     .font(.subheadline.bold())
                 Text(intent)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                if let owner, !owner.isEmpty {
+                    Text("by \(owner)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
                 ForEach(Array(entries.enumerated()), id: \.offset) { _, nestedEntry in
                     AnyView(entryView(nestedEntry))
                         .padding(.leading, 12)

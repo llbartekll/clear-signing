@@ -193,11 +193,16 @@ async fn userop_with_erc20_transfer_via_execute() {
         DisplayEntry::Nested {
             label,
             intent,
+            owner,
             entries,
-            ..
         } => {
             assert_eq!(label, "Embedded Call");
             assert_eq!(intent, "Execute call");
+            assert_eq!(
+                owner.as_deref(),
+                Some("Smart Account"),
+                "EIP-712 nested calldata frame should carry the inner descriptor's owner"
+            );
 
             // The execute call should have: Destination, Value, Inner Call (nested)
             assert!(
@@ -226,11 +231,16 @@ async fn userop_with_erc20_transfer_via_execute() {
                 DisplayEntry::Nested {
                     label,
                     intent,
+                    owner: inner_owner,
                     entries: inner_entries,
-                    ..
                 } => {
                     assert_eq!(label, "Inner Call");
                     assert_eq!(intent, "Transfer tokens");
+                    assert_eq!(
+                        inner_owner.as_deref(),
+                        Some("Circle"),
+                        "deepest-level nested frame should carry the leaf descriptor's owner"
+                    );
 
                     // Should have To and Amount
                     if let DisplayEntry::Item(ref item) = inner_entries[0] {

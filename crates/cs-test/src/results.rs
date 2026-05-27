@@ -128,15 +128,12 @@ fn render_entries(entries: &[DisplayEntry]) -> IndexMap<String, FieldValue> {
                     out.insert(label.clone(), FieldValue::Value(value.clone()));
                 }
             }
-            DisplayEntry::Nested { label, intent, entries } => {
+            DisplayEntry::Nested { label, intent, owner, entries } => {
                 out.insert(
                     label.clone(),
                     FieldValue::Nested(NestedRendered {
                         intent: intent.clone(),
-                        // The engine does not currently track `owner` on nested
-                        // calldata frames; emit empty so the registry schema
-                        // stays well-formed.
-                        owner: String::new(),
+                        owner: owner.clone().unwrap_or_default(),
                         fields: render_entries(entries),
                     }),
                 );
@@ -246,6 +243,7 @@ mod tests {
         let m = model_with(vec![DisplayEntry::Nested {
             label: "Inner call".into(),
             intent: "Transfer".into(),
+            owner: Some("Inner DAO".into()),
             entries: vec![DisplayEntry::Item(DisplayItem {
                 label: "To".into(),
                 value: "0xabc".into(),
@@ -259,6 +257,7 @@ mod tests {
             other => panic!("expected nested, got {other:?}"),
         };
         assert_eq!(nested.intent, "Transfer");
+        assert_eq!(nested.owner, "Inner DAO");
         assert!(matches!(nested.fields.get("To"), Some(FieldValue::Value(v)) if v == "0xabc"));
     }
 }

@@ -804,6 +804,7 @@ async fn render_typed_calldata_field(
                     return Ok(DisplayEntry::Nested {
                         label: label.to_string(),
                         intent: "Unknown".to_string(),
+                        owner: None,
                         entries: vec![DisplayEntry::Item(DisplayItem {
                             label: "Raw data".to_string(),
                             value: s.clone(),
@@ -825,6 +826,7 @@ async fn render_typed_calldata_field(
             return Ok(DisplayEntry::Nested {
                 label: label.to_string(),
                 intent: "Unknown".to_string(),
+                owner: None,
                 entries: vec![DisplayEntry::Item(DisplayItem {
                     label: "Raw data".to_string(),
                     value: raw,
@@ -846,6 +848,7 @@ async fn render_typed_calldata_field(
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
+            owner: None,
             entries: vec![DisplayEntry::Item(DisplayItem {
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(&inner_calldata)),
@@ -884,6 +887,7 @@ async fn render_typed_calldata_field(
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
+            owner: None,
             entries: vec![DisplayEntry::Item(DisplayItem {
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(&inner_calldata)),
@@ -965,6 +969,7 @@ async fn render_typed_calldata_field(
     Ok(DisplayEntry::Nested {
         label: label.to_string(),
         intent: result.intent,
+        owner: result.owner,
         entries: result.entries,
     })
 }
