@@ -1,9 +1,7 @@
 use clear_signing::eip712::{TypedData, TypedDataDomain, TypedDataField};
 use clear_signing::resolver::ResolvedDescriptor;
 use clear_signing::types::descriptor::Descriptor;
-use clear_signing::{
-    format_calldata, format_typed_data, EmptyDataProvider, TransactionContext,
-};
+use clear_signing::{format_calldata, format_typed_data, EmptyDataProvider, TransactionContext};
 
 const ERC20_DESCRIPTOR_WITH_CONTRACT_NAME: &str = r#"{
     "context": {

@@ -7,7 +7,11 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestFile {
     pub descriptor: PathBuf,
-    #[serde(default, rename = "dataProvider", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "dataProvider",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub data_provider: Option<DataProviderStub>,
     pub tests: Vec<TestCase>,
 }
@@ -28,7 +32,11 @@ pub struct CalldataCase {
     #[serde(default, rename = "txHash", skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
     pub expected: Expected,
-    #[serde(default, rename = "dataProvider", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "dataProvider",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub data_provider: Option<DataProviderStub>,
 }
 
@@ -38,14 +46,22 @@ pub struct Eip712Case {
     pub description: String,
     pub data: serde_json::Value,
     pub expected: Expected,
-    #[serde(default, rename = "dataProvider", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "dataProvider",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub data_provider: Option<DataProviderStub>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Expected {
     pub intent: String,
-    #[serde(default, rename = "interpolatedIntent", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "interpolatedIntent",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub interpolated_intent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
@@ -64,6 +80,8 @@ pub enum FieldExpected {
 #[serde(deny_unknown_fields)]
 pub struct NestedExpected {
     pub intent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
     #[serde(default)]
     pub fields: IndexMap<String, FieldExpected>,
 }
@@ -74,6 +92,12 @@ pub struct DataProviderStub {
     pub tokens: HashMap<String, TokenStub>,
     #[serde(default, rename = "addressNames")]
     pub address_names: HashMap<String, String>,
+    #[serde(default, rename = "ensNames")]
+    pub ens_names: HashMap<String, String>,
+    #[serde(default, rename = "nftCollectionNames")]
+    pub nft_collection_names: HashMap<String, String>,
+    #[serde(default, rename = "blockTimestamps")]
+    pub block_timestamps: HashMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +117,15 @@ impl DataProviderStub {
             }
             for (k, v) in &case.address_names {
                 out.address_names.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &case.ens_names {
+                out.ens_names.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &case.nft_collection_names {
+                out.nft_collection_names.insert(k.clone(), v.clone());
+            }
+            for (k, v) in &case.block_timestamps {
+                out.block_timestamps.insert(k.clone(), *v);
             }
         }
         out

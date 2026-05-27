@@ -180,11 +180,16 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
         DisplayEntry::Nested {
             label,
             intent,
+            owner,
             entries,
-            ..
         } => {
             assert_eq!(label, "Transaction");
             assert_eq!(intent, "Transfer tokens");
+            assert_eq!(
+                owner.as_deref(),
+                Some("Circle"),
+                "nested owner should propagate from inner descriptor's metadata.owner"
+            );
             assert!(
                 entries.len() >= 2,
                 "expected at least 2 inner entries, got {}",
@@ -272,11 +277,20 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         .expect("expected Nested entry for Transaction");
 
     match nested {
-        DisplayEntry::Nested { label, intent, .. } => {
+        DisplayEntry::Nested {
+            label,
+            intent,
+            owner,
+            ..
+        } => {
             assert_eq!(label, "Transaction");
             assert!(
                 intent.contains("Unknown function"),
                 "expected raw fallback intent, got: {intent}"
+            );
+            assert!(
+                owner.is_none(),
+                "raw fallback nested entry must not claim an owner; got {owner:?}"
             );
         }
         other => {

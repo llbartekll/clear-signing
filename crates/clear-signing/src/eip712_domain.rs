@@ -687,7 +687,9 @@ mod tests {
     #[test]
     fn salt_mismatch() {
         let descriptor = build_descriptor(
-            Some(json!({ "salt": "0x1111111111111111111111111111111111111111111111111111111111111111" })),
+            Some(
+                json!({ "salt": "0x1111111111111111111111111111111111111111111111111111111111111111" }),
+            ),
             None,
         );
         let data = build_typed_data(
@@ -701,7 +703,9 @@ mod tests {
     #[test]
     fn salt_missing_in_typed_data() {
         let descriptor = build_descriptor(
-            Some(json!({ "salt": "0x1111111111111111111111111111111111111111111111111111111111111111" })),
+            Some(
+                json!({ "salt": "0x1111111111111111111111111111111111111111111111111111111111111111" }),
+            ),
             None,
         );
         let data = build_typed_data(json!({}), json!({}));
@@ -712,7 +716,9 @@ mod tests {
     #[test]
     fn salt_uppercase_prefix_normalized() {
         let descriptor = build_descriptor(
-            Some(json!({ "salt": "0X1111111111111111111111111111111111111111111111111111111111111111" })),
+            Some(
+                json!({ "salt": "0X1111111111111111111111111111111111111111111111111111111111111111" }),
+            ),
             None,
         );
         let data = build_typed_data(

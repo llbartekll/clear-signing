@@ -140,7 +140,7 @@ The library supports v2 registry descriptor features:
 - **Container values**: `@.value`, `@.from`, `@.to`, `@.chainId` injected as synthetic arguments
 - **Graceful degradation**: Unknown selectors return raw preview instead of errors
 - **`duration`/`unit` formatters**: Seconds → human-readable, numeric + unit symbol
-- **`FieldFormat::Calldata`**: Nested calldata decoding (Safe `execTransaction`, ERC-4337 UserOps) — recursive rendering with `DisplayEntry::Nested`, `calleePath`/`amountPath`/`spenderPath` params, depth limit of 3
+- **`FieldFormat::Calldata`**: Nested calldata decoding (Safe `execTransaction`, ERC-4337 UserOps) — recursive rendering with `DisplayEntry::Nested` (carries `owner` from the inner descriptor's `metadata.owner` when resolved; `None` on raw/fallback), `calleePath`/`amountPath`/`spenderPath` params, depth limit of 3
 - **Batch operations (`wallet_sendCalls`)**: Handled wallet-side per spec — wallet calls `format_calldata()` per inner call, joins `interpolatedIntent` strings with " and ". No batch splitting in the engine.
 - **`@.` container value priority**: Paths with `@.` prefix prefer container values over same-named function params (search from end)
 - **Duplicate selector rejection**: Wallets MUST reject descriptors with multiple keys sharing the same selector (spec normative MUST)

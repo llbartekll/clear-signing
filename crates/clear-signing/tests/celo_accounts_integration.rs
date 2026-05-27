@@ -29,7 +29,7 @@ fn value_bytes(hex_str: &str) -> Option<Vec<u8>> {
     if s == "0" || s.is_empty() {
         return None;
     }
-    let even = if s.len() % 2 != 0 {
+    let even = if !s.len().is_multiple_of(2) {
         format!("0{s}")
     } else {
         s.to_string()
