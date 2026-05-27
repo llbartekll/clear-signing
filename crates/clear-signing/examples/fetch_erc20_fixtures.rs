@@ -195,7 +195,7 @@ fn decode_hex(s: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         return Ok(Vec::new());
     }
     let padded;
-    let h = if trimmed.len() % 2 != 0 {
+    let h = if !trimmed.len().is_multiple_of(2) {
         padded = format!("0{trimmed}");
         &padded
     } else {

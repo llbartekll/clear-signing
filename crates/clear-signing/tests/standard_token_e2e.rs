@@ -86,7 +86,7 @@ fn decode_hex(s: &str) -> Vec<u8> {
         .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s);
-    if trimmed.len() % 2 != 0 {
+    if !trimmed.len().is_multiple_of(2) {
         let padded = format!("0{trimmed}");
         return hex::decode(&padded).expect("hex decode");
     }
