@@ -19,16 +19,17 @@ pub fn decode_signed(raw_hex: &str) -> Result<DecodedTx> {
     let type_byte = bytes[0];
     // Legacy tx (no type prefix) starts with an RLP list header >= 0xc0.
     if type_byte >= 0xc0 {
-        return Err(anyhow!(
-            "legacy transactions are not supported in v1 (rawTx starts with 0x{type_byte:02x}); only EIP-1559 type 0x02 is supported"
-        ));
+        return decode_legacy(&bytes);
     }
     if type_byte != 0x02 {
         return Err(anyhow!(
-            "unsupported tx type 0x{type_byte:02x} in v1 (only EIP-1559 type 0x02 is supported)"
+            "unsupported tx type 0x{type_byte:02x} (supported: legacy, EIP-1559 type 0x02)"
         ));
     }
-    let payload = &bytes[1..];
+    decode_eip1559(&bytes[1..])
+}
+
+fn decode_eip1559(payload: &[u8]) -> Result<DecodedTx> {
     let rlp = Rlp::new(payload);
     if !rlp.is_list() {
         return Err(anyhow!("EIP-1559 payload is not an RLP list"));
@@ -64,6 +65,65 @@ pub fn decode_signed(raw_hex: &str) -> Result<DecodedTx> {
         data,
         gas_limit,
         max_fee_per_gas,
+    })
+}
+
+fn decode_legacy(bytes: &[u8]) -> Result<DecodedTx> {
+    let rlp = Rlp::new(bytes);
+    if !rlp.is_list() {
+        return Err(anyhow!("legacy tx payload is not an RLP list"));
+    }
+    let item_count = rlp.item_count().context("rlp item count")?;
+    //   6 fields = pre-EIP-155 unsigned: [nonce, gasPrice, gasLimit, to, value, data]
+    //   9 fields = EIP-155 unsigned [..., chainId, 0, 0] OR signed [..., v, r, s]
+    if !matches!(item_count, 6 | 9) {
+        return Err(anyhow!(
+            "expected 6 (pre-EIP-155 unsigned) or 9 (EIP-155 / signed) RLP fields for legacy tx, got {item_count}"
+        ));
+    }
+
+    let _nonce: u64 = rlp.val_at(0).context("nonce")?;
+    let _gas_price: u128 = u128_at(&rlp, 1).context("gasPrice")?;
+    let gas_limit: u64 = rlp.val_at(2).context("gasLimit")?;
+    let to_bytes: Vec<u8> = rlp.val_at(3).context("to")?;
+    if to_bytes.len() != 20 {
+        return Err(anyhow!(
+            "`to` is not a 20-byte address (got {} bytes)",
+            to_bytes.len()
+        ));
+    }
+    let value: Vec<u8> = rlp.val_at(4).context("value")?;
+    let data: Vec<u8> = rlp.val_at(5).context("data")?;
+
+    let chain_id: u64 = if item_count == 9 {
+        // Disambiguate EIP-155 unsigned ([..., chainId, 0, 0]) vs signed ([..., v, r, s])
+        // by checking whether r and s are zero-length (RLP empty byte string).
+        let r_bytes: Vec<u8> = rlp.val_at(7).context("r")?;
+        let s_bytes: Vec<u8> = rlp.val_at(8).context("s")?;
+        if r_bytes.is_empty() && s_bytes.is_empty() {
+            rlp.val_at::<u64>(6).context("chainId")?
+        } else {
+            let v: u64 = rlp.val_at(6).context("v")?;
+            // EIP-155: chainId = (v - 35) / 2 when v >= 35. Pre-EIP-155 signed txs
+            // (v ∈ {27, 28}) don't encode chainId; assume mainnet.
+            if v >= 35 {
+                (v - 35) / 2
+            } else {
+                1
+            }
+        }
+    } else {
+        // Pre-EIP-155 unsigned (6 fields) — no chainId. Default to mainnet.
+        1
+    };
+
+    Ok(DecodedTx {
+        chain_id,
+        to: format!("0x{}", hex::encode(to_bytes)),
+        value,
+        data,
+        gas_limit,
+        max_fee_per_gas: 0,
     })
 }
 
