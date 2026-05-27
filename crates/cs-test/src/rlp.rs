@@ -87,7 +87,10 @@ fn decode_legacy(bytes: &[u8]) -> Result<DecodedTx> {
     let gas_limit: u64 = rlp.val_at(2).context("gasLimit")?;
     let to_bytes: Vec<u8> = rlp.val_at(3).context("to")?;
     if to_bytes.len() != 20 {
-        return Err(anyhow!("`to` is not a 20-byte address (got {} bytes)", to_bytes.len()));
+        return Err(anyhow!(
+            "`to` is not a 20-byte address (got {} bytes)",
+            to_bytes.len()
+        ));
     }
     let value: Vec<u8> = rlp.val_at(4).context("value")?;
     let data: Vec<u8> = rlp.val_at(5).context("data")?;
