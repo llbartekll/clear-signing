@@ -52,16 +52,6 @@ afterEvaluate {
                 groupId = 'com.github.llbartekll'
                 artifactId = 'clear-signing'
                 version = project.findProperty('version') ?: '0.0.0'
-
-                pom.withXml {
-                    def deps = asNode().appendNode('dependencies')
-                    def jna = deps.appendNode('dependency')
-                    jna.appendNode('groupId', 'net.java.dev.jna')
-                    jna.appendNode('artifactId', 'jna')
-                    jna.appendNode('version', '5.17.0')
-                    jna.appendNode('classifier', 'android')
-                    jna.appendNode('type', 'aar')
-                }
             }
         }
     }
