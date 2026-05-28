@@ -51,7 +51,10 @@ afterEvaluate {
                 from components.release
                 groupId = 'com.github.llbartekll'
                 artifactId = 'clear-signing'
-                version = project.findProperty('version') ?: '0.0.0'
+                // Match the consumer-side property name. `findProperty('version')`
+                // returns Gradle's default project version ("unspecified"), not
+                // null, so the previous `?:` fallback never triggered.
+                version = project.findProperty('clearSigningVersion') ?: '0.0.0'
             }
         }
     }
