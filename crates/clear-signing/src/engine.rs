@@ -53,6 +53,10 @@ pub enum DisplayEntry {
     Nested {
         label: String,
         intent: String,
+        /// Owner string for the inner call (the inner descriptor's `metadata.owner`),
+        /// when a matching descriptor was found. `None` for raw/fallback frames where
+        /// no inner descriptor matched.
+        owner: Option<String>,
         entries: Vec<DisplayEntry>,
     },
 }
@@ -1399,6 +1403,7 @@ async fn render_calldata_field(
             return Ok(DisplayEntry::Nested {
                 label: label.to_string(),
                 intent: "Unknown".to_string(),
+                owner: None,
                 entries: vec![DisplayEntry::Item(DisplayItem {
                     label: "Raw data".to_string(),
                     value: raw,
@@ -1420,6 +1425,7 @@ async fn render_calldata_field(
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
+            owner: None,
             entries: vec![DisplayEntry::Item(DisplayItem {
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(inner_calldata)),
@@ -1455,6 +1461,7 @@ async fn render_calldata_field(
         return Ok(DisplayEntry::Nested {
             label: label.to_string(),
             intent: "Unknown".to_string(),
+            owner: None,
             entries: vec![DisplayEntry::Item(DisplayItem {
                 label: "Raw data".to_string(),
                 value: format!("0x{}", hex::encode(inner_calldata)),
@@ -1563,6 +1570,7 @@ async fn render_calldata_field(
     Ok(DisplayEntry::Nested {
         label: label.to_string(),
         intent,
+        owner: inner_descriptor.metadata.owner.clone(),
         entries: inner_entries,
     })
 }
@@ -1592,6 +1600,7 @@ pub(crate) fn build_raw_nested(label: &str, calldata: &[u8]) -> DisplayEntry {
     DisplayEntry::Nested {
         label: label.to_string(),
         intent: format!("Unknown function {}", selector),
+        owner: None,
         entries,
     }
 }
@@ -1783,7 +1792,7 @@ fn eip55_checksum(addr: &[u8; 20]) -> String {
     let mut result = String::with_capacity(42);
     result.push_str("0x");
     for (i, c) in hex_addr.chars().enumerate() {
-        let hash_nibble = if i % 2 == 0 {
+        let hash_nibble = if i.is_multiple_of(2) {
             (hash[i / 2] >> 4) & 0x0f
         } else {
             hash[i / 2] & 0x0f

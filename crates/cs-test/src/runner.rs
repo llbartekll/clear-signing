@@ -1,14 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use clear_signing::TransactionContext;
-use clear_signing::{format_calldata, format_typed_data};
 use clear_signing::eip712::TypedData;
 use clear_signing::merge::merge_descriptors;
 use clear_signing::resolver::ResolvedDescriptor;
 use clear_signing::types::descriptor::Descriptor;
+use clear_signing::TransactionContext;
+use clear_signing::{format_calldata, format_typed_data};
 
-use crate::compare::{compare, CaseResult};
+use crate::compare::{case_error, compare, CaseResult};
 use crate::provider::StubDataProvider;
 use crate::rlp::decode_signed;
 use crate::schema::{DataProviderStub, TestCase, TestFile};
@@ -45,11 +45,12 @@ pub async fn run_file(path: &Path, case_filter: Option<&str>) -> Result<Vec<Case
 
     let mut results = Vec::new();
     for case in matching {
-        let provider_stub = DataProviderStub::merged(file.data_provider.as_ref(), case.case_provider());
+        let provider_stub =
+            DataProviderStub::merged(file.data_provider.as_ref(), case.case_provider());
         let provider = StubDataProvider::new(provider_stub);
         let result = match case {
-            TestCase::Calldata(c) => run_calldata(c, &descriptor, &provider).await?,
-            TestCase::Eip712(c) => run_eip712(c, &descriptor, &provider).await?,
+            TestCase::Calldata(c) => run_calldata(c, &descriptor, &provider).await,
+            TestCase::Eip712(c) => run_eip712(c, &descriptor, &provider).await,
         };
         results.push(result);
     }
@@ -60,9 +61,11 @@ async fn run_calldata(
     case: &crate::schema::CalldataCase,
     descriptor: &Descriptor,
     provider: &StubDataProvider,
-) -> Result<CaseResult> {
-    let decoded = decode_signed(&case.raw_tx)
-        .with_context(|| format!("decode rawTx for case {:?}", case.description))?;
+) -> CaseResult {
+    let decoded = match decode_signed(&case.raw_tx) {
+        Ok(d) => d,
+        Err(e) => return case_error(&case.description, format!("decode rawTx: {e:#}")),
+    };
 
     let descriptors = vec![ResolvedDescriptor {
         descriptor: descriptor.clone(),
@@ -79,20 +82,21 @@ async fn run_calldata(
         implementation_address: None,
     };
 
-    let outcome = format_calldata(&descriptors, &tx, provider)
-        .await
-        .map_err(|e| anyhow::anyhow!("format_calldata failed: {e:?}"))?;
-
-    Ok(compare(&case.description, &case.expected, &outcome))
+    match format_calldata(&descriptors, &tx, provider).await {
+        Ok(outcome) => compare(&case.description, &case.expected, &outcome),
+        Err(e) => case_error(&case.description, format!("format_calldata: {e:?}")),
+    }
 }
 
 async fn run_eip712(
     case: &crate::schema::Eip712Case,
     descriptor: &Descriptor,
     provider: &StubDataProvider,
-) -> Result<CaseResult> {
-    let typed: TypedData = serde_json::from_value(case.data.clone())
-        .with_context(|| format!("parse typed data for case {:?}", case.description))?;
+) -> CaseResult {
+    let typed: TypedData = match serde_json::from_value(case.data.clone()) {
+        Ok(t) => t,
+        Err(e) => return case_error(&case.description, format!("parse typed data: {e}")),
+    };
 
     let chain_id = typed.domain.chain_id.unwrap_or(1);
     let verifying = typed
@@ -107,11 +111,10 @@ async fn run_eip712(
         address: verifying,
     }];
 
-    let outcome = format_typed_data(&descriptors, &typed, provider)
-        .await
-        .map_err(|e| anyhow::anyhow!("format_typed_data failed: {e:?}"))?;
-
-    Ok(compare(&case.description, &case.expected, &outcome))
+    match format_typed_data(&descriptors, &typed, provider).await {
+        Ok(outcome) => compare(&case.description, &case.expected, &outcome),
+        Err(e) => case_error(&case.description, format!("format_typed_data: {e:?}")),
+    }
 }
 
 fn resolve_descriptor_path(test_path: &Path, descriptor_rel: &Path) -> std::path::PathBuf {
@@ -132,7 +135,10 @@ fn resolve_includes(descriptor_json: &str, descriptor_path: &Path, depth: u8) ->
         ));
     }
     let value: serde_json::Value = serde_json::from_str(descriptor_json)?;
-    let include_ref = value.get("includes").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let include_ref = value
+        .get("includes")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     let Some(rel) = include_ref else {
         return Ok(descriptor_json.to_string());
     };

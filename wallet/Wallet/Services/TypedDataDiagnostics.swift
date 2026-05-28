@@ -220,7 +220,7 @@ struct TypedDataCapture: Identifiable, Codable {
                 return "\(item.label): \(item.value)"
             case .group(let label, _, let items):
                 return "\(label): \(items.count) item(s)"
-            case .nested(let label, _, _):
+            case .nested(let label, _, _, _):
                 return "\(label): nested"
             }
         }

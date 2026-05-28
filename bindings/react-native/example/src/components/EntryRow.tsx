@@ -31,11 +31,12 @@ export function EntryRow({entry, depth = 0}: Props) {
     );
   }
 
-  const {label, intent, entries} = entry.inner;
+  const {label, intent, owner, entries} = entry.inner;
   return (
     <View style={[styles.nestedBlock, {marginLeft: indent}]}>
       <Text style={styles.nestedLabel}>{label}</Text>
       <Text style={styles.nestedIntent}>{intent}</Text>
+      {!!owner && <Text style={styles.nestedOwner}>by {owner}</Text>}
       {entries.map((child, i) => (
         <EntryRow key={`${label}:${i}`} entry={child} depth={depth + 1} />
       ))}
@@ -95,6 +96,11 @@ const styles = StyleSheet.create({
   nestedIntent: {
     color: '#111',
     fontSize: 14,
+    marginBottom: 4,
+  },
+  nestedOwner: {
+    color: '#666',
+    fontSize: 12,
     marginBottom: 4,
   },
 });
