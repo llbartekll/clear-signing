@@ -73,7 +73,7 @@ pub async fn format_calldata(
 ) -> Result<FormatOutcome, FormatFailure> {
     if tx.calldata.len() < 4 {
         return Err(FormatFailure::InvalidInput {
-            message: error::DecodeError::CalldataTooShort {
+            detail: error::DecodeError::CalldataTooShort {
                 expected: 4,
                 actual: tx.calldata.len(),
             }
@@ -107,7 +107,7 @@ pub async fn format_calldata(
                 ));
             }
             return Err(FormatFailure::InvalidDescriptor {
-                message: format!(
+                detail: format!(
                     "no outer descriptor matches chain_id={} address={}",
                     tx.chain_id, match_address
                 ),
@@ -139,7 +139,7 @@ pub async fn format_calldata(
     // Decode calldata using the parsed signature
     let mut decoded =
         decoder::decode_calldata(&sig, tx.calldata).map_err(|err| FormatFailure::InvalidInput {
-            message: err.to_string(),
+            detail: err.to_string(),
             retryable: false,
         })?;
 
@@ -342,7 +342,7 @@ pub async fn format_typed_data(
                 ));
             }
             return Err(FormatFailure::InvalidDescriptor {
-                message,
+                detail: message,
                 retryable: false,
             });
         }

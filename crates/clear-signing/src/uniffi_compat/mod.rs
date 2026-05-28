@@ -26,7 +26,7 @@ async fn get_registry_source() -> Result<&'static GitHubRegistrySource, FormatFa
             GitHubRegistrySource::from_registry(DEFAULT_REGISTRY_URL)
                 .await
                 .map_err(|e| FormatFailure::ResolutionFailed {
-                    message: format!("failed to initialize registry: {e}"),
+                    detail: format!("failed to initialize registry: {e}"),
                     retryable: true,
                 })
         })
@@ -488,14 +488,14 @@ fn resolved_descriptor_json_outcome(
 
 fn invalid_input(message: String) -> FormatFailure {
     FormatFailure::InvalidInput {
-        message,
+        detail: message,
         retryable: false,
     }
 }
 
 fn invalid_descriptor(message: String) -> FormatFailure {
     FormatFailure::InvalidDescriptor {
-        message,
+        detail: message,
         retryable: false,
     }
 }
@@ -1157,7 +1157,9 @@ mod tests {
             .expect_err("duplicate selectors must surface the real error");
 
         match err {
-            FormatFailure::InvalidDescriptor { message, .. } => {
+            FormatFailure::InvalidDescriptor {
+                detail: message, ..
+            } => {
                 assert!(
                     message.contains("duplicate selectors"),
                     "expected duplicate-selector message, got: {message}"

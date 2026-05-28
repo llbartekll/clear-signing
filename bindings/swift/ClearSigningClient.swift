@@ -44,13 +44,17 @@ public extension DescriptorResolutionOutcome {
 }
 
 public extension FormatFailure {
+    // Field is named `detail` in the UniFFI cases (renamed from `message`
+    // to avoid a `Throwable.message` collision in the generated Kotlin
+    // bindings). Kept as `.message` here for source compatibility with
+    // existing Swift callers.
     var message: String {
         switch self {
-        case .InvalidInput(let message, _),
-                .InvalidDescriptor(let message, _),
-                .ResolutionFailed(let message, _),
-                .Internal(let message, _):
-            return message
+        case .InvalidInput(let detail, _),
+                .InvalidDescriptor(let detail, _),
+                .ResolutionFailed(let detail, _),
+                .Internal(let detail, _):
+            return detail
         }
     }
 

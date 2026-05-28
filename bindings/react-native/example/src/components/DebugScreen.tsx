@@ -56,7 +56,7 @@ export function DebugScreen() {
       } catch (e: any) {
         if (cancelled) return;
         const inner = e?.inner;
-        const message = inner?.message ?? e?.message ?? String(e);
+        const message = inner?.detail ?? e?.message ?? String(e);
         setResult({kind: 'error', message, retryable: inner?.retryable});
       }
     })();
