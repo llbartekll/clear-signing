@@ -215,7 +215,7 @@ struct ClearSigningService {
         if let failure = error as? FormatFailure {
             return failure
         }
-        return .Internal(message: error.localizedDescription, retryable: false)
+        return .Internal(detail: error.localizedDescription, retryable: false)
     }
 
     private static func describe(_ outcome: FormatOutcome) -> String {
