@@ -14,29 +14,6 @@ struct ClearSigningService {
         self.client = ClearSigningClient(dataProvider: dataProvider)
     }
 
-    /// Format a contract call using the ERC-7730 library.
-    /// Resolves all descriptors (outer + nested calldata) from the GitHub registry, then formats.
-    func formatCalldata(
-        chainId: UInt64,
-        to: String,
-        calldata: String,
-        value: String?,
-        from: String?
-    ) async -> Result<FormatOutcome, FormatFailure> {
-        do {
-            let outcome = try await client.formatCalldata(
-                chainId: chainId,
-                to: to,
-                calldataHex: calldata,
-                valueHex: value,
-                fromAddress: from
-            )
-            return .success(outcome)
-        } catch {
-            return .failure(Self.coerceFailure(error))
-        }
-    }
-
     func formatCalldataDetailed(
         chainId: UInt64,
         to: String,
@@ -128,18 +105,6 @@ struct ClearSigningService {
                 selectedDescriptorAddress: matchedAddress,
                 usedImplementationAddress: usedImplementationAddress
             )
-        }
-    }
-
-    /// Format EIP-712 typed data.
-    /// Resolves all descriptors (outer + nested calldata) from the GitHub registry, then formats.
-    /// Automatically detects proxies via dataProvider.getImplementationAddress().
-    func formatTypedData(typedDataJson: String) async -> Result<FormatOutcome, FormatFailure> {
-        do {
-            let outcome = try await client.formatTypedData(typedDataJson: typedDataJson)
-            return .success(outcome)
-        } catch {
-            return .failure(Self.coerceFailure(error))
         }
     }
 
