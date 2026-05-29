@@ -372,7 +372,7 @@ type TokenMetaFfi = {
 
 Async entrypoints reject with `FormatFailure`. Catch and discriminate by `tag`.
 
-Variants (each `inner: { message: string, retryable: boolean }`):
+Variants (each `inner: { detail: string, retryable: boolean }`):
 - `FormatFailure_Tags.InvalidInput`
 - `FormatFailure_Tags.InvalidDescriptor`
 - `FormatFailure_Tags.ResolutionFailed`
@@ -386,11 +386,11 @@ try {
   // handle outcome
 } catch (e: any) {
   if (e?.tag === FormatFailure_Tags.ResolutionFailed) {
-    showResolutionError(e.inner.message, e.inner.retryable);
+    showResolutionError(e.inner.detail, e.inner.retryable);
   } else if (e?.tag === FormatFailure_Tags.InvalidInput) {
-    showBlockingError(e.inner.message);
+    showBlockingError(e.inner.detail);
   } else {
-    showBlockingError(e?.message ?? String(e));
+    showBlockingError(e?.inner?.detail ?? e?.message ?? String(e));
   }
 }
 ```

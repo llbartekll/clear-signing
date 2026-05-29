@@ -39,12 +39,15 @@ val DescriptorResolutionOutcome.descriptors: List<String>
         DescriptorResolutionOutcome.NotFound -> emptyList()
     }
 
+// `detail` is the wire-level field on each variant; `message` is the
+// formatted `Throwable.message` string set by UniFFI. We expose `detail`
+// so callers get the original error text without the variant prefix.
 val FormatFailure.failureMessage: String
     get() = when (this) {
-        is FormatFailure.InvalidInput -> message
-        is FormatFailure.InvalidDescriptor -> message
-        is FormatFailure.ResolutionFailed -> message
-        is FormatFailure.Internal -> message
+        is FormatFailure.InvalidInput -> detail
+        is FormatFailure.InvalidDescriptor -> detail
+        is FormatFailure.ResolutionFailed -> detail
+        is FormatFailure.Internal -> detail
     }
 
 val FormatFailure.retryable: Boolean

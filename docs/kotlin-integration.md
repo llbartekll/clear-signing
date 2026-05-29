@@ -77,6 +77,8 @@ cd android
 ./gradlew :clear-signing:assembleRelease :clear-signing:publishReleasePublicationToMavenLocal
 ```
 
+The publication is coordinate `com.github.llbartekll:clear-signing:0.0.0` by default. Pass `-PclearSigningVersion=X.Y.Z` to override the version; the consumer-smoke app reads the same property from its `gradle.properties`.
+
 The repo also contains a smoke consumer at [android-consumer-smoke/app/src/main/java/com/clearsigning/smoke/Smoke.kt](../android-consumer-smoke/app/src/main/java/com/clearsigning/smoke/Smoke.kt) that references the client and provider types.
 
 ## Integration Flow
@@ -301,10 +303,12 @@ Fields:
 Kotlin client methods can throw `FormatFailure`.
 
 Cases:
-- `FormatFailure.InvalidInput(message, retryable)`
-- `FormatFailure.InvalidDescriptor(message, retryable)`
-- `FormatFailure.ResolutionFailed(message, retryable)`
-- `FormatFailure.Internal(message, retryable)`
+- `FormatFailure.InvalidInput(detail, retryable)`
+- `FormatFailure.InvalidDescriptor(detail, retryable)`
+- `FormatFailure.ResolutionFailed(detail, retryable)`
+- `FormatFailure.Internal(detail, retryable)`
+
+Each variant carries `detail: String` (the underlying error text) and `retryable: Boolean`. The `failureMessage` extension on `FormatFailure` returns `detail` regardless of variant. `Throwable.message` is also set (it carries a formatted `detail=…, retryable=…` summary) — prefer `failureMessage` for user-facing surfaces.
 
 Example:
 
@@ -314,10 +318,10 @@ try {
     // handle outcome
 } catch (failure: FormatFailure) {
     when (failure) {
-        is FormatFailure.InvalidInput -> showBlockingError(failure.message)
-        is FormatFailure.ResolutionFailed -> showResolutionError(failure.message, failure.retryable)
-        is FormatFailure.InvalidDescriptor -> showBlockingError(failure.message)
-        is FormatFailure.Internal -> showBlockingError(failure.message)
+        is FormatFailure.InvalidInput -> showBlockingError(failure.failureMessage)
+        is FormatFailure.ResolutionFailed -> showResolutionError(failure.failureMessage, failure.retryable)
+        is FormatFailure.InvalidDescriptor -> showBlockingError(failure.failureMessage)
+        is FormatFailure.Internal -> showBlockingError(failure.failureMessage)
     }
 }
 ```

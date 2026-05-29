@@ -25,6 +25,11 @@ name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 required-features = ["uniffi"]
 
+[[example]]
+name = "fetch_erc20_fixtures"
+path = "examples/fetch_erc20_fixtures.rs"
+required-features = ["github-registry"]
+
 [features]
 default = []
 uniffi = ["dep:uniffi", "uniffi/cli"]

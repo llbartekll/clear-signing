@@ -292,10 +292,12 @@ Fields:
 Swift client methods throw `FormatFailure`.
 
 Cases:
-- `InvalidInput(message:retryable:)`
-- `InvalidDescriptor(message:retryable:)`
-- `ResolutionFailed(message:retryable:)`
-- `Internal(message:retryable:)`
+- `InvalidInput(detail:retryable:)`
+- `InvalidDescriptor(detail:retryable:)`
+- `ResolutionFailed(detail:retryable:)`
+- `Internal(detail:retryable:)`
+
+`ClearSigningClient` extends `FormatFailure` with `var message: String` and `var retryable: Bool` accessors that work across every variant.
 
 Example:
 
@@ -305,10 +307,10 @@ do {
     // handle outcome
 } catch let failure as FormatFailure {
     switch failure {
-    case .InvalidInput(let message, _):
-        showBlockingError(message)
-    case .ResolutionFailed(let message, let retryable):
-        showResolutionError(message: message, retryable: retryable)
+    case .InvalidInput(let detail, _):
+        showBlockingError(detail)
+    case .ResolutionFailed(let detail, let retryable):
+        showResolutionError(message: detail, retryable: retryable)
     default:
         showBlockingError(failure.message)
     }

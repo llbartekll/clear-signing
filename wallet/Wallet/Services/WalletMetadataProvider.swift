@@ -16,6 +16,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
     }
 
     private let seedTokenStore: SeedTokenStore
+    private let seedContractStore: SeedContractStore
     private let memoryCache: InMemoryResolutionCache
     private let persistentCache: PersistentResolutionCache
     private let alchemyClient: AlchemyClient?
@@ -26,6 +27,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
     static func live(bundle: Bundle = .main) -> WalletMetadataProvider {
         WalletMetadataProvider(
             seedTokenStore: SeedTokenStore(bundle: bundle),
+            seedContractStore: SeedContractStore(bundle: bundle),
             memoryCache: InMemoryResolutionCache(),
             persistentCache: PersistentResolutionCache(userDefaults: .standard),
             alchemyClient: AppConfig.alchemyAPIKey.map { AlchemyClient(apiKey: $0) },
@@ -37,6 +39,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
 
     init(
         seedTokenStore: SeedTokenStore,
+        seedContractStore: SeedContractStore = SeedContractStore(data: Data()),
         memoryCache: InMemoryResolutionCache,
         persistentCache: PersistentResolutionCache,
         alchemyClient: AlchemyClient?,
@@ -45,6 +48,7 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         now: @escaping () -> Date
     ) {
         self.seedTokenStore = seedTokenStore
+        self.seedContractStore = seedContractStore
         self.memoryCache = memoryCache
         self.persistentCache = persistentCache
         self.alchemyClient = alchemyClient
@@ -64,9 +68,26 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
     }
 
     func resolveLocalName(address: String, chainId: UInt64, types: [String]? = nil) -> String? {
-        guard let resolved = normalizedAddress(address),
-              let wallet = normalizedAddress(walletAddressProvider()) else { return nil }
-        return resolved == wallet ? Self.localWalletName : nil
+        guard let resolved = normalizedAddress(address) else { return nil }
+
+        // 1. User's own wallet wins over any known-contract entry.
+        if let wallet = normalizedAddress(walletAddressProvider()), resolved == wallet {
+            return Self.localWalletName
+        }
+
+        // 2. Known DeFi contract from the bundled seed — gated on the library's
+        //    `types` hint so an explicit EOA-only lookup skips the contract table.
+        if Self.consultsContractStore(for: types),
+           let known = seedContractStore.contract(chainId: chainId, address: resolved) {
+            return known.name
+        }
+
+        return nil
+    }
+
+    private static func consultsContractStore(for types: [String]?) -> Bool {
+        guard let types else { return true }
+        return types.contains { $0.lowercased() == "contract" }
     }
 
     func resolveNftCollectionName(collectionAddress: String, chainId: UInt64) -> String? {

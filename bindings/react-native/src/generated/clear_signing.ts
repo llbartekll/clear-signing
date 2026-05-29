@@ -800,7 +800,7 @@ export const DisplayEntry = (() => {
 
     type Nested__interface = {
         tag: DisplayEntry_Tags.Nested;
-        inner: Readonly<{label: string; intent: string; owner?: string; entries: Array<DisplayEntry>}>
+        inner: Readonly<{label: string; intent: string; owner: string | undefined; entries: Array<DisplayEntry>}>
     };
 
     
@@ -811,13 +811,23 @@ export const DisplayEntry = (() => {
          */
         readonly [uniffiTypeNameSymbol] = "DisplayEntry";
         readonly tag = DisplayEntry_Tags.Nested;
-        readonly inner: Readonly<{label: string; intent: string; owner?: string; entries: Array<DisplayEntry>}>;
-        constructor(inner: { label: string, intent: string, owner?: string, entries: Array<DisplayEntry> }) {
+        readonly inner: Readonly<{label: string; intent: string; owner: string | undefined; entries: Array<DisplayEntry>}>;
+        constructor(inner: { label: string, intent: string, 
+        /**
+         * Owner string for the inner call (the inner descriptor's `metadata.owner`),
+         * when a matching descriptor was found. `None` for raw/fallback frames where
+         * no inner descriptor matched.
+         */owner: string | undefined, entries: Array<DisplayEntry> }) {
             super("DisplayEntry", "Nested");
             this.inner = Object.freeze(inner);
         }
 
-        static new(inner: { label: string, intent: string, owner?: string, entries: Array<DisplayEntry> }): Nested_ {
+        static new(inner: { label: string, intent: string, 
+        /**
+         * Owner string for the inner call (the inner descriptor's `metadata.owner`),
+         * when a matching descriptor was found. `None` for raw/fallback frames where
+         * no inner descriptor matched.
+         */owner: string | undefined, entries: Array<DisplayEntry> }): Nested_ {
             return new Nested_(inner);
         }
 
@@ -982,7 +992,7 @@ export const FormatFailure = (() => {
 
     type InvalidInput__interface = {
         tag: FormatFailure_Tags.InvalidInput;
-        inner: Readonly<{message: string; retryable: boolean}>
+        inner: Readonly<{detail: string; retryable: boolean}>
     };
 
     
@@ -993,13 +1003,13 @@ export const FormatFailure = (() => {
          */
         readonly [uniffiTypeNameSymbol] = "FormatFailure";
         readonly tag = FormatFailure_Tags.InvalidInput;
-        readonly inner: Readonly<{message: string; retryable: boolean}>;
-        constructor(inner: { message: string, retryable: boolean }) {
+        readonly inner: Readonly<{detail: string; retryable: boolean}>;
+        constructor(inner: { detail: string, retryable: boolean }) {
             super("FormatFailure", "InvalidInput");
             this.inner = Object.freeze(inner);
         }
 
-        static new(inner: { message: string, retryable: boolean }): InvalidInput_ {
+        static new(inner: { detail: string, retryable: boolean }): InvalidInput_ {
             return new InvalidInput_(inner);
         }
 
@@ -1013,7 +1023,7 @@ export const FormatFailure = (() => {
             return InvalidInput_.instanceOf(obj);
         }
 
-        static getInner(obj: InvalidInput_): Readonly<{message: string; retryable: boolean}> {
+        static getInner(obj: InvalidInput_): Readonly<{detail: string; retryable: boolean}> {
             return obj.inner;
         }
 
@@ -1022,7 +1032,7 @@ export const FormatFailure = (() => {
 
     type InvalidDescriptor__interface = {
         tag: FormatFailure_Tags.InvalidDescriptor;
-        inner: Readonly<{message: string; retryable: boolean}>
+        inner: Readonly<{detail: string; retryable: boolean}>
     };
 
     
@@ -1033,13 +1043,13 @@ export const FormatFailure = (() => {
          */
         readonly [uniffiTypeNameSymbol] = "FormatFailure";
         readonly tag = FormatFailure_Tags.InvalidDescriptor;
-        readonly inner: Readonly<{message: string; retryable: boolean}>;
-        constructor(inner: { message: string, retryable: boolean }) {
+        readonly inner: Readonly<{detail: string; retryable: boolean}>;
+        constructor(inner: { detail: string, retryable: boolean }) {
             super("FormatFailure", "InvalidDescriptor");
             this.inner = Object.freeze(inner);
         }
 
-        static new(inner: { message: string, retryable: boolean }): InvalidDescriptor_ {
+        static new(inner: { detail: string, retryable: boolean }): InvalidDescriptor_ {
             return new InvalidDescriptor_(inner);
         }
 
@@ -1053,7 +1063,7 @@ export const FormatFailure = (() => {
             return InvalidDescriptor_.instanceOf(obj);
         }
 
-        static getInner(obj: InvalidDescriptor_): Readonly<{message: string; retryable: boolean}> {
+        static getInner(obj: InvalidDescriptor_): Readonly<{detail: string; retryable: boolean}> {
             return obj.inner;
         }
 
@@ -1062,7 +1072,7 @@ export const FormatFailure = (() => {
 
     type ResolutionFailed__interface = {
         tag: FormatFailure_Tags.ResolutionFailed;
-        inner: Readonly<{message: string; retryable: boolean}>
+        inner: Readonly<{detail: string; retryable: boolean}>
     };
 
     
@@ -1073,13 +1083,13 @@ export const FormatFailure = (() => {
          */
         readonly [uniffiTypeNameSymbol] = "FormatFailure";
         readonly tag = FormatFailure_Tags.ResolutionFailed;
-        readonly inner: Readonly<{message: string; retryable: boolean}>;
-        constructor(inner: { message: string, retryable: boolean }) {
+        readonly inner: Readonly<{detail: string; retryable: boolean}>;
+        constructor(inner: { detail: string, retryable: boolean }) {
             super("FormatFailure", "ResolutionFailed");
             this.inner = Object.freeze(inner);
         }
 
-        static new(inner: { message: string, retryable: boolean }): ResolutionFailed_ {
+        static new(inner: { detail: string, retryable: boolean }): ResolutionFailed_ {
             return new ResolutionFailed_(inner);
         }
 
@@ -1093,7 +1103,7 @@ export const FormatFailure = (() => {
             return ResolutionFailed_.instanceOf(obj);
         }
 
-        static getInner(obj: ResolutionFailed_): Readonly<{message: string; retryable: boolean}> {
+        static getInner(obj: ResolutionFailed_): Readonly<{detail: string; retryable: boolean}> {
             return obj.inner;
         }
 
@@ -1102,7 +1112,7 @@ export const FormatFailure = (() => {
 
     type Internal__interface = {
         tag: FormatFailure_Tags.Internal;
-        inner: Readonly<{message: string; retryable: boolean}>
+        inner: Readonly<{detail: string; retryable: boolean}>
     };
 
     
@@ -1113,13 +1123,13 @@ export const FormatFailure = (() => {
          */
         readonly [uniffiTypeNameSymbol] = "FormatFailure";
         readonly tag = FormatFailure_Tags.Internal;
-        readonly inner: Readonly<{message: string; retryable: boolean}>;
-        constructor(inner: { message: string, retryable: boolean }) {
+        readonly inner: Readonly<{detail: string; retryable: boolean}>;
+        constructor(inner: { detail: string, retryable: boolean }) {
             super("FormatFailure", "Internal");
             this.inner = Object.freeze(inner);
         }
 
-        static new(inner: { message: string, retryable: boolean }): Internal_ {
+        static new(inner: { detail: string, retryable: boolean }): Internal_ {
             return new Internal_(inner);
         }
 
@@ -1133,7 +1143,7 @@ export const FormatFailure = (() => {
             return Internal_.instanceOf(obj);
         }
 
-        static getInner(obj: Internal_): Readonly<{message: string; retryable: boolean}> {
+        static getInner(obj: Internal_): Readonly<{detail: string; retryable: boolean}> {
             return obj.inner;
         }
 
@@ -1166,10 +1176,10 @@ const FfiConverterTypeFormatFailure = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             switch (ordinalConverter.read(from)) {
-                case 1: return new FormatFailure.InvalidInput({message: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
-                case 2: return new FormatFailure.InvalidDescriptor({message: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
-                case 3: return new FormatFailure.ResolutionFailed({message: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
-                case 4: return new FormatFailure.Internal({message: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
+                case 1: return new FormatFailure.InvalidInput({detail: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
+                case 2: return new FormatFailure.InvalidDescriptor({detail: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
+                case 3: return new FormatFailure.ResolutionFailed({detail: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
+                case 4: return new FormatFailure.Internal({detail: FfiConverterString.read(from), retryable: FfiConverterBool.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -1178,28 +1188,28 @@ const FfiConverterTypeFormatFailure = (() => {
                 case FormatFailure_Tags.InvalidInput: {
                     ordinalConverter.write(1, into);
                     const inner = value.inner;
-                    FfiConverterString.write(inner.message, into);
+                    FfiConverterString.write(inner.detail, into);
                     FfiConverterBool.write(inner.retryable, into);
                     return;
                 }
                 case FormatFailure_Tags.InvalidDescriptor: {
                     ordinalConverter.write(2, into);
                     const inner = value.inner;
-                    FfiConverterString.write(inner.message, into);
+                    FfiConverterString.write(inner.detail, into);
                     FfiConverterBool.write(inner.retryable, into);
                     return;
                 }
                 case FormatFailure_Tags.ResolutionFailed: {
                     ordinalConverter.write(3, into);
                     const inner = value.inner;
-                    FfiConverterString.write(inner.message, into);
+                    FfiConverterString.write(inner.detail, into);
                     FfiConverterBool.write(inner.retryable, into);
                     return;
                 }
                 case FormatFailure_Tags.Internal: {
                     ordinalConverter.write(4, into);
                     const inner = value.inner;
-                    FfiConverterString.write(inner.message, into);
+                    FfiConverterString.write(inner.detail, into);
                     FfiConverterBool.write(inner.retryable, into);
                     return;
                 }
@@ -1213,28 +1223,28 @@ const FfiConverterTypeFormatFailure = (() => {
                 case FormatFailure_Tags.InvalidInput: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(1);
-                    size += FfiConverterString.allocationSize(inner.message);
+                    size += FfiConverterString.allocationSize(inner.detail);
                     size += FfiConverterBool.allocationSize(inner.retryable);
                     return size;
                 }
                 case FormatFailure_Tags.InvalidDescriptor: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(2);
-                    size += FfiConverterString.allocationSize(inner.message);
+                    size += FfiConverterString.allocationSize(inner.detail);
                     size += FfiConverterBool.allocationSize(inner.retryable);
                     return size;
                 }
                 case FormatFailure_Tags.ResolutionFailed: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(3);
-                    size += FfiConverterString.allocationSize(inner.message);
+                    size += FfiConverterString.allocationSize(inner.detail);
                     size += FfiConverterBool.allocationSize(inner.retryable);
                     return size;
                 }
                 case FormatFailure_Tags.Internal: {
                     const inner = value.inner;
                     let size = ordinalConverter.allocationSize(4);
-                    size += FfiConverterString.allocationSize(inner.message);
+                    size += FfiConverterString.allocationSize(inner.detail);
                     size += FfiConverterBool.allocationSize(inner.retryable);
                     return size;
                 }

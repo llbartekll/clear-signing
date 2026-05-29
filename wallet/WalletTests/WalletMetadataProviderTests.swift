@@ -246,6 +246,186 @@ final class WalletMetadataProviderTests: XCTestCase {
         XCTAssertNil(provider.resolveToken(chainId: 1, address: tokenAddress))
     }
 
+    // MARK: - Known-contract resolution
+
+    /// Optimism Aave V3 Pool address from the bug report. Locks the exact
+    /// rendering we promised in the plan ("Aave V3 Pool" on chain 10).
+    private let optimismAavePool = "0x794a61358d6845594f94dc1db02a252b5b4814ad"
+    private let mainnetAavePool = "0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2"
+    private let oneInchV6Router = "0x111111125421ca6dc452d289314280a0f8842a65"
+
+    private func contractStore(
+        entries: [String: ContractMetadata]
+    ) -> SeedContractStore {
+        let data = try! JSONEncoder().encode(entries)
+        return SeedContractStore(data: data)
+    }
+
+    func testResolveLocalNameReturnsKnownContractName() {
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 10, address: optimismAavePool):
+                        ContractMetadata(name: "Aave V3 Pool"),
+                ]
+            )
+        )
+        XCTAssertEqual(
+            provider.resolveLocalName(address: optimismAavePool, chainId: 10),
+            "Aave V3 Pool"
+        )
+    }
+
+    func testResolveLocalNameKeyedPerChain() {
+        // Same universal address on two chains — both should resolve via their own key.
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 1, address: oneInchV6Router):
+                        ContractMetadata(name: "1inch Aggregation Router V6"),
+                    LookupKey.contract(chainId: 42161, address: oneInchV6Router):
+                        ContractMetadata(name: "1inch Aggregation Router V6"),
+                ]
+            )
+        )
+        XCTAssertEqual(
+            provider.resolveLocalName(address: oneInchV6Router, chainId: 1),
+            "1inch Aggregation Router V6"
+        )
+        XCTAssertEqual(
+            provider.resolveLocalName(address: oneInchV6Router, chainId: 42161),
+            "1inch Aggregation Router V6"
+        )
+    }
+
+    func testResolveLocalNameWalletWinsOverKnownContract() {
+        // Pathological-but-instructive setup: the user's wallet address is also
+        // bundled as a "known contract". The wallet-self check must win, so the
+        // user never sees their own wallet labeled as a protocol contract.
+        let conflictAddress = walletAddress
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 1, address: conflictAddress):
+                        ContractMetadata(name: "Some Protocol"),
+                ]
+            )
+        )
+        XCTAssertEqual(
+            provider.resolveLocalName(address: conflictAddress, chainId: 1),
+            WalletMetadataProvider.localWalletName
+        )
+    }
+
+    func testResolveLocalNameReturnsNilForUnknownContract() {
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 10, address: optimismAavePool):
+                        ContractMetadata(name: "Aave V3 Pool"),
+                ]
+            )
+        )
+        // Different address, supported chain.
+        XCTAssertNil(
+            provider.resolveLocalName(
+                address: "0x0000000000000000000000000000000000000042",
+                chainId: 10
+            )
+        )
+        // Mainnet Aave Pool address, but on the wrong chain.
+        XCTAssertNil(
+            provider.resolveLocalName(address: mainnetAavePool, chainId: 10)
+        )
+    }
+
+    func testResolveLocalNameIsCaseInsensitive() {
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 10, address: optimismAavePool):
+                        ContractMetadata(name: "Aave V3 Pool"),
+                ]
+            )
+        )
+        // Pass the uppercase / EIP-55 checksummed form; lookup normalizes to
+        // lowercase before keying.
+        XCTAssertEqual(
+            provider.resolveLocalName(
+                address: "0x794A61358D6845594F94DC1DB02A252B5B4814AD",
+                chainId: 10
+            ),
+            "Aave V3 Pool"
+        )
+    }
+
+    /// When the library hints `types: ["eoa"]` the lookup must skip the
+    /// contract-only seed entirely, even if a matching address is present.
+    func testResolveLocalNameSkipsContractStoreWhenTypesIsEoa() {
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 10, address: optimismAavePool):
+                        ContractMetadata(name: "Aave V3 Pool"),
+                ]
+            )
+        )
+        XCTAssertNil(
+            provider.resolveLocalName(
+                address: optimismAavePool,
+                chainId: 10,
+                types: ["eoa"]
+            )
+        )
+    }
+
+    /// When the hint includes "contract" the lookup proceeds — locks the
+    /// positive direction so future gating changes can't quietly suppress
+    /// the contract table.
+    func testResolveLocalNameConsultsContractStoreWhenTypesIncludesContract() {
+        let provider = makeProviderWithContractStore(
+            contractStore(
+                entries: [
+                    LookupKey.contract(chainId: 10, address: optimismAavePool):
+                        ContractMetadata(name: "Aave V3 Pool"),
+                ]
+            )
+        )
+        XCTAssertEqual(
+            provider.resolveLocalName(
+                address: optimismAavePool,
+                chainId: 10,
+                types: ["contract"]
+            ),
+            "Aave V3 Pool"
+        )
+    }
+
+    /// Canary: the actually-bundled `known-contracts.json` must be packaged
+    /// with the WalletTests resources and decode cleanly. Catches a rename
+    /// or a stale `project.pbxproj` Resources phase that would silently turn
+    /// every contract lookup into a fallthrough.
+    func testSeedContractStoreLoadsBundledKnownContractsJSON() {
+        let store = SeedContractStore(bundle: Bundle(for: type(of: self)))
+        XCTAssertEqual(
+            store.contract(chainId: 10, address: optimismAavePool)?.name,
+            "Aave V3 Pool"
+        )
+    }
+
+    private func makeProviderWithContractStore(_ store: SeedContractStore) -> WalletMetadataProvider {
+        WalletMetadataProvider(
+            seedTokenStore: SeedTokenStore(data: Data("{}".utf8)),
+            seedContractStore: store,
+            memoryCache: InMemoryResolutionCache(),
+            persistentCache: makePersistentCache(name: UUID().uuidString),
+            alchemyClient: nil,
+            walletAddressProvider: { self.walletAddress },
+            isMainThread: { false },
+            now: { Date(timeIntervalSince1970: 1_700_000_000) }
+        )
+    }
+
     func testMainThreadSkipsLiveLookup() {
         MockURLProtocol.handler = { request in
             XCTFail("main-thread guard should prevent network lookup: \(String(describing: request.url))")

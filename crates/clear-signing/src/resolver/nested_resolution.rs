@@ -5,9 +5,11 @@ use std::pin::Pin;
 use crate::decoder::ArgumentValue;
 use crate::error::{Error, ResolveError};
 use crate::outcome::ResolvedDescriptorResolution;
+use crate::provider::DataProvider;
 use crate::types::display::{DisplayField, FieldFormat};
 
 use super::source::{DescriptorSource, ResolvedDescriptor, TypedDescriptorLookup};
+use super::standard_token;
 use super::{select_typed_outer_descriptor, TypedOuterSelection};
 
 /// Maximum recursion depth for nested descriptor resolution.
@@ -17,14 +19,21 @@ const MAX_RESOLVE_DEPTH: u8 = 3;
 pub async fn resolve_descriptors_for_tx(
     tx: &crate::TransactionContext<'_>,
     source: &dyn DescriptorSource,
+    data_provider: Option<&dyn DataProvider>,
 ) -> Result<ResolvedDescriptorResolution, ResolveError> {
     let mut results = Vec::new();
-    let address = tx.implementation_address.unwrap_or(tx.to);
+    // Descriptor matching: against implementation address for proxies.
+    // Token-metadata lookup: against the user-facing tx.to, since wallet token
+    // lists are keyed on the proxy/user-facing address.
+    let descriptor_address = tx.implementation_address.unwrap_or(tx.to);
+    let token_lookup_address = tx.to;
     resolve_recursive(
         tx.chain_id,
-        address,
+        descriptor_address,
+        token_lookup_address,
         tx.calldata,
         source,
+        data_provider,
         MAX_RESOLVE_DEPTH,
         &mut results,
     )
@@ -36,11 +45,14 @@ pub async fn resolve_descriptors_for_tx(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn resolve_recursive<'a>(
     chain_id: u64,
-    address: &'a str,
+    descriptor_address: &'a str,
+    token_lookup_address: &'a str,
     calldata: &'a [u8],
     source: &'a dyn DescriptorSource,
+    data_provider: Option<&'a dyn DataProvider>,
     depth: u8,
     results: &'a mut Vec<ResolvedDescriptor>,
 ) -> Pin<Box<dyn Future<Output = Result<(), ResolveError>> + Send + 'a>> {
@@ -49,7 +61,30 @@ fn resolve_recursive<'a>(
             return Ok(());
         }
 
-        let resolved = match source.resolve_calldata(chain_id, address).await {
+        // Standard ERC-20 short-circuit: when the wallet recognizes the contract as a
+        // known token AND the selector is a standard ERC-20 function, synthesize the
+        // descriptor in-memory and skip the registry entirely. Token lookup uses the
+        // user-facing address; the synth descriptor's deployment uses the match
+        // address so format_calldata pairs it correctly for proxy contracts.
+        if let Ok(selector) = <[u8; 4]>::try_from(&calldata[..4]) {
+            if standard_token::is_erc20_selector(selector) {
+                if let Some(dp) = data_provider {
+                    if let Some(meta) = dp.resolve_token(chain_id, token_lookup_address).await {
+                        if let Some(synth) = standard_token::synthesize_erc20(
+                            chain_id,
+                            descriptor_address,
+                            selector,
+                            &meta,
+                        ) {
+                            results.push(synth);
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        let resolved = match source.resolve_calldata(chain_id, descriptor_address).await {
             Ok(r) => r,
             Err(ResolveError::NotFound { .. }) => return Ok(()),
             Err(e) => return Err(e),
@@ -105,8 +140,20 @@ fn resolve_recursive<'a>(
             if let (Some(addr), Some(data)) = (callee, inner_data) {
                 let normalized =
                     crate::engine::normalized_nested_calldata(&data, selector_override);
-                resolve_recursive(inner_chain, &addr, &normalized, source, depth - 1, results)
-                    .await?;
+                // For nested calls there's no user-facing/implementation split:
+                // the inner callee is its own address, used for both descriptor
+                // matching and token lookup.
+                resolve_recursive(
+                    inner_chain,
+                    &addr,
+                    &addr,
+                    &normalized,
+                    source,
+                    data_provider,
+                    depth - 1,
+                    results,
+                )
+                .await?;
             }
         }
 
@@ -121,6 +168,7 @@ fn resolve_recursive<'a>(
 pub async fn resolve_descriptors_for_typed_data(
     typed_data: &crate::eip712::TypedData,
     source: &dyn DescriptorSource,
+    data_provider: Option<&dyn DataProvider>,
 ) -> Result<ResolvedDescriptorResolution, ResolveError> {
     let mut results = Vec::new();
 
@@ -212,8 +260,10 @@ pub async fn resolve_descriptors_for_typed_data(
                     resolve_recursive(
                         inner_chain,
                         &callee_addr,
+                        &callee_addr,
                         &normalized,
                         source,
+                        data_provider,
                         MAX_RESOLVE_DEPTH - 1,
                         &mut results,
                     )
@@ -645,7 +695,9 @@ mod tests {
             implementation_address: None,
         };
 
-        let descriptors = resolve_descriptors_for_tx(&tx, &source).await.unwrap();
+        let descriptors = resolve_descriptors_for_tx(&tx, &source, None)
+            .await
+            .unwrap();
 
         assert_eq!(descriptors.len(), 2, "should resolve outer + inner");
         assert_eq!(descriptors[0].address, safe_addr.to_lowercase());
@@ -674,7 +726,9 @@ mod tests {
             implementation_address: None,
         };
 
-        let descriptors = resolve_descriptors_for_tx(&tx, &source).await.unwrap();
+        let descriptors = resolve_descriptors_for_tx(&tx, &source, None)
+            .await
+            .unwrap();
 
         assert_eq!(
             descriptors.len(),
@@ -698,7 +752,9 @@ mod tests {
             implementation_address: None,
         };
 
-        let descriptors = resolve_descriptors_for_tx(&tx, &source).await.unwrap();
+        let descriptors = resolve_descriptors_for_tx(&tx, &source, None)
+            .await
+            .unwrap();
         assert!(descriptors.is_empty(), "no outer descriptor → empty vec");
     }
 
@@ -725,7 +781,9 @@ mod tests {
             implementation_address: Some(safe_addr),
         };
 
-        let descriptors = resolve_descriptors_for_tx(&tx, &source).await.unwrap();
+        let descriptors = resolve_descriptors_for_tx(&tx, &source, None)
+            .await
+            .unwrap();
 
         assert_eq!(
             descriptors.len(),
@@ -766,7 +824,7 @@ mod tests {
             ),
         );
 
-        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source)
+        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source, None)
             .await
             .expect("resolve");
         assert_eq!(descriptors.len(), 1);
@@ -795,7 +853,7 @@ mod tests {
             ),
         );
 
-        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source)
+        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source, None)
             .await
             .expect("resolve");
         assert!(descriptors.is_empty());
@@ -826,7 +884,7 @@ mod tests {
             ),
         );
 
-        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source)
+        let descriptors = resolve_descriptors_for_typed_data(&typed_data, &source, None)
             .await
             .expect("resolve");
         assert_eq!(descriptors.len(), 1);
@@ -852,7 +910,7 @@ mod tests {
             permit2_descriptor("Candidate B", format_key, None),
         );
 
-        let err = resolve_descriptors_for_typed_data(&typed_data, &source)
+        let err = resolve_descriptors_for_typed_data(&typed_data, &source, None)
             .await
             .unwrap_err()
             .to_string();
@@ -866,7 +924,7 @@ mod tests {
             inner_mode: InnerResolveMode::NotFound,
         };
 
-        let descriptors = resolve_descriptors_for_typed_data(&nested_typed_data(), &source)
+        let descriptors = resolve_descriptors_for_typed_data(&nested_typed_data(), &source, None)
             .await
             .expect("resolve");
         assert_eq!(descriptors.len(), 1);
@@ -883,7 +941,7 @@ mod tests {
             inner_mode: InnerResolveMode::RegistryDescriptorMissing,
         };
 
-        let err = resolve_descriptors_for_typed_data(&nested_typed_data(), &source)
+        let err = resolve_descriptors_for_typed_data(&nested_typed_data(), &source, None)
             .await
             .expect_err("nested registry error should propagate");
         match err {

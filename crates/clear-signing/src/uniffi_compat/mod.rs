@@ -26,7 +26,7 @@ async fn get_registry_source() -> Result<&'static GitHubRegistrySource, FormatFa
             GitHubRegistrySource::from_registry(DEFAULT_REGISTRY_URL)
                 .await
                 .map_err(|e| FormatFailure::ResolutionFailed {
-                    message: format!("failed to initialize registry: {e}"),
+                    detail: format!("failed to initialize registry: {e}"),
                     retryable: true,
                 })
         })
@@ -327,11 +327,13 @@ pub async fn clear_signing_resolve_descriptors_for_typed_data(
         .unwrap_or("0x0000000000000000000000000000000000000000");
 
     let source = get_registry_source().await?;
+    let provider = DataProviderFfiProxy(Arc::clone(&data_provider));
 
     // Try direct lookup
-    let mut descriptors = crate::resolver::resolve_descriptors_for_typed_data(&typed_data, source)
-        .await
-        .map_err(FormatFailure::from)?;
+    let mut descriptors =
+        crate::resolver::resolve_descriptors_for_typed_data(&typed_data, source, Some(&provider))
+            .await
+            .map_err(FormatFailure::from)?;
 
     // Proxy detection fallback
     if matches!(descriptors, ResolvedDescriptorResolution::NotFound) {
@@ -340,9 +342,13 @@ pub async fn clear_signing_resolve_descriptors_for_typed_data(
         if let Some(impl_addr) = impl_addr {
             let mut proxied = typed_data.clone();
             proxied.domain.verifying_contract = Some(impl_addr.clone());
-            descriptors = crate::resolver::resolve_descriptors_for_typed_data(&proxied, source)
-                .await
-                .map_err(FormatFailure::from)?;
+            descriptors = crate::resolver::resolve_descriptors_for_typed_data(
+                &proxied,
+                source,
+                Some(&provider),
+            )
+            .await
+            .map_err(FormatFailure::from)?;
         }
     }
 
@@ -375,7 +381,8 @@ pub async fn clear_signing_resolve_descriptors_for_tx(
         from: transaction.from_address.as_deref(),
         implementation_address: None,
     };
-    let mut descriptors = crate::resolve_descriptors_for_tx(&tx, source)
+    let provider = DataProviderFfiProxy(Arc::clone(&data_provider));
+    let mut descriptors = crate::resolve_descriptors_for_tx(&tx, source, Some(&provider))
         .await
         .map_err(FormatFailure::from)?;
 
@@ -388,7 +395,7 @@ pub async fn clear_signing_resolve_descriptors_for_tx(
                 implementation_address: Some(impl_addr.as_str()),
                 ..tx
             };
-            descriptors = crate::resolve_descriptors_for_tx(&tx_with_impl, source)
+            descriptors = crate::resolve_descriptors_for_tx(&tx_with_impl, source, Some(&provider))
                 .await
                 .map_err(FormatFailure::from)?;
         }
@@ -481,14 +488,14 @@ fn resolved_descriptor_json_outcome(
 
 fn invalid_input(message: String) -> FormatFailure {
     FormatFailure::InvalidInput {
-        message,
+        detail: message,
         retryable: false,
     }
 }
 
 fn invalid_descriptor(message: String) -> FormatFailure {
     FormatFailure::InvalidDescriptor {
-        message,
+        detail: message,
         retryable: false,
     }
 }
@@ -1150,7 +1157,9 @@ mod tests {
             .expect_err("duplicate selectors must surface the real error");
 
         match err {
-            FormatFailure::InvalidDescriptor { message, .. } => {
+            FormatFailure::InvalidDescriptor {
+                detail: message, ..
+            } => {
                 assert!(
                     message.contains("duplicate selectors"),
                     "expected duplicate-selector message, got: {message}"

@@ -2,20 +2,23 @@
 
 use thiserror::Error;
 
+// Field renamed `message` -> `detail` because UniFFI's Kotlin generator
+// emits each variant as a class extending `kotlin.Exception`, which
+// already exposes `Throwable.message`; the collision broke Android CI.
 #[cfg_attr(feature = "uniffi", derive(uniffi::Enum))]
 #[derive(Debug, Clone, PartialEq, Eq, Error, serde::Serialize)]
 pub enum FormatFailure {
-    #[error("invalid input: {message}")]
-    InvalidInput { message: String, retryable: bool },
+    #[error("invalid input: {detail}")]
+    InvalidInput { detail: String, retryable: bool },
 
-    #[error("invalid descriptor: {message}")]
-    InvalidDescriptor { message: String, retryable: bool },
+    #[error("invalid descriptor: {detail}")]
+    InvalidDescriptor { detail: String, retryable: bool },
 
-    #[error("resolution failed: {message}")]
-    ResolutionFailed { message: String, retryable: bool },
+    #[error("resolution failed: {detail}")]
+    ResolutionFailed { detail: String, retryable: bool },
 
-    #[error("internal error: {message}")]
-    Internal { message: String, retryable: bool },
+    #[error("internal error: {detail}")]
+    Internal { detail: String, retryable: bool },
 }
 
 /// Unified error type for the ERC-7730 library.
@@ -79,20 +82,20 @@ impl From<Error> for FormatFailure {
     fn from(value: Error) -> Self {
         match value {
             Error::Decode(err) => Self::InvalidInput {
-                message: err.to_string(),
+                detail: err.to_string(),
                 retryable: false,
             },
             Error::Descriptor(message) => Self::InvalidDescriptor {
-                message,
+                detail: message,
                 retryable: false,
             },
             Error::Resolve(err) => err.into(),
             Error::TokenRegistry(message) => Self::ResolutionFailed {
-                message: format!("token registry error: {message}"),
+                detail: format!("token registry error: {message}"),
                 retryable: true,
             },
             Error::Render(message) => Self::InvalidDescriptor {
-                message,
+                detail: message,
                 retryable: false,
             },
         }
@@ -103,23 +106,23 @@ impl From<ResolveError> for FormatFailure {
     fn from(value: ResolveError) -> Self {
         match value {
             ResolveError::NotFound { chain_id, address } => Self::InvalidDescriptor {
-                message: format!("descriptor not found for chain_id={chain_id}, address={address}"),
+                detail: format!("descriptor not found for chain_id={chain_id}, address={address}"),
                 retryable: false,
             },
             ResolveError::RegistryIndexMissing { url } => Self::ResolutionFailed {
-                message: format!("registry index missing: {url}"),
+                detail: format!("registry index missing: {url}"),
                 retryable: true,
             },
             ResolveError::RegistryDescriptorMissing { url } => Self::ResolutionFailed {
-                message: format!("registry descriptor missing: {url}"),
+                detail: format!("registry descriptor missing: {url}"),
                 retryable: true,
             },
             ResolveError::RegistryIo(message) => Self::ResolutionFailed {
-                message: format!("registry io error: {message}"),
+                detail: format!("registry io error: {message}"),
                 retryable: true,
             },
             ResolveError::Parse(message) => Self::ResolutionFailed {
-                message: format!("parse error: {message}"),
+                detail: format!("parse error: {message}"),
                 retryable: false,
             },
         }
@@ -137,7 +140,10 @@ mod tests {
             actual: 2,
         }));
         match f {
-            FormatFailure::InvalidInput { message, retryable } => {
+            FormatFailure::InvalidInput {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.contains("calldata too short"));
                 assert!(!retryable);
             }
@@ -149,7 +155,10 @@ mod tests {
     fn format_failure_from_error_descriptor() {
         let f = FormatFailure::from(Error::Descriptor("bad".into()));
         match f {
-            FormatFailure::InvalidDescriptor { message, retryable } => {
+            FormatFailure::InvalidDescriptor {
+                detail: message,
+                retryable,
+            } => {
                 assert_eq!(message, "bad");
                 assert!(!retryable);
             }
@@ -164,7 +173,10 @@ mod tests {
             address: "0xabc".into(),
         }));
         match f {
-            FormatFailure::InvalidDescriptor { message, retryable } => {
+            FormatFailure::InvalidDescriptor {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.contains("chain_id=1"));
                 assert!(message.contains("0xabc"));
                 assert!(!retryable);
@@ -177,7 +189,10 @@ mod tests {
     fn format_failure_from_error_token_registry() {
         let f = FormatFailure::from(Error::TokenRegistry("rate limit".into()));
         match f {
-            FormatFailure::ResolutionFailed { message, retryable } => {
+            FormatFailure::ResolutionFailed {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.starts_with("token registry error:"));
                 assert!(message.contains("rate limit"));
                 assert!(retryable);
@@ -190,7 +205,10 @@ mod tests {
     fn format_failure_from_error_render() {
         let f = FormatFailure::from(Error::Render("nope".into()));
         match f {
-            FormatFailure::InvalidDescriptor { message, retryable } => {
+            FormatFailure::InvalidDescriptor {
+                detail: message,
+                retryable,
+            } => {
                 assert_eq!(message, "nope");
                 assert!(!retryable);
             }
@@ -205,7 +223,10 @@ mod tests {
             address: "0xdead".into(),
         });
         match f {
-            FormatFailure::InvalidDescriptor { message, retryable } => {
+            FormatFailure::InvalidDescriptor {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.contains("chain_id=137"));
                 assert!(message.contains("0xdead"));
                 assert!(!retryable);
@@ -220,7 +241,10 @@ mod tests {
             url: "https://example/idx".into(),
         });
         match f {
-            FormatFailure::ResolutionFailed { message, retryable } => {
+            FormatFailure::ResolutionFailed {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.contains("registry index missing"));
                 assert!(message.contains("https://example/idx"));
                 assert!(retryable);
@@ -235,7 +259,10 @@ mod tests {
             url: "https://example/d.json".into(),
         });
         match f {
-            FormatFailure::ResolutionFailed { message, retryable } => {
+            FormatFailure::ResolutionFailed {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.contains("registry descriptor missing"));
                 assert!(retryable);
             }
@@ -247,7 +274,10 @@ mod tests {
     fn format_failure_from_resolve_io() {
         let f = FormatFailure::from(ResolveError::RegistryIo("timeout".into()));
         match f {
-            FormatFailure::ResolutionFailed { message, retryable } => {
+            FormatFailure::ResolutionFailed {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.contains("registry io error"));
                 assert!(message.contains("timeout"));
                 assert!(retryable);
@@ -260,7 +290,10 @@ mod tests {
     fn format_failure_from_resolve_parse() {
         let f = FormatFailure::from(ResolveError::Parse("bad json".into()));
         match f {
-            FormatFailure::ResolutionFailed { message, retryable } => {
+            FormatFailure::ResolutionFailed {
+                detail: message,
+                retryable,
+            } => {
                 assert!(message.contains("parse error"));
                 assert!(message.contains("bad json"));
                 assert!(!retryable);

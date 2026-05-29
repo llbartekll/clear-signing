@@ -76,4 +76,14 @@ enum LookupKey {
     static func tokenKey(chainId: UInt64, address: String) -> String {
         "eip155:\(chainId)/erc20:\(address.lowercased())"
     }
+
+    /// Lookup key for known DeFi contracts (matches known-contracts.json schema).
+    static func contract(chainId: UInt64, address: String) -> String {
+        "eip155:\(chainId)/contract:\(address.lowercased())"
+    }
+}
+
+/// Display metadata for a known contract (DeFi protocol address).
+struct ContractMetadata: Codable, Equatable {
+    let name: String
 }

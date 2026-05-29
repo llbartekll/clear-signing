@@ -1,0 +1,17 @@
+{
+  "tx_hash": "0xseed-weth-transfer-0p5",
+  "chain_id": 1,
+  "to": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  "from": "0x8eb8a3b98659cce290402893d0123abb75e3ab28",
+  "calldata_hex": "0xa9059cbb000000000000000000000000123456789012345678901234567890123456789000000000000000000000000000000000000000000000000006f05b59d3b20000",
+  "value_hex": "0x00",
+  "token_meta": { "symbol": "WETH", "decimals": 18, "name": "Wrapped Ether" },
+  "expected": {
+    "intent": "Transfer tokens",
+    "interpolated_intent": "Transfer 0.5 WETH to 0x1234567890123456789012345678901234567890",
+    "fields": [
+      { "label": "To",     "value": "0x1234567890123456789012345678901234567890" },
+      { "label": "Amount", "value": "0.5 WETH" }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "tx_hash": "0xseed-wbtc-approve-0p5",
+  "chain_id": 1,
+  "to": "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599",
+  "from": "0x8eb8a3b98659cce290402893d0123abb75e3ab28",
+  "calldata_hex": "0x095ea7b3000000000000000000000000c6cde7c39eb2f0f0095f41570af89efc2c1ea8280000000000000000000000000000000000000000000000000000000002faf080",
+  "value_hex": "0x00",
+  "token_meta": { "symbol": "WBTC", "decimals": 8, "name": "Wrapped BTC" },
+  "expected": {
+    "intent": "Approve token spending",
+    "interpolated_intent": "Approve 0xC6CDE7C39eB2f0F0095F41570af89eFC2C1Ea828 to spend 0.5 WBTC",
+    "fields": [
+      { "label": "Spender", "value": "0xC6CDE7C39eB2f0F0095F41570af89eFC2C1Ea828" },
+      { "label": "Amount",  "value": "0.5 WBTC" }
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "tx_hash": "0xseed-transfer-50",
+  "chain_id": 1,
+  "to": "0xA0b86991C6218b36c1d19D4a2e9Eb0cE3606eB48",
+  "from": "0x8eb8a3b98659cce290402893d0123abb75e3ab28",
+  "calldata_hex": "0xa9059cbb00000000000000000000000012345678901234567890123456789012345678900000000000000000000000000000000000000000000000000000000002faf080",
+  "value_hex": "0x00",
+  "token_meta": { "symbol": "USDC", "decimals": 6, "name": "USD Coin" },
+  "expected": {
+    "intent": "Transfer tokens",
+    "interpolated_intent": "Transfer 50 USDC to 0x1234567890123456789012345678901234567890",
+    "fields": [
+      { "label": "To",     "value": "0x1234567890123456789012345678901234567890" },
+      { "label": "Amount", "value": "50 USDC" }
+    ]
+  }
+}

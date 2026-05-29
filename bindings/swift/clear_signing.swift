@@ -13,8 +13,8 @@ import clearSigningFFI
 
 fileprivate extension RustBuffer {
     // Allocate a new buffer, copying the contents of a `UInt8` array.
-    init(byteArray: [UInt8]) {
-        let rbuf = byteArray.withUnsafeBufferPointer { ptr in
+    init(bytes: [UInt8]) {
+        let rbuf = bytes.withUnsafeBufferPointer { ptr in
             RustBuffer.from(ptr)
         }
         self.init(capacity: rbuf.capacity, len: rbuf.len, data: rbuf.data)
@@ -209,7 +209,7 @@ extension FfiConverterRustBuffer {
     public static func lower(_ value: SwiftType) -> RustBuffer {
           var writer = createWriter()
           write(value, into: &writer)
-          return RustBuffer(byteArray: writer)
+          return RustBuffer(bytes: writer)
     }
 }
 // An error type for FFI errors. These errors occur at the UniFFI level, not
@@ -1398,7 +1398,7 @@ public enum DisplayEntry: Equatable, Hashable {
     )
     case group(label: String, iteration: GroupIteration, items: [DisplayItem]
     )
-    case nested(label: String, intent: String,
+    case nested(label: String, intent: String, 
         /**
          * Owner string for the inner call (the inner descriptor's `metadata.owner`),
          * when a matching descriptor was found. `None` for raw/fallback frames where
@@ -1568,13 +1568,13 @@ public enum FormatFailure: Swift.Error, Equatable, Hashable, Foundation.Localize
 
     
     
-    case InvalidInput(message: String, retryable: Bool
+    case InvalidInput(detail: String, retryable: Bool
     )
-    case InvalidDescriptor(message: String, retryable: Bool
+    case InvalidDescriptor(detail: String, retryable: Bool
     )
-    case ResolutionFailed(message: String, retryable: Bool
+    case ResolutionFailed(detail: String, retryable: Bool
     )
-    case Internal(message: String, retryable: Bool
+    case Internal(detail: String, retryable: Bool
     )
 
     
@@ -1606,19 +1606,19 @@ public struct FfiConverterTypeFormatFailure: FfiConverterRustBuffer {
 
         
         case 1: return .InvalidInput(
-            message: try FfiConverterString.read(from: &buf), 
+            detail: try FfiConverterString.read(from: &buf), 
             retryable: try FfiConverterBool.read(from: &buf)
             )
         case 2: return .InvalidDescriptor(
-            message: try FfiConverterString.read(from: &buf), 
+            detail: try FfiConverterString.read(from: &buf), 
             retryable: try FfiConverterBool.read(from: &buf)
             )
         case 3: return .ResolutionFailed(
-            message: try FfiConverterString.read(from: &buf), 
+            detail: try FfiConverterString.read(from: &buf), 
             retryable: try FfiConverterBool.read(from: &buf)
             )
         case 4: return .Internal(
-            message: try FfiConverterString.read(from: &buf), 
+            detail: try FfiConverterString.read(from: &buf), 
             retryable: try FfiConverterBool.read(from: &buf)
             )
 
@@ -1633,27 +1633,27 @@ public struct FfiConverterTypeFormatFailure: FfiConverterRustBuffer {
 
         
         
-        case let .InvalidInput(message,retryable):
+        case let .InvalidInput(detail,retryable):
             writeInt(&buf, Int32(1))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
             FfiConverterBool.write(retryable, into: &buf)
             
         
-        case let .InvalidDescriptor(message,retryable):
+        case let .InvalidDescriptor(detail,retryable):
             writeInt(&buf, Int32(2))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
             FfiConverterBool.write(retryable, into: &buf)
             
         
-        case let .ResolutionFailed(message,retryable):
+        case let .ResolutionFailed(detail,retryable):
             writeInt(&buf, Int32(3))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
             FfiConverterBool.write(retryable, into: &buf)
             
         
-        case let .Internal(message,retryable):
+        case let .Internal(detail,retryable):
             writeInt(&buf, Int32(4))
-            FfiConverterString.write(message, into: &buf)
+            FfiConverterString.write(detail, into: &buf)
             FfiConverterBool.write(retryable, into: &buf)
             
         }
