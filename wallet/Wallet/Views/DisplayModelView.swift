@@ -27,6 +27,10 @@ struct DisplayModelView: View {
                 itemRow(DisplayItem(label: "Interacting with", value: label))
             }
 
+            if let owner = model.owner, model.contractName != nil {
+                itemRow(DisplayItem(label: "Owner", value: owner))
+            }
+
             ForEach(Array(model.entries.enumerated()), id: \.offset) { _, entry in
                 entryView(entry)
             }
