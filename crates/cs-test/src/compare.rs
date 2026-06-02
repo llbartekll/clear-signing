@@ -512,13 +512,22 @@ mod tests {
 
     #[test]
     fn length_mismatch_reported() {
-        let o = outcome(model("Outer", None, None, vec![item("A", "1"), item("B", "2")]));
+        let o = outcome(model(
+            "Outer",
+            None,
+            None,
+            vec![item("A", "1"), item("B", "2")],
+        ));
         let exp = expected_with("Outer", vec![field("A", "1")]);
         let r = compare("t", &exp, &o);
         let hit = r.failures.iter().any(|f| {
             matches!(
                 f,
-                Failure::FieldCountMismatch { expected: 1, actual: 2, .. }
+                Failure::FieldCountMismatch {
+                    expected: 1,
+                    actual: 2,
+                    ..
+                }
             )
         });
         assert!(hit, "no FieldCountMismatch in {:?}", r.failures);
@@ -576,7 +585,12 @@ mod tests {
         ));
         let exp = expected_with(
             "Outer",
-            vec![nested_field("Transaction", "Inner", Some("Inner DAO"), vec![])],
+            vec![nested_field(
+                "Transaction",
+                "Inner",
+                Some("Inner DAO"),
+                vec![],
+            )],
         );
         let r = compare("t", &exp, &o);
         assert!(r.passed, "expected pass, got failures: {:?}", r.failures);
@@ -640,11 +654,13 @@ mod tests {
             )],
         );
         let r = compare("t", &exp, &o);
-        let hit = r.failures.iter().any(|f| matches!(
-            f,
-            Failure::FieldValueMismatch { path, label, .. }
-                if !path.is_empty() && path[0].ends_with("Transaction") && label == "Recipient"
-        ));
+        let hit = r.failures.iter().any(|f| {
+            matches!(
+                f,
+                Failure::FieldValueMismatch { path, label, .. }
+                    if !path.is_empty() && path[0].ends_with("Transaction") && label == "Recipient"
+            )
+        });
         assert!(hit, "no path-tagged FieldValueMismatch in {:?}", r.failures);
     }
 
@@ -672,20 +688,19 @@ mod tests {
     #[test]
     fn kind_mismatch_scalar_vs_nested() {
         let o = outcome(model("Outer", None, None, vec![item("X", "v")]));
-        let exp = expected_with(
-            "Outer",
-            vec![nested_field("X", "y", None, vec![])],
-        );
+        let exp = expected_with("Outer", vec![nested_field("X", "y", None, vec![])]);
         let r = compare("t", &exp, &o);
-        let hit = r.failures.iter().any(|f| matches!(
-            f,
-            Failure::FieldKindMismatch {
-                label,
-                expected_kind: FieldKind::Nested,
-                actual_kind: FieldKind::Scalar,
-                ..
-            } if label == "X"
-        ));
+        let hit = r.failures.iter().any(|f| {
+            matches!(
+                f,
+                Failure::FieldKindMismatch {
+                    label,
+                    expected_kind: FieldKind::Nested,
+                    actual_kind: FieldKind::Scalar,
+                    ..
+                } if label == "X"
+            )
+        });
         assert!(hit, "no FieldKindMismatch in {:?}", r.failures);
     }
 
@@ -694,15 +709,17 @@ mod tests {
         let o = outcome(model("Outer", None, None, vec![nested("X", "y", vec![])]));
         let exp = expected_with("Outer", vec![field("X", "v")]);
         let r = compare("t", &exp, &o);
-        let hit = r.failures.iter().any(|f| matches!(
-            f,
-            Failure::FieldKindMismatch {
-                label,
-                expected_kind: FieldKind::Scalar,
-                actual_kind: FieldKind::Nested,
-                ..
-            } if label == "X"
-        ));
+        let hit = r.failures.iter().any(|f| {
+            matches!(
+                f,
+                Failure::FieldKindMismatch {
+                    label,
+                    expected_kind: FieldKind::Scalar,
+                    actual_kind: FieldKind::Nested,
+                    ..
+                } if label == "X"
+            )
+        });
         assert!(hit, "no FieldKindMismatch in {:?}", r.failures);
     }
 
