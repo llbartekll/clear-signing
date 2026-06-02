@@ -50,7 +50,7 @@
       },
       "expected": {
         "intent": "PLACEHOLDER_FOR_SMOKE",
-        "fields": {}
+        "fields": []
       }
     }
   ]

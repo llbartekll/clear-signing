@@ -31,11 +31,10 @@ async fn runner_pipeline_executes_and_reports_failures() {
             Failure::IntentMismatch { .. } => "intent",
             Failure::InterpolatedIntentMismatch { .. } => "interpolatedIntent",
             Failure::OwnerMismatch { .. } => "owner",
-            Failure::FieldMissing { .. } => "missing",
-            Failure::FieldExtra { .. } => "extra",
+            Failure::FieldCountMismatch { .. } => "count",
+            Failure::FieldLabelMismatch { .. } => "label",
             Failure::FieldValueMismatch { .. } => "value",
             Failure::FieldKindMismatch { .. } => "kind",
-            Failure::AmbiguousLabel { .. } => "ambiguous",
         })
         .collect();
 
@@ -48,8 +47,8 @@ async fn runner_pipeline_executes_and_reports_failures() {
         "expected owner mismatch, got {kinds:?}"
     );
     assert!(
-        kinds.contains(&"extra"),
-        "expected unrendered-by-test fields to surface as extra, got {kinds:?}"
+        kinds.contains(&"count"),
+        "expected length mismatch when expected.fields is empty but rendering produced entries, got {kinds:?}"
     );
 }
 
@@ -88,15 +87,15 @@ async fn runner_executes_eip712_pipeline() {
         !r.passed,
         "smoke file uses placeholder intent so case must fail"
     );
-    let has_intent_or_fields = r.failures.iter().any(|f| {
+    let has_intent_or_count = r.failures.iter().any(|f| {
         matches!(
             f,
-            Failure::IntentMismatch { .. } | Failure::FieldExtra { .. }
+            Failure::IntentMismatch { .. } | Failure::FieldCountMismatch { .. }
         )
     });
     assert!(
-        has_intent_or_fields,
-        "expected EIP-712 pipeline to produce intent/field diffs, got {:?}",
+        has_intent_or_count,
+        "expected EIP-712 pipeline to produce intent/count diffs, got {:?}",
         r.failures
     );
 }

@@ -51,42 +51,45 @@ fn failure_json(f: &Failure) -> serde_json::Value {
         } => {
             serde_json::json!({ "kind": "owner", "path": path, "expected": expected, "actual": actual })
         }
-        Failure::FieldMissing {
+        Failure::FieldCountMismatch {
             path,
-            label,
-            expected_kind,
+            expected,
+            actual,
         } => {
-            serde_json::json!({ "kind": "fieldMissing", "path": path, "label": label, "expectedKind": expected_kind.as_str() })
+            serde_json::json!({ "kind": "fieldCount", "path": path, "expected": expected, "actual": actual })
         }
-        Failure::FieldExtra {
+        Failure::FieldLabelMismatch {
             path,
-            label,
-            actual_summary,
+            index,
+            expected,
+            actual,
         } => {
-            serde_json::json!({ "kind": "fieldExtra", "path": path, "label": label, "actual": actual_summary })
+            serde_json::json!({ "kind": "fieldLabel", "path": path, "index": index, "expected": expected, "actual": actual })
         }
         Failure::FieldValueMismatch {
             path,
+            index,
             label,
             expected,
             actual,
         } => {
-            serde_json::json!({ "kind": "fieldValue", "path": path, "label": label, "expected": expected, "actual": actual })
+            serde_json::json!({ "kind": "fieldValue", "path": path, "index": index, "label": label, "expected": expected, "actual": actual })
         }
         Failure::FieldKindMismatch {
             path,
+            index,
             label,
             expected_kind,
             actual_kind,
         } => {
-            serde_json::json!({ "kind": "fieldKind", "path": path, "label": label, "expectedKind": expected_kind.as_str(), "actualKind": actual_kind.as_str() })
-        }
-        Failure::AmbiguousLabel {
-            path,
-            label,
-            actual_values,
-        } => {
-            serde_json::json!({ "kind": "ambiguousLabel", "path": path, "label": label, "actualValues": actual_values })
+            serde_json::json!({
+                "kind": "fieldKind",
+                "path": path,
+                "index": index,
+                "label": label,
+                "expectedKind": expected_kind.as_str(),
+                "actualKind": actual_kind.as_str(),
+            })
         }
     }
 }
@@ -97,16 +100,7 @@ fn render_failure(f: &Failure) -> String {
             path,
             expected,
             actual,
-        } => {
-            if path.is_empty() {
-                format!("intent: expected {expected:?}, got {actual:?}")
-            } else {
-                format!(
-                    "intent at {}: expected {expected:?}, got {actual:?}",
-                    path.join(" > ")
-                )
-            }
-        }
+        } => format!("intent{}: expected {expected:?}, got {actual:?}", at(path)),
         Failure::InterpolatedIntentMismatch { expected, actual } => {
             format!("interpolated intent: expected {expected:?}, got {actual:?}")
         }
@@ -114,82 +108,54 @@ fn render_failure(f: &Failure) -> String {
             path,
             expected,
             actual,
-        } => {
-            if path.is_empty() {
-                format!("owner: expected {expected:?}, got {actual:?}")
-            } else {
-                format!(
-                    "owner at {}: expected {expected:?}, got {actual:?}",
-                    path.join(" > ")
-                )
-            }
-        }
-        Failure::FieldMissing {
+        } => format!("owner{}: expected {expected:?}, got {actual:?}", at(path)),
+        Failure::FieldCountMismatch {
             path,
-            label,
-            expected_kind,
-        } => {
-            format!(
-                "missing {} field {}",
-                expected_kind.as_str(),
-                labeled(path, label)
-            )
-        }
-        Failure::FieldExtra {
+            expected,
+            actual,
+        } => format!(
+            "fields{}: expected {expected} entries, got {actual}",
+            at(path)
+        ),
+        Failure::FieldLabelMismatch {
             path,
-            label,
-            actual_summary,
-        } => {
-            format!(
-                "unexpected field {} = {actual_summary:?}",
-                labeled(path, label)
-            )
-        }
+            index,
+            expected,
+            actual,
+        } => format!(
+            "field label{} at [{index}]: expected {expected:?}, got {actual:?}",
+            at(path)
+        ),
         Failure::FieldValueMismatch {
             path,
+            index,
             label,
             expected,
             actual,
-        } => {
-            format!(
-                "field {}: expected {expected:?}, got {actual:?}",
-                labeled(path, label)
-            )
-        }
+        } => format!(
+            "field value{} at [{index}] {label:?}: expected {expected:?}, got {actual:?}",
+            at(path)
+        ),
         Failure::FieldKindMismatch {
             path,
+            index,
             label,
             expected_kind,
             actual_kind,
-        } => {
-            format!(
-                "field kind {}: expected {}, got {}",
-                labeled(path, label),
-                expected_kind.as_str(),
-                actual_kind.as_str()
-            )
-        }
-        Failure::AmbiguousLabel {
-            path,
-            label,
-            actual_values,
-        } => {
-            format!(
-                "ambiguous field {}: rendered {} times with values {:?}",
-                labeled(path, label),
-                actual_values.len(),
-                actual_values
-            )
-        }
+        } => format!(
+            "field kind{} at [{index}] {label:?}: expected {}, got {}",
+            at(path),
+            expected_kind.as_str(),
+            actual_kind.as_str()
+        ),
     }
 }
 
-fn labeled(path: &[String], label: &str) -> String {
+fn at(path: &[String]) -> String {
     if path.is_empty() {
-        format!("{label:?}")
+        String::new()
     } else {
-        let joined = path.join(" > ");
-        format!("\"{joined} > {label}\"")
+        format!(" at {}", path.join(" > "))
     }
 }
 
