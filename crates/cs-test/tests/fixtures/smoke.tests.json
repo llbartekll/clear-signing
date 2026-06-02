@@ -16,7 +16,7 @@
       "expected": {
         "intent": "WRONG_INTENT_FOR_SMOKE",
         "owner": "WRONG_OWNER_FOR_SMOKE",
-        "fields": {}
+        "fields": []
       }
     }
   ]

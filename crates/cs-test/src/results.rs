@@ -3,12 +3,17 @@
 //! Output format follows the CI contract at the ERC-7730 registry's
 //! `.github/test-results/`. `runner` identifies this harness;
 //! `implementation` identifies the clear-signing build it drives.
+//!
+//! `cases[].rendered.fields` is an **ordered array** of `{label, value}`
+//! entries. Array-iteration descriptor paths (e.g. `signers.[]`) produce
+//! multiple entries with the same label; collapsing them into a label-keyed
+//! map would silently drop the duplicates, so the registry CI aggregator and
+//! the runner both speak the array shape on this boundary.
 
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use clear_signing::engine::{DisplayEntry, DisplayItem, DisplayModel};
-use indexmap::IndexMap;
 use serde::Serialize;
 
 use crate::compare::{first_failure_message, CaseResult};
@@ -54,7 +59,13 @@ pub struct Rendered {
     #[serde(rename = "interpolatedIntent", skip_serializing_if = "Option::is_none")]
     pub interpolated_intent: Option<String>,
     pub owner: String,
-    pub fields: IndexMap<String, FieldValue>,
+    pub fields: Vec<FieldEntry>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FieldEntry {
+    pub label: String,
+    pub value: FieldValue,
 }
 
 #[derive(Debug, Serialize)]
@@ -68,7 +79,7 @@ pub enum FieldValue {
 pub struct NestedRendered {
     pub intent: String,
     pub owner: String,
-    pub fields: IndexMap<String, FieldValue>,
+    pub fields: Vec<FieldEntry>,
 }
 
 pub fn build_results_file(results: &[CaseResult]) -> ResultsFile {
@@ -115,17 +126,23 @@ fn render_model(model: &DisplayModel) -> Rendered {
     }
 }
 
-fn render_entries(entries: &[DisplayEntry]) -> IndexMap<String, FieldValue> {
-    let mut out: IndexMap<String, FieldValue> = IndexMap::new();
+fn render_entries(entries: &[DisplayEntry]) -> Vec<FieldEntry> {
+    let mut out = Vec::new();
     for entry in entries {
         match entry {
             DisplayEntry::Item(DisplayItem { label, value }) => {
-                out.insert(label.clone(), FieldValue::Value(value.clone()));
+                out.push(FieldEntry {
+                    label: label.clone(),
+                    value: FieldValue::Value(value.clone()),
+                });
             }
             DisplayEntry::Group { items, .. } => {
-                // Group fields are flattened to the surrounding map per the registry spec.
+                // Group fields flatten into the surrounding sequence per the registry spec.
                 for DisplayItem { label, value } in items {
-                    out.insert(label.clone(), FieldValue::Value(value.clone()));
+                    out.push(FieldEntry {
+                        label: label.clone(),
+                        value: FieldValue::Value(value.clone()),
+                    });
                 }
             }
             DisplayEntry::Nested {
@@ -134,14 +151,14 @@ fn render_entries(entries: &[DisplayEntry]) -> IndexMap<String, FieldValue> {
                 owner,
                 entries,
             } => {
-                out.insert(
-                    label.clone(),
-                    FieldValue::Nested(NestedRendered {
+                out.push(FieldEntry {
+                    label: label.clone(),
+                    value: FieldValue::Nested(NestedRendered {
                         intent: intent.clone(),
                         owner: owner.clone().unwrap_or_default(),
                         fields: render_entries(entries),
                     }),
-                );
+                });
             }
         }
     }
@@ -215,12 +232,37 @@ mod tests {
         let r = pass_result(m);
         let file = build_results_file(std::slice::from_ref(&r));
         let rendered = file.cases[0].rendered.as_ref().unwrap();
-        assert!(matches!(rendered.fields.get("A"), Some(FieldValue::Value(v)) if v == "1"));
-        assert!(matches!(rendered.fields.get("B"), Some(FieldValue::Value(v)) if v == "2"));
+        assert_eq!(rendered.fields.len(), 2);
+        assert_eq!(rendered.fields[0].label, "A");
+        assert!(matches!(&rendered.fields[0].value, FieldValue::Value(v) if v == "1"));
+        assert_eq!(rendered.fields[1].label, "B");
+        assert!(matches!(&rendered.fields[1].value, FieldValue::Value(v) if v == "2"));
         assert!(
-            !rendered.fields.contains_key("g"),
+            !rendered.fields.iter().any(|f| f.label == "g"),
             "group label must not appear as its own field"
         );
+    }
+
+    #[test]
+    fn duplicate_labels_emit_separate_entries() {
+        let m = model_with(vec![
+            DisplayEntry::Item(DisplayItem {
+                label: "Signer".into(),
+                value: "0xaaa".into(),
+            }),
+            DisplayEntry::Item(DisplayItem {
+                label: "Signer".into(),
+                value: "0xbbb".into(),
+            }),
+        ]);
+        let r = pass_result(m);
+        let file = build_results_file(std::slice::from_ref(&r));
+        let rendered = file.cases[0].rendered.as_ref().unwrap();
+        assert_eq!(rendered.fields.len(), 2);
+        assert_eq!(rendered.fields[0].label, "Signer");
+        assert!(matches!(&rendered.fields[0].value, FieldValue::Value(v) if v == "0xaaa"));
+        assert_eq!(rendered.fields[1].label, "Signer");
+        assert!(matches!(&rendered.fields[1].value, FieldValue::Value(v) if v == "0xbbb"));
     }
 
     #[test]
@@ -261,12 +303,16 @@ mod tests {
         let r = pass_result(m);
         let file = build_results_file(std::slice::from_ref(&r));
         let rendered = file.cases[0].rendered.as_ref().unwrap();
-        let nested = match rendered.fields.get("Inner call") {
-            Some(FieldValue::Nested(n)) => n,
+        assert_eq!(rendered.fields.len(), 1);
+        assert_eq!(rendered.fields[0].label, "Inner call");
+        let nested = match &rendered.fields[0].value {
+            FieldValue::Nested(n) => n,
             other => panic!("expected nested, got {other:?}"),
         };
         assert_eq!(nested.intent, "Transfer");
         assert_eq!(nested.owner, "Inner DAO");
-        assert!(matches!(nested.fields.get("To"), Some(FieldValue::Value(v)) if v == "0xabc"));
+        assert_eq!(nested.fields.len(), 1);
+        assert_eq!(nested.fields[0].label, "To");
+        assert!(matches!(&nested.fields[0].value, FieldValue::Value(v) if v == "0xabc"));
     }
 }

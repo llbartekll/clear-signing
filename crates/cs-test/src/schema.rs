@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,12 +65,22 @@ pub struct Expected {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default)]
-    pub fields: IndexMap<String, FieldExpected>,
+    pub fields: Vec<FieldEntry>,
+}
+
+/// Ordered field entry — labels are not unique because array-iteration paths
+/// (e.g. `signers.[]`) produce multiple entries with the same label. Entries
+/// are compared positionally; the `IndexMap`-keyed-by-label form is gone.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FieldEntry {
+    pub label: String,
+    pub value: FieldValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum FieldExpected {
+pub enum FieldValue {
     Value(String),
     Nested(NestedExpected),
 }
@@ -83,7 +92,7 @@ pub struct NestedExpected {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default)]
-    pub fields: IndexMap<String, FieldExpected>,
+    pub fields: Vec<FieldEntry>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

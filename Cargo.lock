@@ -262,7 +262,6 @@ dependencies = [
  "clap",
  "clear-signing",
  "hex",
- "indexmap",
  "rlp",
  "serde",
  "serde_json",

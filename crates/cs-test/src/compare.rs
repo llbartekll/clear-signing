@@ -1,9 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
-
 use clear_signing::engine::{DisplayEntry, DisplayItem, DisplayModel};
 use clear_signing::outcome::FormatOutcome;
 
-use crate::schema::{Expected, FieldExpected, NestedExpected};
+use crate::schema::{Expected, FieldEntry, FieldValue, NestedExpected};
 
 #[derive(Debug, Clone)]
 pub struct CaseResult {
@@ -51,58 +49,31 @@ pub enum Failure {
         expected: Option<String>,
         actual: Option<String>,
     },
-    FieldMissing {
+    FieldCountMismatch {
         path: Vec<String>,
-        label: String,
-        expected_kind: FieldKind,
+        expected: usize,
+        actual: usize,
     },
-    FieldExtra {
+    FieldLabelMismatch {
         path: Vec<String>,
-        label: String,
-        actual_summary: String,
+        index: usize,
+        expected: String,
+        actual: String,
     },
     FieldValueMismatch {
         path: Vec<String>,
+        index: usize,
         label: String,
         expected: String,
         actual: String,
     },
     FieldKindMismatch {
         path: Vec<String>,
+        index: usize,
         label: String,
         expected_kind: FieldKind,
         actual_kind: FieldKind,
     },
-    AmbiguousLabel {
-        path: Vec<String>,
-        label: String,
-        actual_values: Vec<String>,
-    },
-}
-
-enum ActualField<'a> {
-    Scalar(&'a str),
-    Nested {
-        intent: &'a str,
-        owner: Option<&'a str>,
-        entries: &'a [DisplayEntry],
-    },
-}
-
-impl ActualField<'_> {
-    fn kind(&self) -> FieldKind {
-        match self {
-            ActualField::Scalar(_) => FieldKind::Scalar,
-            ActualField::Nested { .. } => FieldKind::Nested,
-        }
-    }
-
-    fn summary(&self) -> String {
-        match self {
-            ActualField::Scalar(v) => (*v).to_string(),
-            ActualField::Nested { intent, .. } => format!("<nested intent: {intent}>"),
-        }
-    }
 }
 
 pub fn compare(description: &str, expected: &Expected, outcome: &FormatOutcome) -> CaseResult {
@@ -170,99 +141,60 @@ fn failure_short_message(f: &Failure) -> String {
             path,
             expected,
             actual,
-        } => {
-            if path.is_empty() {
-                format!("intent: expected {expected:?}, got {actual:?}")
-            } else {
-                format!(
-                    "intent at {}: expected {expected:?}, got {actual:?}",
-                    path.join(" > ")
-                )
-            }
-        }
-        Failure::InterpolatedIntentMismatch { expected, actual } => {
-            format!(
-                "interpolatedIntent: expected {expected:?}, got {}",
-                opt_str_debug(actual.as_deref())
-            )
-        }
+        } => format!("intent{}: expected {expected:?}, got {actual:?}", at(path)),
+        Failure::InterpolatedIntentMismatch { expected, actual } => format!(
+            "interpolatedIntent: expected {expected:?}, got {}",
+            opt_str_debug(actual.as_deref())
+        ),
         Failure::OwnerMismatch {
             path,
             expected,
             actual,
-        } => {
-            if path.is_empty() {
-                format!(
-                    "owner: expected {}, got {}",
-                    opt_str_debug(expected.as_deref()),
-                    opt_str_debug(actual.as_deref())
-                )
-            } else {
-                format!(
-                    "owner at {}: expected {}, got {}",
-                    path.join(" > "),
-                    opt_str_debug(expected.as_deref()),
-                    opt_str_debug(actual.as_deref())
-                )
-            }
-        }
-        Failure::FieldMissing {
+        } => format!(
+            "owner{}: expected {}, got {}",
+            at(path),
+            opt_str_debug(expected.as_deref()),
+            opt_str_debug(actual.as_deref())
+        ),
+        Failure::FieldCountMismatch {
             path,
-            label,
-            expected_kind,
-        } => {
-            format!(
-                "missing {} field {}",
-                expected_kind.as_str(),
-                labeled_for_msg(path, label)
-            )
-        }
-        Failure::FieldExtra {
+            expected,
+            actual,
+        } => format!(
+            "fields{}: expected {expected} entries, got {actual}",
+            at(path)
+        ),
+        Failure::FieldLabelMismatch {
             path,
-            label,
-            actual_summary,
-        } => {
-            format!(
-                "unexpected field {} = {actual_summary:?}",
-                labeled_for_msg(path, label)
-            )
-        }
+            index,
+            expected,
+            actual,
+        } => format!(
+            "field label{} at [{index}]: expected {expected:?}, got {actual:?}",
+            at(path)
+        ),
         Failure::FieldValueMismatch {
             path,
+            index,
             label,
             expected,
             actual,
-        } => {
-            format!(
-                "field {}: expected {expected:?}, got {actual:?}",
-                labeled_for_msg(path, label)
-            )
-        }
+        } => format!(
+            "field value{} at [{index}] {label:?}: expected {expected:?}, got {actual:?}",
+            at(path)
+        ),
         Failure::FieldKindMismatch {
             path,
+            index,
             label,
             expected_kind,
             actual_kind,
-        } => {
-            format!(
-                "field kind {}: expected {}, got {}",
-                labeled_for_msg(path, label),
-                expected_kind.as_str(),
-                actual_kind.as_str()
-            )
-        }
-        Failure::AmbiguousLabel {
-            path,
-            label,
-            actual_values,
-        } => {
-            format!(
-                "ambiguous field {}: rendered {} times with values {:?}",
-                labeled_for_msg(path, label),
-                actual_values.len(),
-                actual_values
-            )
-        }
+        } => format!(
+            "field kind{} at [{index}] {label:?}: expected {}, got {}",
+            at(path),
+            expected_kind.as_str(),
+            actual_kind.as_str()
+        ),
     }
 }
 
@@ -273,19 +205,18 @@ fn opt_str_debug(value: Option<&str>) -> String {
     }
 }
 
-fn labeled_for_msg(path: &[String], label: &str) -> String {
+fn at(path: &[String]) -> String {
     if path.is_empty() {
-        format!("{label:?}")
+        String::new()
     } else {
-        let joined = path.join(" > ");
-        format!("\"{joined} > {label}\"")
+        format!(" at {}", path.join(" > "))
     }
 }
 
 fn compare_level(
     path: &[String],
     expected_intent: &str,
-    expected_fields: &indexmap::IndexMap<String, FieldExpected>,
+    expected_fields: &[FieldEntry],
     actual_intent: &str,
     actual_entries: &[DisplayEntry],
     failures: &mut Vec<Failure>,
@@ -298,15 +229,125 @@ fn compare_level(
         });
     }
 
-    let mut actual_pairs: Vec<(String, ActualField)> = Vec::new();
-    for e in actual_entries {
-        match e {
+    let actual_pairs = flatten_actual(actual_entries);
+
+    if expected_fields.len() != actual_pairs.len() {
+        failures.push(Failure::FieldCountMismatch {
+            path: path.to_vec(),
+            expected: expected_fields.len(),
+            actual: actual_pairs.len(),
+        });
+    }
+
+    for (i, (exp, act)) in expected_fields.iter().zip(actual_pairs.iter()).enumerate() {
+        if exp.label != act.label() {
+            failures.push(Failure::FieldLabelMismatch {
+                path: path.to_vec(),
+                index: i,
+                expected: exp.label.clone(),
+                actual: act.label().to_string(),
+            });
+        }
+        match (&exp.value, act) {
+            (FieldValue::Value(expected_val), ActualField::Scalar { value, .. }) => {
+                if expected_val.as_str() != *value {
+                    failures.push(Failure::FieldValueMismatch {
+                        path: path.to_vec(),
+                        index: i,
+                        label: exp.label.clone(),
+                        expected: expected_val.clone(),
+                        actual: (*value).to_string(),
+                    });
+                }
+            }
+            (
+                FieldValue::Nested(ne),
+                ActualField::Nested {
+                    intent: actual_intent,
+                    owner: actual_owner,
+                    entries: actual_inner,
+                    ..
+                },
+            ) => {
+                let mut child_path = path.to_vec();
+                child_path.push(format!("[{i}] {}", exp.label));
+                let actual_owner_owned = actual_owner.map(str::to_string);
+                if ne.owner != actual_owner_owned {
+                    failures.push(Failure::OwnerMismatch {
+                        path: child_path.clone(),
+                        expected: ne.owner.clone(),
+                        actual: actual_owner_owned,
+                    });
+                }
+                compare_level(
+                    &child_path,
+                    &ne.intent,
+                    &ne.fields,
+                    actual_intent,
+                    actual_inner,
+                    failures,
+                );
+            }
+            (FieldValue::Value(_), ActualField::Nested { .. }) => {
+                failures.push(Failure::FieldKindMismatch {
+                    path: path.to_vec(),
+                    index: i,
+                    label: exp.label.clone(),
+                    expected_kind: FieldKind::Scalar,
+                    actual_kind: FieldKind::Nested,
+                });
+            }
+            (FieldValue::Nested(_), ActualField::Scalar { .. }) => {
+                failures.push(Failure::FieldKindMismatch {
+                    path: path.to_vec(),
+                    index: i,
+                    label: exp.label.clone(),
+                    expected_kind: FieldKind::Nested,
+                    actual_kind: FieldKind::Scalar,
+                });
+            }
+        }
+    }
+}
+
+enum ActualField<'a> {
+    Scalar {
+        label: &'a str,
+        value: &'a str,
+    },
+    Nested {
+        label: &'a str,
+        intent: &'a str,
+        owner: Option<&'a str>,
+        entries: &'a [DisplayEntry],
+    },
+}
+
+impl<'a> ActualField<'a> {
+    fn label(&self) -> &'a str {
+        match self {
+            ActualField::Scalar { label, .. } => label,
+            ActualField::Nested { label, .. } => label,
+        }
+    }
+}
+
+fn flatten_actual(entries: &[DisplayEntry]) -> Vec<ActualField<'_>> {
+    let mut out = Vec::new();
+    for entry in entries {
+        match entry {
             DisplayEntry::Item(DisplayItem { label, value }) => {
-                actual_pairs.push((label.clone(), ActualField::Scalar(value.as_str())));
+                out.push(ActualField::Scalar {
+                    label: label.as_str(),
+                    value: value.as_str(),
+                });
             }
             DisplayEntry::Group { items, .. } => {
                 for DisplayItem { label, value } in items {
-                    actual_pairs.push((label.clone(), ActualField::Scalar(value.as_str())));
+                    out.push(ActualField::Scalar {
+                        label: label.as_str(),
+                        value: value.as_str(),
+                    });
                 }
             }
             DisplayEntry::Nested {
@@ -315,126 +356,16 @@ fn compare_level(
                 owner,
                 entries,
             } => {
-                actual_pairs.push((
-                    label.clone(),
-                    ActualField::Nested {
-                        intent: intent.as_str(),
-                        owner: owner.as_deref(),
-                        entries: entries.as_slice(),
-                    },
-                ));
-            }
-        }
-    }
-
-    let mut counts: HashMap<&str, usize> = HashMap::new();
-    for (label, _) in &actual_pairs {
-        *counts.entry(label.as_str()).or_insert(0) += 1;
-    }
-
-    let mut ambiguous: BTreeSet<String> = BTreeSet::new();
-    for (label, _) in &actual_pairs {
-        if counts.get(label.as_str()).copied().unwrap_or(0) > 1 && !ambiguous.contains(label) {
-            let values: Vec<String> = actual_pairs
-                .iter()
-                .filter(|(l, _)| l == label)
-                .map(|(_, f)| f.summary())
-                .collect();
-            failures.push(Failure::AmbiguousLabel {
-                path: path.to_vec(),
-                label: label.clone(),
-                actual_values: values,
-            });
-            ambiguous.insert(label.clone());
-        }
-    }
-
-    for (label, fe) in expected_fields {
-        if ambiguous.contains(label) {
-            continue;
-        }
-        let matches: Vec<&ActualField> = actual_pairs
-            .iter()
-            .filter(|(l, _)| l == label)
-            .map(|(_, f)| f)
-            .collect();
-        if matches.is_empty() {
-            failures.push(Failure::FieldMissing {
-                path: path.to_vec(),
-                label: label.clone(),
-                expected_kind: expected_field_kind(fe),
-            });
-            continue;
-        }
-        let actual = matches[0];
-        match (fe, actual) {
-            (FieldExpected::Value(expected_val), ActualField::Scalar(actual_val)) => {
-                if expected_val.as_str() != *actual_val {
-                    failures.push(Failure::FieldValueMismatch {
-                        path: path.to_vec(),
-                        label: label.clone(),
-                        expected: expected_val.clone(),
-                        actual: (*actual_val).to_string(),
-                    });
-                }
-            }
-            (
-                FieldExpected::Nested(ne),
-                ActualField::Nested {
-                    intent: actual_intent,
-                    owner: actual_owner,
-                    entries: actual_inner,
-                },
-            ) => {
-                let mut new_path = path.to_vec();
-                new_path.push(label.clone());
-                let actual_owner = actual_owner.map(str::to_string);
-                if ne.owner != actual_owner {
-                    failures.push(Failure::OwnerMismatch {
-                        path: new_path.clone(),
-                        expected: ne.owner.clone(),
-                        actual: actual_owner,
-                    });
-                }
-                compare_level(
-                    &new_path,
-                    &ne.intent,
-                    &ne.fields,
-                    actual_intent,
-                    actual_inner,
-                    failures,
-                );
-            }
-            _ => {
-                failures.push(Failure::FieldKindMismatch {
-                    path: path.to_vec(),
-                    label: label.clone(),
-                    expected_kind: expected_field_kind(fe),
-                    actual_kind: actual.kind(),
+                out.push(ActualField::Nested {
+                    label: label.as_str(),
+                    intent: intent.as_str(),
+                    owner: owner.as_deref(),
+                    entries: entries.as_slice(),
                 });
             }
         }
     }
-
-    for (label, f) in &actual_pairs {
-        if ambiguous.contains(label) {
-            continue;
-        }
-        if !expected_fields.contains_key(label) {
-            failures.push(Failure::FieldExtra {
-                path: path.to_vec(),
-                label: label.clone(),
-                actual_summary: f.summary(),
-            });
-        }
-    }
-}
-
-fn expected_field_kind(fe: &FieldExpected) -> FieldKind {
-    match fe {
-        FieldExpected::Value(_) => FieldKind::Scalar,
-        FieldExpected::Nested(_) => FieldKind::Nested,
-    }
+    out
 }
 
 #[allow(dead_code)]
@@ -445,7 +376,6 @@ mod tests {
     use super::*;
     use clear_signing::engine::{DisplayEntry, DisplayItem, DisplayModel};
     use clear_signing::outcome::FormatOutcome;
-    use indexmap::IndexMap;
 
     fn outcome(model: DisplayModel) -> FormatOutcome {
         FormatOutcome::ClearSigned {
@@ -494,19 +424,30 @@ mod tests {
         }
     }
 
-    fn nested_expected(
-        intent: &str,
-        owner: Option<&str>,
-        fields: IndexMap<String, FieldExpected>,
-    ) -> FieldExpected {
-        FieldExpected::Nested(NestedExpected {
-            intent: intent.to_string(),
-            owner: owner.map(str::to_string),
-            fields,
-        })
+    fn field(label: &str, value: &str) -> FieldEntry {
+        FieldEntry {
+            label: label.to_string(),
+            value: FieldValue::Value(value.to_string()),
+        }
     }
 
-    fn expected_with(intent: &str, fields: IndexMap<String, FieldExpected>) -> Expected {
+    fn nested_field(
+        label: &str,
+        intent: &str,
+        owner: Option<&str>,
+        fields: Vec<FieldEntry>,
+    ) -> FieldEntry {
+        FieldEntry {
+            label: label.to_string(),
+            value: FieldValue::Nested(NestedExpected {
+                intent: intent.to_string(),
+                owner: owner.map(str::to_string),
+                fields,
+            }),
+        }
+    }
+
+    fn expected_with(intent: &str, fields: Vec<FieldEntry>) -> Expected {
         Expected {
             intent: intent.to_string(),
             interpolated_intent: None,
@@ -515,12 +456,84 @@ mod tests {
         }
     }
 
-    fn fields_with(items: &[(&str, FieldExpected)]) -> IndexMap<String, FieldExpected> {
-        let mut m = IndexMap::new();
-        for (k, v) in items {
-            m.insert((*k).to_string(), v.clone());
-        }
-        m
+    #[test]
+    fn duplicate_labels_compare_positionally_and_pass() {
+        let o = outcome(model(
+            "Outer",
+            None,
+            None,
+            vec![
+                item("Signer", "0xaaa"),
+                item("Signer", "0xbbb"),
+                item("Threshold", "2"),
+            ],
+        ));
+        let exp = expected_with(
+            "Outer",
+            vec![
+                field("Signer", "0xaaa"),
+                field("Signer", "0xbbb"),
+                field("Threshold", "2"),
+            ],
+        );
+        let r = compare("t", &exp, &o);
+        assert!(
+            r.passed,
+            "duplicate labels at distinct positions should compare equal: {:?}",
+            r.failures
+        );
+    }
+
+    #[test]
+    fn duplicate_labels_swapped_fail_on_value() {
+        let o = outcome(model(
+            "Outer",
+            None,
+            None,
+            vec![item("Signer", "0xbbb"), item("Signer", "0xaaa")],
+        ));
+        let exp = expected_with(
+            "Outer",
+            vec![field("Signer", "0xaaa"), field("Signer", "0xbbb")],
+        );
+        let r = compare("t", &exp, &o);
+        let mismatches: Vec<_> = r
+            .failures
+            .iter()
+            .filter(|f| matches!(f, Failure::FieldValueMismatch { .. }))
+            .collect();
+        assert_eq!(
+            mismatches.len(),
+            2,
+            "expected both positions to mismatch, got {:?}",
+            r.failures
+        );
+    }
+
+    #[test]
+    fn length_mismatch_reported() {
+        let o = outcome(model("Outer", None, None, vec![item("A", "1"), item("B", "2")]));
+        let exp = expected_with("Outer", vec![field("A", "1")]);
+        let r = compare("t", &exp, &o);
+        let hit = r.failures.iter().any(|f| {
+            matches!(
+                f,
+                Failure::FieldCountMismatch { expected: 1, actual: 2, .. }
+            )
+        });
+        assert!(hit, "no FieldCountMismatch in {:?}", r.failures);
+    }
+
+    #[test]
+    fn label_mismatch_at_position() {
+        let o = outcome(model("Outer", None, None, vec![item("Foo", "1")]));
+        let exp = expected_with("Outer", vec![field("Bar", "1")]);
+        let r = compare("t", &exp, &o);
+        let hit = r.failures.iter().any(|f| matches!(
+            f,
+            Failure::FieldLabelMismatch { index: 0, expected, actual, .. } if expected == "Bar" && actual == "Foo"
+        ));
+        assert!(hit, "no FieldLabelMismatch in {:?}", r.failures);
     }
 
     #[test]
@@ -535,10 +548,14 @@ mod tests {
                 vec![item("Recipient", "0xabc")],
             )],
         ));
-        let inner_fields = fields_with(&[("Recipient", FieldExpected::Value("0xabc".into()))]);
         let exp = expected_with(
             "Outer",
-            fields_with(&[("Transaction", nested_expected("Inner", None, inner_fields))]),
+            vec![nested_field(
+                "Transaction",
+                "Inner",
+                None,
+                vec![field("Recipient", "0xabc")],
+            )],
         );
         let r = compare("t", &exp, &o);
         assert!(r.passed, "expected pass, got failures: {:?}", r.failures);
@@ -559,10 +576,7 @@ mod tests {
         ));
         let exp = expected_with(
             "Outer",
-            fields_with(&[(
-                "Transaction",
-                nested_expected("Inner", Some("Inner DAO"), IndexMap::new()),
-            )]),
+            vec![nested_field("Transaction", "Inner", Some("Inner DAO"), vec![])],
         );
         let r = compare("t", &exp, &o);
         assert!(r.passed, "expected pass, got failures: {:?}", r.failures);
@@ -583,17 +597,20 @@ mod tests {
         ));
         let exp = expected_with(
             "Outer",
-            fields_with(&[(
+            vec![nested_field(
                 "Transaction",
-                nested_expected("Inner", Some("Expected DAO"), IndexMap::new()),
-            )]),
+                "Inner",
+                Some("Expected DAO"),
+                vec![],
+            )],
         );
         let r = compare("t", &exp, &o);
         let hit = r.failures.iter().any(|f| {
             matches!(
                 f,
                 Failure::OwnerMismatch { path, expected, actual }
-                    if path == &["Transaction".to_string()]
+                    if !path.is_empty()
+                        && path[0].ends_with("Transaction")
                         && expected.as_deref() == Some("Expected DAO")
                         && actual.as_deref() == Some("Actual DAO")
             )
@@ -613,22 +630,22 @@ mod tests {
                 vec![item("Recipient", "0xWRONG")],
             )],
         ));
-        let inner_fields = fields_with(&[("Recipient", FieldExpected::Value("0xabc".into()))]);
         let exp = expected_with(
             "Outer",
-            fields_with(&[("Transaction", nested_expected("Inner", None, inner_fields))]),
+            vec![nested_field(
+                "Transaction",
+                "Inner",
+                None,
+                vec![field("Recipient", "0xabc")],
+            )],
         );
         let r = compare("t", &exp, &o);
-        assert!(!r.passed);
-        let has_pathed_value = r.failures.iter().any(|f| matches!(
+        let hit = r.failures.iter().any(|f| matches!(
             f,
-            Failure::FieldValueMismatch { path, label, .. } if path == &["Transaction".to_string()] && label == "Recipient"
+            Failure::FieldValueMismatch { path, label, .. }
+                if !path.is_empty() && path[0].ends_with("Transaction") && label == "Recipient"
         ));
-        assert!(
-            has_pathed_value,
-            "no path-tagged FieldValueMismatch in {:?}",
-            r.failures
-        );
+        assert!(hit, "no path-tagged FieldValueMismatch in {:?}", r.failures);
     }
 
     #[test]
@@ -641,16 +658,13 @@ mod tests {
         ));
         let exp = expected_with(
             "Outer",
-            fields_with(&[(
-                "Transaction",
-                nested_expected("EXPECTED", None, IndexMap::new()),
-            )]),
+            vec![nested_field("Transaction", "EXPECTED", None, vec![])],
         );
         let r = compare("t", &exp, &o);
         let hit = r.failures.iter().any(|f| matches!(
             f,
             Failure::IntentMismatch { path, expected, actual }
-                if path == &["Transaction".to_string()] && expected == "EXPECTED" && actual == "ACTUAL"
+                if !path.is_empty() && path[0].ends_with("Transaction") && expected == "EXPECTED" && actual == "ACTUAL"
         ));
         assert!(hit, "no nested-path IntentMismatch in {:?}", r.failures);
     }
@@ -660,12 +674,17 @@ mod tests {
         let o = outcome(model("Outer", None, None, vec![item("X", "v")]));
         let exp = expected_with(
             "Outer",
-            fields_with(&[("X", nested_expected("y", None, IndexMap::new()))]),
+            vec![nested_field("X", "y", None, vec![])],
         );
         let r = compare("t", &exp, &o);
         let hit = r.failures.iter().any(|f| matches!(
             f,
-            Failure::FieldKindMismatch { label, expected_kind: FieldKind::Nested, actual_kind: FieldKind::Scalar, .. } if label == "X"
+            Failure::FieldKindMismatch {
+                label,
+                expected_kind: FieldKind::Nested,
+                actual_kind: FieldKind::Scalar,
+                ..
+            } if label == "X"
         ));
         assert!(hit, "no FieldKindMismatch in {:?}", r.failures);
     }
@@ -673,14 +692,16 @@ mod tests {
     #[test]
     fn kind_mismatch_nested_vs_scalar() {
         let o = outcome(model("Outer", None, None, vec![nested("X", "y", vec![])]));
-        let exp = expected_with(
-            "Outer",
-            fields_with(&[("X", FieldExpected::Value("v".into()))]),
-        );
+        let exp = expected_with("Outer", vec![field("X", "v")]);
         let r = compare("t", &exp, &o);
         let hit = r.failures.iter().any(|f| matches!(
             f,
-            Failure::FieldKindMismatch { label, expected_kind: FieldKind::Scalar, actual_kind: FieldKind::Nested, .. } if label == "X"
+            Failure::FieldKindMismatch {
+                label,
+                expected_kind: FieldKind::Scalar,
+                actual_kind: FieldKind::Nested,
+                ..
+            } if label == "X"
         ));
         assert!(hit, "no FieldKindMismatch in {:?}", r.failures);
     }
@@ -692,7 +713,7 @@ mod tests {
             intent: "Outer".into(),
             interpolated_intent: Some("Want this".into()),
             owner: None,
-            fields: IndexMap::new(),
+            fields: vec![],
         };
         let r = compare("t", &exp, &o);
         let hit = r.failures.iter().any(|f| matches!(
@@ -705,7 +726,7 @@ mod tests {
     #[test]
     fn interpolated_intent_skipped_when_omitted() {
         let o = outcome(model("Outer", Some("Whatever"), None, vec![]));
-        let exp = expected_with("Outer", IndexMap::new());
+        let exp = expected_with("Outer", vec![]);
         let r = compare("t", &exp, &o);
         let has_inter = r
             .failures
@@ -719,70 +740,23 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_label_inside_nested_block_reports_correct_path() {
-        let o = outcome(model(
-            "Outer",
-            None,
-            None,
-            vec![nested(
-                "Transaction",
-                "Inner",
-                vec![item("Amount", "1"), item("Amount", "2")],
-            )],
-        ));
-        let inner_fields = fields_with(&[("Amount", FieldExpected::Value("1".into()))]);
-        let exp = expected_with(
-            "Outer",
-            fields_with(&[("Transaction", nested_expected("Inner", None, inner_fields))]),
-        );
-        let r = compare("t", &exp, &o);
-        let hit = r.failures.iter().any(|f| matches!(
-            f,
-            Failure::AmbiguousLabel { path, label, .. } if path == &["Transaction".to_string()] && label == "Amount"
-        ));
-        assert!(hit, "no path-tagged AmbiguousLabel in {:?}", r.failures);
-        let value_compare_skipped = !r.failures.iter().any(|f| {
-            matches!(
-                f,
-                Failure::FieldValueMismatch { label, .. } if label == "Amount"
-            )
-        });
-        assert!(
-            value_compare_skipped,
-            "should skip per-label compare when ambiguous"
-        );
-    }
-
-    #[test]
-    fn nested_expected_deserializes_with_owner() {
-        let parsed: FieldExpected = serde_json::from_str(
-            r#"{"intent":"Inner","owner":"Inner DAO","fields":{"Amount":"1 USDC"}}"#,
+    fn nested_field_deserializes_with_owner() {
+        let parsed: FieldEntry = serde_json::from_str(
+            r#"{"label":"Inner","value":{"intent":"Inner","owner":"Inner DAO","fields":[{"label":"Amount","value":"1 USDC"}]}}"#,
         )
         .unwrap();
 
-        match parsed {
-            FieldExpected::Nested(nested) => {
+        assert_eq!(parsed.label, "Inner");
+        match parsed.value {
+            FieldValue::Nested(nested) => {
                 assert_eq!(nested.intent, "Inner");
                 assert_eq!(nested.owner.as_deref(), Some("Inner DAO"));
+                assert_eq!(nested.fields.len(), 1);
+                assert_eq!(nested.fields[0].label, "Amount");
                 assert!(matches!(
-                    nested.fields.get("Amount"),
-                    Some(FieldExpected::Value(value)) if value == "1 USDC"
+                    &nested.fields[0].value,
+                    FieldValue::Value(v) if v == "1 USDC"
                 ));
-            }
-            other => panic!("expected nested field, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn nested_expected_deserializes_without_owner() {
-        let parsed: FieldExpected =
-            serde_json::from_str(r#"{"intent":"Inner","fields":{}}"#).unwrap();
-
-        match parsed {
-            FieldExpected::Nested(nested) => {
-                assert_eq!(nested.intent, "Inner");
-                assert_eq!(nested.owner, None);
-                assert!(nested.fields.is_empty());
             }
             other => panic!("expected nested field, got {other:?}"),
         }
