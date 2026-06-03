@@ -107,10 +107,7 @@ pub(crate) fn format_with_decimals(amount: &BigUint, decimals: u8) -> String {
         let mut result = String::from("0.");
         result.extend(std::iter::repeat_n('0', zeros));
         result.push_str(&s);
-        let trimmed = result.trim_end_matches('0');
-        if trimmed.ends_with('.') {
-            return format!("{trimmed}0");
-        }
+        let trimmed = result.trim_end_matches('0').trim_end_matches('.');
         return trimmed.to_string();
     }
 
@@ -180,8 +177,11 @@ pub(crate) fn parse_unsigned_biguint_from_typed_value(
         .ok_or_else(|| Error::Render(format!("{format_name} field must be an unsigned integer")))
 }
 
-pub(crate) fn format_unit_biguint(raw_val: &BigUint, params: Option<&FormatParams>) -> String {
-    let base = params.and_then(|p| p.base.as_deref()).unwrap_or("");
+pub(crate) fn format_unit_biguint(
+    raw_val: &BigUint,
+    base: &str,
+    params: Option<&FormatParams>,
+) -> String {
     let decimals = params.and_then(|p| p.decimals).unwrap_or(0);
     let use_prefix = params.and_then(|p| p.prefix).unwrap_or(false);
 
@@ -230,9 +230,8 @@ pub(crate) fn format_timestamp(timestamp: i64) -> Result<String, Error> {
     let dt = time::OffsetDateTime::from_unix_timestamp(timestamp)
         .map_err(|e| Error::Render(format!("invalid timestamp: {e}")))?;
 
-    let format =
-        time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second] UTC")
-            .map_err(|e| Error::Render(format!("format error: {e}")))?;
+    let format = time::format_description::parse("[year]-[month]-[day] [hour]:[minute]:[second]Z")
+        .map_err(|e| Error::Render(format!("format error: {e}")))?;
 
     dt.format(&format)
         .map_err(|e| Error::Render(format!("format error: {e}")))
@@ -270,6 +269,12 @@ pub(crate) struct InterpolationFieldSpec<'a> {
     pub separator: Option<&'a str>,
 }
 
+/// Normalize a path for interpolation matching: a bare parameter name (`amount`)
+/// and the `#.`-prefixed form (`#.amount`) refer to the same field.
+fn normalize_interpolation_path(path: &str) -> &str {
+    path.strip_prefix("#.").unwrap_or(path)
+}
+
 pub(crate) fn find_interpolation_field<'a>(
     fields: &'a [DisplayField],
     path: &str,
@@ -284,7 +289,7 @@ pub(crate) fn find_interpolation_field<'a>(
                 params,
                 separator,
                 ..
-            } if field_path == path => {
+            } if normalize_interpolation_path(field_path) == normalize_interpolation_path(path) => {
                 return Some(InterpolationFieldSpec {
                     label,
                     path: field_path,
@@ -409,7 +414,17 @@ mod tests {
         assert_eq!(format_with_decimals(&amount, 6), "0.000123");
 
         let amount = BigUint::from(0u64);
-        assert_eq!(format_with_decimals(&amount, 18), "0.0");
+        assert_eq!(format_with_decimals(&amount, 18), "0");
+    }
+
+    #[test]
+    fn test_format_timestamp_uses_rfc3339_z_suffix() {
+        assert_eq!(format_timestamp(0).unwrap(), "1970-01-01 00:00:00Z");
+        let s = format_timestamp(1_700_000_000).unwrap();
+        assert!(
+            s.ends_with('Z') && !s.contains("UTC"),
+            "expected RFC-3339 Z suffix, got {s:?}"
+        );
     }
 
     #[test]

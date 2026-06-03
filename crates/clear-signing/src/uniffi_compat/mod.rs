@@ -733,7 +733,7 @@ mod tests {
         .expect("typed blockheight formatting should succeed");
 
         match &result.entries[0] {
-            DisplayEntry::Item(item) => assert_eq!(item.value, "2024-03-09 16:00:00 UTC"),
+            DisplayEntry::Item(item) => assert_eq!(item.value, "2024-03-09 16:00:00Z"),
             _ => panic!("expected item entry"),
         }
     }

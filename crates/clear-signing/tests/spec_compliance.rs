@@ -782,7 +782,7 @@ async fn test_date_blockheight_encoding() {
     .await
     .unwrap();
     if let DisplayEntry::Item(ref item) = result.entries[0] {
-        assert_eq!(item.value, "2024-03-09 16:00:00 UTC");
+        assert_eq!(item.value, "2024-03-09 16:00:00Z");
     } else {
         panic!("expected Item");
     }
@@ -2766,7 +2766,7 @@ async fn test_eip712_encode_type_format_key() {
     }
     if let DisplayEntry::Item(ref item) = result.entries[3] {
         assert_eq!(item.label, "Beneficiary");
-        assert_eq!(item.value, "0xbf01daf454dce008d3e2bfd47d5e186f71477253");
+        assert_eq!(item.value, "0xBf01daF454dce008d3E2bfD47d5e186F71477253");
     } else {
         panic!("expected Item for Beneficiary");
     }
@@ -4713,7 +4713,7 @@ async fn test_eip712_interpolation_uses_same_formatting_as_fields() {
         .unwrap();
     assert_eq!(
         result.interpolated_intent.as_deref(),
-        Some("Send 1.5 USDC to Sender as Variable before 2023-11-14 22:13:20 UTC")
+        Some("Send 1.5 USDC to Sender as Variable before 2023-11-14 22:13:20Z")
     );
 }
 

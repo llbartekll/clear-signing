@@ -227,7 +227,7 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
     // Gas price — now tokenAmount format with native currency
     if let DisplayEntry::Item(ref item) = result.entries[nested_idx + 2] {
         assert_eq!(item.label, "Gas price");
-        assert_eq!(item.value, "0.0 ETH");
+        assert_eq!(item.value, "0 ETH");
     } else {
         panic!("expected Item for Gas price");
     }

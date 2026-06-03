@@ -19,10 +19,12 @@ use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, Ren
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
-    chain_name, coerce_unsigned_decimal_string_from_typed_value, format_blockheight_timestamp,
+    chain_name, coerce_unsigned_biguint_from_typed_value,
+    coerce_unsigned_decimal_string_from_typed_value, format_blockheight_timestamp,
     format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
-    is_excluded_path, lookup_map_entry, native_token_meta, parse_unsigned_biguint_from_typed_value,
-    resolve_interpolation_field_spec, resolve_metadata_constant_str,
+    format_with_decimals, is_excluded_path, lookup_map_entry, native_token_meta,
+    parse_unsigned_biguint_from_typed_value, resolve_interpolation_field_spec,
+    resolve_metadata_constant_str,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -664,15 +666,42 @@ fn render_typed_group_kind<'a>(
 
         match group.iteration {
             Iteration::Sequential => {
-                let items = child_kinds
-                    .into_iter()
-                    .flat_map(|kind| match kind {
-                        TypedGroupRenderKind::Scalar(items) => items,
-                        TypedGroupRenderKind::Bundles(bundles) => {
-                            bundles.into_iter().flatten().collect()
+                let all_bundles = !child_kinds.is_empty()
+                    && child_kinds
+                        .iter()
+                        .all(|k| matches!(k, TypedGroupRenderKind::Bundles(_)));
+                let items = if all_bundles {
+                    // Element-major: keep each array element's fields contiguous
+                    // (e.g. [amount0, addr0, amount1, addr1]) rather than grouping
+                    // all of one field's elements together.
+                    let mut sets: Vec<_> = child_kinds
+                        .into_iter()
+                        .map(|k| match k {
+                            TypedGroupRenderKind::Bundles(b) => b,
+                            TypedGroupRenderKind::Scalar(_) => Vec::new(),
+                        })
+                        .collect();
+                    let element_count = sets.iter().map(Vec::len).max().unwrap_or(0);
+                    let mut items = Vec::new();
+                    for i in 0..element_count {
+                        for set in sets.iter_mut() {
+                            if i < set.len() {
+                                items.append(&mut set[i]);
+                            }
                         }
-                    })
-                    .collect();
+                    }
+                    items
+                } else {
+                    child_kinds
+                        .into_iter()
+                        .flat_map(|kind| match kind {
+                            TypedGroupRenderKind::Scalar(items) => items,
+                            TypedGroupRenderKind::Bundles(bundles) => {
+                                bundles.into_iter().flatten().collect()
+                            }
+                        })
+                        .collect()
+                };
                 Ok(TypedGroupRenderKind::Scalar(items))
             }
             Iteration::Bundled => {
@@ -1385,6 +1414,20 @@ pub(crate) fn coerce_typed_address_string(val: &serde_json::Value) -> Option<Str
     }
 }
 
+/// EIP-55 checksum an address string for display, leaving non-addresses unchanged.
+fn checksum_address_string(addr: &str) -> String {
+    let Some(hex_str) = addr.strip_prefix("0x").or_else(|| addr.strip_prefix("0X")) else {
+        return addr.to_string();
+    };
+    match hex::decode(hex_str)
+        .ok()
+        .and_then(|bytes| crate::engine::address_bytes_from_raw_bytes(&bytes))
+    {
+        Some(b) => crate::engine::eip55_checksum(&b),
+        None => addr.to_string(),
+    }
+}
+
 pub(crate) fn selector_from_typed_value(val: &serde_json::Value) -> Option<[u8; 4]> {
     match val {
         serde_json::Value::String(s) => {
@@ -1607,9 +1650,9 @@ async fn format_typed_value(
     };
 
     match fmt {
-        FieldFormat::Address => {
-            Ok(coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val)))
-        }
+        FieldFormat::Address => Ok(coerce_typed_address_string(val)
+            .map(|a| checksum_address_string(&a))
+            .unwrap_or_else(|| json_value_to_string(val))),
         FieldFormat::AddressName | FieldFormat::InteroperableAddressName => {
             let addr =
                 coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
@@ -1673,7 +1716,7 @@ async fn format_typed_value(
                     return Ok(name);
                 }
             }
-            Ok(addr)
+            Ok(checksum_address_string(&addr))
         }
         FieldFormat::TokenAmount => {
             let amount = parse_typed_biguint_value(val, "tokenAmount")?;
@@ -1782,16 +1825,43 @@ async fn format_typed_value(
             let cid = parse_typed_u64_value(val, "chainId")?;
             Ok(chain_name(cid))
         }
-        FieldFormat::Raw => Ok(json_value_to_string(val)),
-        FieldFormat::Amount => Ok(coerce_unsigned_decimal_string_from_typed_value(val)
-            .unwrap_or_else(|| json_value_to_string(val))),
+        // No EIP-712 type is known here, so a 20-byte hex value under `raw` is
+        // treated as an address and checksummed (parity with the calldata Address
+        // path); a genuine `bytes20` raw field would be mis-cased.
+        FieldFormat::Raw => Ok(match val {
+            serde_json::Value::String(s)
+                if s.len() == 42
+                    && (s.starts_with("0x") || s.starts_with("0X"))
+                    && s[2..].chars().all(|c| c.is_ascii_hexdigit()) =>
+            {
+                checksum_address_string(s)
+            }
+            _ => json_value_to_string(val),
+        }),
+        FieldFormat::Amount => match coerce_unsigned_biguint_from_typed_value(val) {
+            Some(n) => {
+                // Per ERC-7730 the `amount` format is a native-currency amount.
+                let chain_id = resolve_typed_chain_id(params, container, message)?;
+                let meta = native_token_meta(chain_id);
+                Ok(format!(
+                    "{} {}",
+                    format_with_decimals(&n, meta.decimals),
+                    meta.symbol
+                ))
+            }
+            None => Ok(json_value_to_string(val)),
+        },
         FieldFormat::Duration => {
             let secs = parse_typed_u64_value(val, "duration")?;
             Ok(format_duration_seconds(secs))
         }
         FieldFormat::Unit => {
             let amount = parse_unsigned_biguint_from_typed_value(val, "unit")?;
-            Ok(format_unit_biguint(&amount, params))
+            let base = params
+                .and_then(|p| p.base.as_deref())
+                .map(|b| resolve_metadata_constant_str(descriptor, b))
+                .unwrap_or_default();
+            Ok(format_unit_biguint(&amount, &base, params))
         }
         FieldFormat::NftName => {
             let token_id = json_value_to_string(val);
@@ -2166,7 +2236,7 @@ mod tests {
         match &result.entries[0] {
             DisplayEntry::Item(item) => {
                 assert_eq!(item.label, "Recipient");
-                assert_eq!(item.value, "0xf0a063a21be62b709937ca2a808594b662fe41e6");
+                assert_eq!(item.value, "0xF0A063A21Be62B709937Ca2a808594b662fE41E6");
             }
             _ => panic!("expected Item"),
         }
@@ -2252,7 +2322,7 @@ mod tests {
             _ => panic!("expected Item"),
         }
         match &result.entries[2] {
-            DisplayEntry::Item(item) => assert_eq!(item.value, "500"),
+            DisplayEntry::Item(item) => assert_eq!(item.value, "0.0000000000000005 ETH"),
             _ => panic!("expected Item"),
         }
         match &result.entries[3] {

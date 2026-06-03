@@ -95,7 +95,7 @@ async fn permit2_permit_single_real_wallet_request_formats_with_current_descript
 
     assert_eq!(
         entry_value(&result.entries, "Spender"),
-        "0x851116d9223fabed8e56c0e6b8ad0c31d98b3507"
+        "0x851116D9223fabED8E56C0E6b8Ad0c31d98B3507"
     );
     assert_eq!(
         entry_value(&result.entries, "Amount allowance"),
@@ -103,6 +103,6 @@ async fn permit2_permit_single_real_wallet_request_formats_with_current_descript
     );
     assert_eq!(
         entry_value(&result.entries, "Approval expires"),
-        "2026-04-28 09:57:11 UTC"
+        "2026-04-28 09:57:11Z"
     );
 }

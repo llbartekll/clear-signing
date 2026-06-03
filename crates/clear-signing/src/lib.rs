@@ -882,13 +882,13 @@ mod tests {
         assert_eq!(result.entries.len(), 1);
         if let DisplayEntry::Item(ref item) = result.entries[0] {
             assert_eq!(item.label, "New Unlock Time");
-            assert_eq!(item.value, "2025-12-19 13:42:21 UTC");
+            assert_eq!(item.value, "2025-12-19 13:42:21Z");
         } else {
             panic!("expected Item");
         }
         assert_eq!(
             result.interpolated_intent.as_deref(),
-            Some("Increase unlock time to 2025-12-19 13:42:21 UTC")
+            Some("Increase unlock time to 2025-12-19 13:42:21Z")
         );
         assert!(result.diagnostics().is_empty());
     }

@@ -489,15 +489,42 @@ fn render_group_kind<'a>(
 
         match group.iteration {
             Iteration::Sequential => {
-                let items = child_kinds
-                    .into_iter()
-                    .flat_map(|kind| match kind {
-                        GroupRenderKind::Scalar(items) => items,
-                        GroupRenderKind::Bundles(bundles) => {
-                            bundles.into_iter().flatten().collect()
+                let all_bundles = !child_kinds.is_empty()
+                    && child_kinds
+                        .iter()
+                        .all(|k| matches!(k, GroupRenderKind::Bundles(_)));
+                let items = if all_bundles {
+                    // Element-major: keep each array element's fields contiguous
+                    // (e.g. [amount0, addr0, amount1, addr1]) rather than grouping
+                    // all of one field's elements together.
+                    let mut sets: Vec<_> = child_kinds
+                        .into_iter()
+                        .map(|k| match k {
+                            GroupRenderKind::Bundles(b) => b,
+                            GroupRenderKind::Scalar(_) => Vec::new(),
+                        })
+                        .collect();
+                    let element_count = sets.iter().map(Vec::len).max().unwrap_or(0);
+                    let mut items = Vec::new();
+                    for i in 0..element_count {
+                        for set in sets.iter_mut() {
+                            if i < set.len() {
+                                items.append(&mut set[i]);
+                            }
                         }
-                    })
-                    .collect();
+                    }
+                    items
+                } else {
+                    child_kinds
+                        .into_iter()
+                        .flat_map(|kind| match kind {
+                            GroupRenderKind::Scalar(items) => items,
+                            GroupRenderKind::Bundles(bundles) => {
+                                bundles.into_iter().flatten().collect()
+                            }
+                        })
+                        .collect()
+                };
                 Ok(GroupRenderKind::Scalar(items))
             }
             Iteration::Bundled => {
@@ -1342,7 +1369,7 @@ async fn format_value(
         FieldFormat::TokenAmount => {
             format_token_amount(ctx, val, params, label, path, warnings).await
         }
-        FieldFormat::Amount => format_amount(ctx, val, path),
+        FieldFormat::Amount => format_amount(ctx, val),
         FieldFormat::Date => {
             format_date(ctx, val, params.and_then(|p| p.encoding.as_deref())).await
         }
@@ -1354,7 +1381,7 @@ async fn format_value(
         FieldFormat::TokenTicker => format_token_ticker(ctx, val, params, warnings).await,
         FieldFormat::ChainId => format_chain_id(val),
         FieldFormat::Duration => Ok(format_duration(val)?),
-        FieldFormat::Unit => Ok(format_unit(val, params)?),
+        FieldFormat::Unit => Ok(format_unit(ctx.descriptor, val, params)?),
         FieldFormat::Calldata => {
             // Should not reach here — calldata format is intercepted in render_fields
             warnings.push(render_warning(
@@ -1642,7 +1669,7 @@ fn format_raw_with_separator(val: &ArgumentValue, separator: Option<&str>) -> St
 
 fn format_raw(val: &ArgumentValue) -> String {
     match val {
-        ArgumentValue::Address(addr) => format!("0x{}", hex::encode(addr)),
+        ArgumentValue::Address(addr) => eip55_checksum(addr),
         ArgumentValue::Uint(bytes) | ArgumentValue::Int(bytes) => {
             let n = BigUint::from_bytes_be(bytes);
             n.to_string()
@@ -1780,7 +1807,7 @@ async fn format_address_name(
 }
 
 /// EIP-55 mixed-case checksum encoding.
-fn eip55_checksum(addr: &[u8; 20]) -> String {
+pub(crate) fn eip55_checksum(addr: &[u8; 20]) -> String {
     use tiny_keccak::{Hasher, Keccak};
 
     let hex_addr = hex::encode(addr);
@@ -1988,22 +2015,15 @@ fn resolve_chain_id(ctx: &RenderContext<'_>, params: Option<&FormatParams>) -> u
     ctx.chain_id
 }
 
-fn format_amount(
-    ctx: &RenderContext<'_>,
-    val: &ArgumentValue,
-    path: &str,
-) -> Result<String, Error> {
+fn format_amount(ctx: &RenderContext<'_>, val: &ArgumentValue) -> Result<String, Error> {
     let Some(n) = unsigned_biguint_from_argument_value_for_amount(val) else {
         return Ok(format_raw(val));
     };
 
-    if path.starts_with("@.value") {
-        let meta = native_token_meta(ctx.chain_id);
-        let formatted = format_with_decimals(&n, meta.decimals);
-        Ok(format!("{} {}", formatted, meta.symbol))
-    } else {
-        Ok(n.to_string())
-    }
+    // Per ERC-7730 the `amount` format is a native-currency amount.
+    let meta = native_token_meta(ctx.chain_id);
+    let formatted = format_with_decimals(&n, meta.decimals);
+    Ok(format!("{} {}", formatted, meta.symbol))
 }
 
 async fn format_date(
@@ -2210,12 +2230,20 @@ fn format_duration(val: &ArgumentValue) -> Result<String, Error> {
 }
 
 /// Format a unit value (e.g., percentage, bps) with optional decimals and SI prefix.
-fn format_unit(val: &ArgumentValue, params: Option<&FormatParams>) -> Result<String, Error> {
+fn format_unit(
+    descriptor: &Descriptor,
+    val: &ArgumentValue,
+    params: Option<&FormatParams>,
+) -> Result<String, Error> {
     let Some(raw_val) = unsigned_biguint_from_argument_value_including_int(val) else {
         return Ok(format_raw(val));
     };
 
-    Ok(format_unit_biguint(&raw_val, params))
+    let base = params
+        .and_then(|p| p.base.as_deref())
+        .map(|b| resolve_metadata_constant_str(descriptor, b))
+        .unwrap_or_default();
+    Ok(format_unit_biguint(&raw_val, &base, params))
 }
 
 async fn resolve_and_format_for_interpolation(

@@ -170,10 +170,7 @@ async fn okx_dag_swap_by_order_id() {
         get_entry_value(&result, "Minimum to Receive"),
         "79.967291 USDT"
     );
-    assert_eq!(
-        get_entry_value(&result, "Deadline"),
-        "2026-03-27 09:16:30 UTC"
-    );
+    assert_eq!(get_entry_value(&result, "Deadline"), "2026-03-27 09:16:30Z");
 }
 
 #[tokio::test]
@@ -197,10 +194,7 @@ async fn okx_dag_swap_to() {
         get_entry_value(&result, "Minimum to Receive"),
         "29214176.335451806255049275 DOGZ"
     );
-    assert_eq!(
-        get_entry_value(&result, "Deadline"),
-        "2026-03-27 09:15:02 UTC"
-    );
+    assert_eq!(get_entry_value(&result, "Deadline"), "2026-03-27 09:15:02Z");
 }
 
 #[tokio::test]
@@ -258,10 +252,7 @@ async fn okx_smart_swap_by_order_id() {
         get_entry_value(&result, "Minimum to Receive"),
         "5.489334 USDT"
     );
-    assert_eq!(
-        get_entry_value(&result, "Deadline"),
-        "2026-03-30 11:35:20 UTC"
-    );
+    assert_eq!(get_entry_value(&result, "Deadline"), "2026-03-30 11:35:20Z");
 }
 
 #[tokio::test]
@@ -297,10 +288,7 @@ async fn okx_smart_swap_to() {
         get_entry_value(&result, "Minimum to Receive"),
         "10.232658 USDT"
     );
-    assert_eq!(
-        get_entry_value(&result, "Deadline"),
-        "2026-03-30 09:05:35 UTC"
-    );
+    assert_eq!(get_entry_value(&result, "Deadline"), "2026-03-30 09:05:35Z");
 }
 
 #[tokio::test]
@@ -339,10 +327,7 @@ async fn okx_swap_wrap_to_with_base_request() {
         get_entry_value(&result, "Wrap/Unwrap Amount"),
         "0.024875 WETH"
     );
-    assert_eq!(
-        get_entry_value(&result, "Deadline"),
-        "2026-03-30 07:47:41 UTC"
-    );
+    assert_eq!(get_entry_value(&result, "Deadline"), "2026-03-30 07:47:41Z");
 }
 
 #[tokio::test]
@@ -366,10 +351,7 @@ async fn okx_uniswap_v3_swap_to_with_base_request() {
         get_entry_value(&result, "Minimum to Receive"),
         "3798.969107763657060633 HKDB"
     );
-    assert_eq!(
-        get_entry_value(&result, "Deadline"),
-        "2026-03-30 09:47:11 UTC"
-    );
+    assert_eq!(get_entry_value(&result, "Deadline"), "2026-03-30 09:47:11Z");
 }
 
 #[tokio::test]
@@ -426,8 +408,5 @@ async fn okx_unxswap_to_with_base_request() {
         "2287.662090428641808489 SAIYAN"
     );
     assert_eq!(get_entry_value(&result, "Amount to Send"), "0.049575 ETH");
-    assert_eq!(
-        get_entry_value(&result, "Deadline"),
-        "2026-03-30 11:13:23 UTC"
-    );
+    assert_eq!(get_entry_value(&result, "Deadline"), "2026-03-30 11:13:23Z");
 }

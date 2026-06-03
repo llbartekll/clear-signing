@@ -225,7 +225,7 @@ async fn safe_setup() {
         get_entry_value(&result, "Fallback handler"),
         "0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99"
     );
-    assert_eq!(get_entry_value(&result, "Payment"), "0.0 ETH");
+    assert_eq!(get_entry_value(&result, "Payment"), "0 ETH");
 
     // Verify nested module entry exists
     let has_nested = result
