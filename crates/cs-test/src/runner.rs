@@ -1,9 +1,11 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use clear_signing::eip712::TypedData;
 use clear_signing::merge::merge_descriptors;
 use clear_signing::resolver::{ResolvedDescriptor, StaticSource};
+use clear_signing::types::context::DescriptorContext;
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::TransactionContext;
 use clear_signing::{format_calldata, format_typed_data, resolve_descriptors_for_tx};
@@ -102,10 +104,13 @@ async fn run_calldata(
     }
 }
 
-/// Build an in-memory calldata descriptor source from the test's directory:
-/// the outer descriptor plus every sibling descriptor JSON, each indexed by
-/// its declared deployments. Lets the engine resolve nested `calldata`
-/// sub-calls that target other contracts (Safe/4337, kiln fee splitter).
+/// Build an in-memory calldata descriptor source from the test directory: the
+/// outer descriptor plus every sibling *contract* descriptor, indexed by their
+/// declared deployments, so the engine can resolve nested `calldata` sub-calls
+/// to other contracts (Safe/4337, kiln splitter). The outer is indexed first
+/// and never overwritten; siblings are visited in sorted order, so resolution
+/// is deterministic regardless of `read_dir` order. EIP-712 siblings are
+/// excluded — only contract descriptors belong in a calldata source.
 fn build_calldata_source_from_dir(
     test_path: &Path,
     outer: &Descriptor,
@@ -114,9 +119,11 @@ fn build_calldata_source_from_dir(
     outer_addr: &str,
 ) -> StaticSource {
     let mut source = StaticSource::new();
-    source.add_calldata(outer_chain, outer_addr, outer.clone());
+    let mut seen: HashSet<(u64, String)> = HashSet::new();
+
+    index_descriptor(&mut source, &mut seen, outer_chain, outer_addr, outer);
     for dep in outer.context.deployments() {
-        source.add_calldata(dep.chain_id, &dep.address, outer.clone());
+        index_descriptor(&mut source, &mut seen, dep.chain_id, &dep.address, outer);
     }
 
     let Some(dir) = test_path.parent() else {
@@ -125,8 +132,9 @@ fn build_calldata_source_from_dir(
     let Ok(entries) = std::fs::read_dir(dir) else {
         return source;
     };
-    for entry in entries.flatten() {
-        let path = entry.path();
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    for path in paths {
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
@@ -147,11 +155,28 @@ fn build_calldata_source_from_dir(
         let Ok(desc) = Descriptor::from_json(&resolved) else {
             continue;
         };
+        if !matches!(desc.context, DescriptorContext::Contract(_)) {
+            continue;
+        }
         for dep in desc.context.deployments() {
-            source.add_calldata(dep.chain_id, &dep.address, desc.clone());
+            index_descriptor(&mut source, &mut seen, dep.chain_id, &dep.address, &desc);
         }
     }
     source
+}
+
+/// Insert a descriptor under `(chain_id, address)` unless that key is already
+/// claimed — first writer wins, keeping the outer descriptor authoritative.
+fn index_descriptor(
+    source: &mut StaticSource,
+    seen: &mut HashSet<(u64, String)>,
+    chain_id: u64,
+    address: &str,
+    descriptor: &Descriptor,
+) {
+    if seen.insert((chain_id, address.to_lowercase())) {
+        source.add_calldata(chain_id, address, descriptor.clone());
+    }
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {
