@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use clear_signing::eip712::TypedData;
 use clear_signing::merge::merge_descriptors;
-use clear_signing::resolver::ResolvedDescriptor;
+use clear_signing::resolver::{ResolvedDescriptor, StaticSource};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::TransactionContext;
-use clear_signing::{format_calldata, format_typed_data};
+use clear_signing::{format_calldata, format_typed_data, resolve_descriptors_for_tx};
 
 use crate::compare::{case_error, compare, CaseResult};
 use crate::provider::StubDataProvider;
@@ -49,7 +49,9 @@ pub async fn run_file(path: &Path, case_filter: Option<&str>) -> Result<Vec<Case
             DataProviderStub::merged(file.data_provider.as_ref(), case.case_provider());
         let provider = StubDataProvider::new(provider_stub);
         let result = match case {
-            TestCase::Calldata(c) => run_calldata(c, &descriptor, &provider).await,
+            TestCase::Calldata(c) => {
+                run_calldata(c, &descriptor, &descriptor_path, path, &provider).await
+            }
             TestCase::Eip712(c) => run_eip712(c, &descriptor, &provider).await,
         };
         results.push(result);
@@ -60,6 +62,8 @@ pub async fn run_file(path: &Path, case_filter: Option<&str>) -> Result<Vec<Case
 async fn run_calldata(
     case: &crate::schema::CalldataCase,
     descriptor: &Descriptor,
+    descriptor_path: &Path,
+    test_path: &Path,
     provider: &StubDataProvider,
 ) -> CaseResult {
     let decoded = match decode_signed(&case.raw_tx) {
@@ -67,24 +71,93 @@ async fn run_calldata(
         Err(e) => return case_error(&case.description, format!("decode rawTx: {e:#}")),
     };
 
-    let descriptors = vec![ResolvedDescriptor {
-        descriptor: descriptor.clone(),
-        chain_id: decoded.chain_id,
-        address: decoded.to.clone(),
-    }];
+    let source = build_calldata_source_from_dir(
+        test_path,
+        descriptor,
+        descriptor_path,
+        decoded.chain_id,
+        &decoded.to,
+    );
 
     let tx = TransactionContext {
         chain_id: decoded.chain_id,
         to: &decoded.to,
         calldata: &decoded.data,
         value: Some(&decoded.value),
-        from: None,
+        from: case.from.as_deref(),
         implementation_address: None,
     };
 
-    match format_calldata(&descriptors, &tx, provider).await {
+    // Resolve against the vendored descriptors only — passing the data provider
+    // would trigger the engine's known-token ERC-20 synth and bypass a curated
+    // descriptor (e.g. lido wstETH). Rendering still uses the provider below.
+    let resolution = match resolve_descriptors_for_tx(&tx, &source, None).await {
+        Ok(r) => r,
+        Err(e) => return case_error(&case.description, format!("resolve descriptors: {e}")),
+    };
+
+    match format_calldata(resolution.as_slice(), &tx, provider).await {
         Ok(outcome) => compare(&case.description, &case.expected, &outcome),
         Err(e) => case_error(&case.description, format!("format_calldata: {e:?}")),
+    }
+}
+
+/// Build an in-memory calldata descriptor source from the test's directory:
+/// the outer descriptor plus every sibling descriptor JSON, each indexed by
+/// its declared deployments. Lets the engine resolve nested `calldata`
+/// sub-calls that target other contracts (Safe/4337, kiln fee splitter).
+fn build_calldata_source_from_dir(
+    test_path: &Path,
+    outer: &Descriptor,
+    outer_descriptor_path: &Path,
+    outer_chain: u64,
+    outer_addr: &str,
+) -> StaticSource {
+    let mut source = StaticSource::new();
+    source.add_calldata(outer_chain, outer_addr, outer.clone());
+    for dep in outer.context.deployments() {
+        source.add_calldata(dep.chain_id, &dep.address, outer.clone());
+    }
+
+    let Some(dir) = test_path.parent() else {
+        return source;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return source;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if !path.is_file()
+            || name.ends_with(".tests.json")
+            || path.extension().and_then(|e| e.to_str()) != Some("json")
+            || same_file(&path, outer_descriptor_path)
+        {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(resolved) = resolve_includes(&raw, &path, 0) else {
+            continue;
+        };
+        let Ok(desc) = Descriptor::from_json(&resolved) else {
+            continue;
+        };
+        for dep in desc.context.deployments() {
+            source.add_calldata(dep.chain_id, &dep.address, desc.clone());
+        }
+    }
+    source
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
     }
 }
 

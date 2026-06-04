@@ -3,11 +3,10 @@
 //! (#2 / #3 / #4).
 //!
 //! Each fixture is a descriptor plus its `.tests.json`, copied from the registry
-//! branch's `testsv2/` directory (already in this runner's schema). Deviations
-//! from upstream: the relative `descriptor` path is adjusted for co-location, and
-//! the aave `Borrow` case is dropped (see that test). A fixture passes only when
-//! every case renders exactly the registry's expected output, so these reproduce
-//! the CI failures locally and were RED until each fix landed.
+//! branch's `testsv2/` directory (already in this runner's schema). The relative
+//! `descriptor` path is adjusted for co-location. A fixture passes only when every
+//! case renders exactly the registry's expected output, so these reproduce the CI
+//! failures locally and were RED until each fix landed.
 //!
 //! Confirmed library bugs (active tests):
 //!   #1 date suffix " UTC" should be "Z"        -> degate (eip712); also unit-tested
@@ -17,14 +16,15 @@
 //!   #7 token amount rendered as raw integer     -> aave
 //!   #8 `$.metadata.constants.*` not resolved    -> yieldxyz
 //!
-//! Not pure library bugs (see `kiln`, below, and the diagnosis notes):
-//!   - Nested-calldata cases (kiln fee-splitter, 1inch permitAndCall, safe/4337)
-//!     fail because the inner sub-call targets a *separate* contract whose
-//!     descriptor the cs-test runner never loads — `run_calldata` passes only the
-//!     single outer descriptor. That is a harness-resolution gap, not a rendering
-//!     bug, so #5 (nested owner) and the nested half of #7/#9 are tracked apart.
-//!   - #2 (zero amount "0.0" -> "0") is fixed in `format_with_decimals`; it is
-//!     covered by unit + Safe integration assertions, not a vendored fixture.
+//! Harness capabilities exercised here (not engine bugs):
+//!   - Nested calldata (kiln "Create and Stake"): the inner sub-call targets a
+//!     separate contract; the runner indexes the vendored inner descriptor next to
+//!     the outer so the engine resolves and renders it (owner + fields).
+//!   - `@.from` (aave "Borrow" "Debtor"): the sender is supplied via the test
+//!     case's `from`, as a wallet would — it is not recoverable from an unsigned
+//!     rawTx.
+//!   - #2 (zero amount "0.0" -> "0") is covered by unit + Safe integration
+//!     assertions, not a vendored fixture.
 
 use std::path::PathBuf;
 
@@ -103,24 +103,20 @@ async fn uniswap_v2_dutch_order_matches_registry() {
 }
 
 /// #7: top-level `amount`-format fields rendered as raw integers instead of
-/// native-currency amounts. The registry's `Borrow` case is omitted here: its
-/// "Debtor" field reads `@.from`, which the runner does not provide (sender
-/// recovery is a harness gap, like nested-call resolution).
+/// native-currency amounts. The `Borrow` case also covers `@.from`: its "Debtor"
+/// field reads the sender, supplied via the test case's `from` (the unsigned
+/// rawTx carries no signature to recover it from).
 #[tokio::test]
 async fn aave_wrapped_token_gateway_matches_registry() {
     assert_matches_registry("aave/calldata-WrappedTokenGatewayV3.tests.json").await;
 }
 
-/// Harness gap, NOT a library rendering bug. The "Create and Stake" call wraps a
-/// nested `createSplitterAndCall` whose `data` targets a *different* contract
-/// (selector 0xfe37d829, "Stake any amount per validator"). The cs-test runner
-/// loads only the single outer descriptor, so the engine cannot decode the inner
-/// call and emits raw params + no nested owner. Resolving this needs the runner
-/// to provide inner descriptors (as the registry's reference runner does), not a
-/// change to the engine. Kept as documented evidence; ignored until the runner
-/// learns nested-descriptor resolution.
+/// Nested calldata. The "Create and Stake" call wraps a `createSplitterAndCall`
+/// whose `data` targets a *different* contract (selector 0xfe37d829, "Stake any
+/// amount per validator"). The runner indexes the vendored inner descriptor
+/// (`calldata-kiln-batch-deposit-v2.json`) alongside the outer, so the engine
+/// resolves and renders the inner call with its own owner.
 #[tokio::test]
-#[ignore = "cs-test runner does not resolve nested-call descriptors yet (harness gap, not a library bug)"]
 async fn kiln_fee_splitter_factory_matches_registry() {
     assert_matches_registry("kiln/calldata-kiln-fee-splitter-factory.tests.json").await;
 }

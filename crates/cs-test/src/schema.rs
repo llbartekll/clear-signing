@@ -30,6 +30,10 @@ pub struct CalldataCase {
     pub raw_tx: String,
     #[serde(default, rename = "txHash", skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
+    /// Transaction sender, backing `@.from` fields. Supplied explicitly (as a
+    /// wallet would) since it is not recoverable from an unsigned `rawTx`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
     pub expected: Expected,
     #[serde(
         default,
