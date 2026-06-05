@@ -80,6 +80,15 @@ async fn lido_wsteth_matches_registry() {
     assert_matches_registry("lido/calldata-wstETH.tests.json").await;
 }
 
+/// Array-iteration `interpolatedIntent`: `"Withdraw {_amounts.[]}"` references a
+/// `tokenAmount` field whose path is an array element (`#._amounts.[]`). A scalar
+/// path resolve returns nothing for `.[]`, so the whole interpolatedIntent was
+/// dropped; it must format each element and join with " and ".
+#[tokio::test]
+async fn lido_withdrawal_queue_matches_registry() {
+    assert_matches_registry("lido/calldata-WithdrawalQueueERC721.tests.json").await;
+}
+
 /// #8: token-amount ticker given as `$.metadata.constants.*` is emitted
 /// literally instead of being resolved (e.g. `113.82$.metadata.constants...`).
 #[tokio::test]

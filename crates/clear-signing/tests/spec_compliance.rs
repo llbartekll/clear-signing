@@ -1725,6 +1725,168 @@ async fn test_interpolation_escape_sequences() {
     );
 }
 
+// ─── Array-iteration interpolatedIntent (calldata ≡ EIP-712) ───
+
+#[tokio::test]
+async fn test_array_iteration_interpolated_intent_joins_with_and() {
+    // A placeholder over an array-element path (`{amounts.[]}`) must format each
+    // element and join with " and ", not drop the whole interpolatedIntent (a
+    // scalar path resolve returns nothing for `.[]`). Shared calldata/EIP-712.
+    let calldata_descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "withdraw(uint256[] amounts)": {
+                        "intent": "Withdraw",
+                        "interpolatedIntent": "Withdraw {amounts.[]}",
+                        "fields": [
+                            {"path": "amounts.[]", "label": "Amount", "format": "number"}
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let mut calldata = build_calldata("withdraw(uint256[])", &[dynamic_offset_word(32)]);
+    calldata.extend_from_slice(&encode_uint_array(&[10, 20]));
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        calldata_result.interpolated_intent.as_deref(),
+        Some("Withdraw 10 and 20")
+    );
+
+    let typed_descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Withdraw(uint256[] amounts)": {
+                        "intent": "Withdraw",
+                        "interpolatedIntent": "Withdraw {amounts.[]}",
+                        "fields": [
+                            {"path": "amounts.[]", "label": "Amount", "format": "number"}
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Withdraw": [{ "name": "amounts", "type": "uint256[]" }]
+        },
+        "primaryType": "Withdraw",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "amounts": ["10", "20"] }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        typed_result.interpolated_intent.as_deref(),
+        Some("Withdraw 10 and 20")
+    );
+
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
+#[tokio::test]
+async fn test_scoped_array_interpolated_intent_resolves_item_token() {
+    // A scoped array-element field with an item-relative `tokenPath` must resolve
+    // the per-element token in interpolatedIntent (parity with rendering), not
+    // fall back to the raw integer.
+    let descriptor = Descriptor::from_json(
+        r##"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Order(Output[] outputs)Output(uint256 endAmount,address token)": {
+                        "intent": "Order",
+                        "interpolatedIntent": "Receive {outputs.[].endAmount}",
+                        "fields": [{
+                            "label": "Receive",
+                            "iteration": "bundled",
+                            "fields": [
+                                { "path": "outputs.[].endAmount", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "outputs.[].token" } }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"##,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Order": [{ "name": "outputs", "type": "Output[]" }],
+            "Output": [
+                { "name": "endAmount", "type": "uint256" },
+                { "name": "token", "type": "address" }
+            ]
+        },
+        "primaryType": "Order",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "outputs": [
+                { "endAmount": "200297", "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" },
+                { "endAmount": "500000", "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let result = format_typed_data(&wrap_rd(descriptor, 1, "0xabc"), &typed_data, &tokens)
+        .await
+        .unwrap();
+    assert_eq!(
+        result.interpolated_intent.as_deref(),
+        Some("Receive 0.200297 USDC and 0.5 USDC")
+    );
+}
+
 // ─── #16: EIP-712 AddressName with senderAddress ───
 
 #[tokio::test]

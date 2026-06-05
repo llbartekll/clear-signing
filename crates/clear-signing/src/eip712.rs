@@ -2022,6 +2022,53 @@ async fn resolve_and_format_typed_interpolation(
 ) -> Result<String, Error> {
     let field = resolve_interpolation_field_spec(fields, excluded, path)?;
 
+    // Array-iteration paths (`.[]`) format each element like field rendering and
+    // join with " and " (parity with the calldata path).
+    if let Some((base, rest)) = crate::engine::split_array_iter_path(field.path) {
+        if let Some(serde_json::Value::Array(items)) =
+            resolve_typed_path_in_context(message, base, container)?
+        {
+            if !items.is_empty() {
+                let mut parts = Vec::with_capacity(items.len());
+                for item in &items {
+                    // Element fields (non-empty `rest`) resolve relative to the
+                    // item, mirroring the scoped/bundled rendering path so an
+                    // item-relative `tokenPath` resolves per element.
+                    let (val, scoped_params, item_scope) = if rest.is_empty() {
+                        (Some(item.clone()), None, None)
+                    } else {
+                        (
+                            resolve_typed_path_in_context(item, rest, container)?,
+                            item_scoped_typed_params(base, field.params),
+                            Some(item),
+                        )
+                    };
+                    let params = if rest.is_empty() {
+                        field.params
+                    } else {
+                        scoped_params.as_ref()
+                    };
+                    let mut warnings = Vec::new();
+                    parts.push(
+                        format_typed_value(
+                            descriptor,
+                            &val,
+                            field.format,
+                            params,
+                            container,
+                            message,
+                            item_scope,
+                            data_provider,
+                            &mut warnings,
+                        )
+                        .await?,
+                    );
+                }
+                return Ok(parts.join(" and "));
+            }
+        }
+    }
+
     let value =
         resolve_typed_path_in_context(message, field.path, container)?.ok_or_else(|| {
             Error::Descriptor(format!(

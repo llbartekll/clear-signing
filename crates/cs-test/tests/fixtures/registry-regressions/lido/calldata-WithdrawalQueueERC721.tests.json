@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../specs/erc7730-tests-v2.schema.json",
+  "descriptor": "./calldata-WithdrawalQueueERC721.json",
+  "dataProvider": {
+    "tokens": {
+      "0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84": { "symbol": "stETH", "decimals": 18 }
+    },
+    "ensNames": {
+      "0xba782baf2ee66f6fc76a711b6554975afb2805e4": "conan26.eth"
+    }
+  },
+  "tests": [
+    {
+      "description": "Request Withdrawal - chain 1",
+      "rawTx": "0x02f8af018201148405f5e100840bad32608306680994889edc2edab5f40e902b864ad4d7ade8e412f9b180b884d66810420000000000000000000000000000000000000000000000000000000000000040000000000000000000000000ba782baf2ee66f6fc76a711b6554975afb2805e400000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000003e99b888f3eb3c0",
+      "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+      "expected": {
+        "intent": "Request Withdrawal",
+        "owner": "Lido DAO",
+        "interpolatedIntent": "Withdraw 0.001101279150423731 stETH",
+        "fields": [
+          { "label": "Amount", "value": "0.001101279150423731 stETH" },
+          { "label": "Beneficiary", "value": "conan26.eth" }
+        ]
+      }
+    }
+  ]
+}

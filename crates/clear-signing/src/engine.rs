@@ -2254,6 +2254,39 @@ async fn resolve_and_format_for_interpolation(
 ) -> Result<String, Error> {
     let field = resolve_interpolation_field_spec(fields, excluded, path)?;
 
+    // Array-iteration paths (`.[]`) format each element like field rendering and
+    // join with " and "; a scalar `resolve_path` returns None for `.[]`, which
+    // would otherwise drop the whole interpolatedIntent.
+    if let Some((base, rest)) = split_array_iter_path(field.path) {
+        if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
+            if !items.is_empty() {
+                let mut parts = Vec::with_capacity(items.len());
+                for item in &items {
+                    let val = if rest.is_empty() {
+                        Some(item.clone())
+                    } else {
+                        navigate_value(item, &rest.split('.').collect::<Vec<_>>())
+                    };
+                    let mut warnings = RenderDiagnostics::new();
+                    parts.push(
+                        format_value(
+                            ctx,
+                            &val,
+                            field.format,
+                            field.params,
+                            field.path,
+                            field.label,
+                            field.separator,
+                            &mut warnings,
+                        )
+                        .await?,
+                    );
+                }
+                return Ok(parts.join(" and "));
+            }
+        }
+    }
+
     let value = resolve_path(ctx.decoded, field.path).ok_or_else(|| {
         Error::Descriptor(format!(
             "interpolatedIntent path '{}' could not be resolved from calldata",
