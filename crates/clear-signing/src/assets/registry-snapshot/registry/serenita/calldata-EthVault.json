@@ -1,0 +1,78 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "ETH Staking Vault",
+    "contract": { "deployments": [{ "chainId": 1, "address": "0xb36fc5e542cb4fc562a624912f55da2758998113" }] }
+  },
+  "metadata": { "owner": "Serenita B.V.", "info": { "url": "https://serenita.io/" }, "contractName": "ETH Staking Vault" },
+  "display": {
+    "formats": {
+      "claimExitedAssets(uint256 positionTicket, uint256 timestamp, uint256 exitQueueIndex)": {
+        "intent": "claim exited assets",
+        "fields": [
+          { "label": "Position Ticket", "path": "#.positionTicket", "visible": "never" },
+          { "label": "Timestamp", "path": "#.timestamp", "visible": "never" },
+          { "label": "Exit Queue Index", "path": "#.exitQueueIndex", "visible": "never" }
+        ]
+      },
+      "deposit(address receiver, address referrer)": {
+        "intent": "Stake ETH",
+        "fields": [
+          {
+            "label": "Rewards receiver",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"], "sources": ["local", "ens"] },
+            "path": "#.receiver",
+            "visible": "always"
+          },
+          { "label": "Amount to stake", "format": "amount", "path": "@.value" },
+          { "label": "Referrer", "path": "#.referrer", "visible": "never" }
+        ]
+      },
+      "enterExitQueue(uint256 shares, address receiver)": {
+        "intent": "enter exit queue",
+        "fields": [
+          { "label": "Shares to lock", "format": "raw", "path": "#.shares", "visible": "always" },
+          {
+            "label": "Receiver",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"], "sources": ["local", "ens"] },
+            "path": "#.receiver",
+            "visible": "always"
+          }
+        ]
+      },
+      "multicall(bytes[] data)": {
+        "intent": "Multicall",
+        "fields": [{ "label": "Call", "path": "#.data.[]", "format": "calldata", "params": { "calleePath": "@.to" }, "visible": "always" }]
+      },
+      "updateState((bytes32 rewardsRoot, int160 reward, uint160 unlockedMevReward, bytes32[] proof) harvestParams)": {
+        "intent": "Update Vault State",
+        "fields": [
+          { "label": "Harvest Params Rewards Root", "path": "#.harvestParams.rewardsRoot", "visible": "never" },
+          { "label": "Harvest Params Reward", "path": "#.harvestParams.reward", "visible": "never" },
+          { "label": "Harvest Params Unlocked Mev Reward", "path": "#.harvestParams.unlockedMevReward", "visible": "never" },
+          { "label": "Harvest Params Proof", "path": "#.harvestParams.proof.[]", "visible": "never" }
+        ]
+      },
+      "updateStateAndDeposit(address receiver, address referrer, (bytes32 rewardsRoot, int160 reward, uint160 unlockedMevReward, bytes32[] proof) harvestParams)": {
+        "intent": "Update & Deposit",
+        "fields": [
+          {
+            "label": "Rewards receiver",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"], "sources": ["local", "ens"] },
+            "path": "#.receiver",
+            "visible": "always"
+          },
+          { "label": "Amount to stake", "format": "amount", "path": "@.value" },
+          { "label": "Referrer", "path": "#.referrer", "visible": "never" },
+          { "label": "Harvest Params Rewards Root", "path": "#.harvestParams.rewardsRoot", "visible": "never" },
+          { "label": "Harvest Params Reward", "path": "#.harvestParams.reward", "visible": "never" },
+          { "label": "Harvest Params Unlocked Mev Reward", "path": "#.harvestParams.unlockedMevReward", "visible": "never" },
+          { "label": "Harvest Params Proof", "path": "#.harvestParams.proof.[]", "visible": "never" }
+        ]
+      }
+    }
+  }
+}

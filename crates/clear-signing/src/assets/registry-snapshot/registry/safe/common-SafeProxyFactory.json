@@ -1,0 +1,32 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "metadata": {
+    "owner": "Safe{Wallet}",
+    "info": {
+      "url": "https://app.safe.global/welcome"
+    }
+  },
+  "display": {
+    "formats": {
+      "createProxyWithNonce(address _singleton, bytes initializer, uint256 saltNonce)": {
+        "$id": "createProxyWithNonce",
+        "intent": "Create Safe",
+        "fields": [
+          {
+            "path": "initializer",
+            "format": "calldata",
+            "label": "Account setup",
+            "params": {
+              "calleePath": "_singleton"
+            }
+          },
+          {
+            "label": "Salt Nonce",
+            "path": "saltNonce",
+            "visible": "never"
+          }
+        ]
+      }
+    }
+  }
+}

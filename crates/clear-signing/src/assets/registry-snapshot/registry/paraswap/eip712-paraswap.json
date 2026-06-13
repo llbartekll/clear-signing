@@ -1,0 +1,48 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [
+        { "chainId": 1, "address": "0xe92b586627cca7a83dc919cc7127196d70f55a06" },
+        { "chainId": 10, "address": "0x0927fd43a7a87e3e8b81df2c44b03c4756849f6d" },
+        { "chainId": 56, "address": "0x8dcdfe88ef0351f27437284d0710cd65b20288bb" },
+        { "chainId": 137, "address": "0xf3cd476c3c4d3ac5ca2724767f269070ca09a043" },
+        { "chainId": 42161, "address": "0x0927fd43a7a87e3e8b81df2c44b03c4756849f6d" }
+      ],
+      "domain": { "name": "AUGUSTUS RFQ", "version": "1" }
+    }
+  },
+  "metadata": { "owner": "AugustusRFQ" },
+  "display": {
+    "formats": {
+      "Order(uint256 nonceAndMeta,uint128 expiry,address makerAsset,address takerAsset,address maker,address taker,uint256 makerAmount,uint256 takerAmount)": {
+        "intent": "AugustusRFQ ERC20 order",
+        "fields": [
+          { "path": "nonceAndMeta", "label": "Nonce and metadata", "format": "raw" },
+          { "path": "expiry", "label": "Expiration time", "format": "raw" },
+          { "path": "makerAsset", "label": "Maker asset address", "format": "raw" },
+          { "path": "takerAsset", "label": "Taker asset address", "format": "raw" },
+          { "path": "maker", "label": "Maker address", "format": "raw" },
+          { "path": "taker", "label": "Taker address", "format": "raw" },
+          { "path": "makerAmount", "label": "Maker amount", "format": "raw" },
+          { "path": "takerAmount", "label": "Taker amount", "format": "raw" }
+        ]
+      },
+      "OrderNFT(uint256 nonceAndMeta,uint128 expiry,uint256 makerAsset,uint256 makerAssetId,uint256 takerAsset,uint256 takerAssetId,address maker,address taker,uint256 makerAmount,uint256 takerAmount)": {
+        "intent": "AugustusRFQ NFT order",
+        "fields": [
+          { "path": "nonceAndMeta", "label": "Nonce and metadata", "format": "raw" },
+          { "path": "expiry", "label": "Expiration time", "format": "raw" },
+          { "path": "makerAsset", "label": "Maker asset encoded", "format": "raw" },
+          { "path": "makerAssetId", "label": "Maker asset NFT ID", "format": "raw" },
+          { "path": "takerAsset", "label": "Taker asset encoded", "format": "raw" },
+          { "path": "takerAssetId", "label": "Taker asset NFT ID", "format": "raw" },
+          { "path": "maker", "label": "Maker address", "format": "raw" },
+          { "path": "taker", "label": "Taker address", "format": "raw" },
+          { "path": "makerAmount", "label": "Maker amount", "format": "raw" },
+          { "path": "takerAmount", "label": "Taker amount", "format": "raw" }
+        ]
+      }
+    }
+  }
+}

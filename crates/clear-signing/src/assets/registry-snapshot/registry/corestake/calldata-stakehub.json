@@ -1,0 +1,6 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": { "contract": { "deployments": [{ "chainId": 1116, "address": "0x0000000000000000000000000000000000001010" }] } },
+  "metadata": { "owner": "CoreDAO StakeHub Contract", "info": { "url": "https://coredao.org/" } },
+  "display": { "formats": { "claimReward()": { "intent": "Claim rewards", "fields": [] } } }
+}

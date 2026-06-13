@@ -1,0 +1,218 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [{ "chainId": 137, "address": "0xdb46d1dc155634fbc732f92e853b10b288ad5a1d" }],
+      "domain": { "name": "Lens Protocol Profiles", "version": "2" }
+    }
+  },
+  "metadata": { "owner": "LensHub" },
+  "display": {
+    "formats": {
+      "Act(uint256 publicationActedProfileId,uint256 publicationActedId,uint256 actorProfileId,uint256[] referrerProfileIds,uint256[] referrerPubIds,address actionModuleAddress,bytes actionModuleData,uint256 nonce,uint256 deadline)": {
+        "intent": "Act",
+        "fields": [
+          { "path": "actorProfileId", "label": "actorProfileId", "format": "raw" },
+          { "path": "publicationActedId", "label": "publicationActedId", "format": "raw" },
+          { "path": "publicationActedProfileId", "label": "publicationActedProfileId", "format": "raw" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" },
+          { "label": "Action Module Address", "path": "actionModuleAddress", "visible": "never" },
+          { "label": "Referrer Profile Ids", "path": "referrerProfileIds.[]", "visible": "never" },
+          { "label": "Action Module Data", "path": "actionModuleData", "visible": "never" },
+          { "label": "Referrer Pub Ids", "path": "referrerPubIds.[]", "visible": "never" }
+        ]
+      },
+      "ChangeDelegatedExecutorsConfig(uint256 delegatorProfileId,address[] delegatedExecutors,bool[] approvals,uint64 configNumber,bool switchToGivenConfig,uint256 nonce,uint256 deadline)": {
+        "intent": "ChangeDelegatedExecutorsConfig",
+        "fields": [
+          { "path": "delegatorProfileId", "label": "Delegator ProfileId", "format": "raw" },
+          { "path": "delegatedExecutors.[]", "label": "Delegated Executors", "format": "raw" },
+          { "path": "approvals.[]", "label": "Approvals", "format": "raw" },
+          { "path": "configNumber", "label": "configNumber", "format": "raw" },
+          { "path": "switchToGivenConfig", "label": "switchToGivenConfig", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" }
+        ]
+      },
+      "Comment(uint256 profileId,string contentURI,uint256 pointedProfileId,uint256 pointedPubId,uint256[] referrerProfileIds,uint256[] referrerPubIds,bytes referenceModuleData,address[] actionModules,bytes[] actionModulesInitDatas,address referenceModule,bytes referenceModuleInitData,uint256 nonce,uint256 deadline)": {
+        "intent": "Comment",
+        "fields": [
+          { "path": "profileId", "label": "Profile Id", "format": "raw" },
+          { "path": "contentURI", "label": "content URI", "format": "raw" },
+          { "path": "pointedProfileId", "label": "Pointed Profile Id", "format": "raw" },
+          { "path": "pointedPubId", "label": "Pointed Pub Id", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "label": "Reference Module Init Data", "path": "referenceModuleInitData", "visible": "never" },
+          { "label": "Reference Module Data", "path": "referenceModuleData", "visible": "never" },
+          { "label": "Action Modules", "path": "actionModules", "visible": "never" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" },
+          { "label": "Referrer Profile Ids", "path": "referrerProfileIds", "visible": "never" },
+          { "label": "Reference Module", "path": "referenceModule", "visible": "never" },
+          { "label": "Action Modules Init Datas", "path": "actionModulesInitDatas", "visible": "never" },
+          { "label": "Referrer Pub Ids", "path": "referrerPubIds", "visible": "never" }
+        ]
+      },
+      "Follow(uint256 followerProfileId,uint256[] idsOfProfilesToFollow,uint256[] followTokenIds,bytes[] datas,uint256 nonce,uint256 deadline)": {
+        "intent": "Follow",
+        "fields": [
+          { "path": "followerProfileId", "label": "follower ProfileId", "format": "raw" },
+          { "path": "idsOfProfilesToFollow.[]", "label": "ids Of Profiles To Follow", "format": "raw" },
+          { "path": "followTokenIds.[]", "label": "follow TokenIds", "format": "raw" },
+          { "path": "datas.[]", "label": "datas", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" }
+        ]
+      },
+      "follow_with_sign(uint256 followerProfileId,uint256 signatureDeadline)": {
+        "intent": "follow_with_sign",
+        "fields": [
+          { "path": "followerProfileId", "label": "followerProfileId", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "link(uint256 handle_id,uint256 profile_id)": {
+        "intent": "link",
+        "fields": [
+          { "path": "handle_id", "label": "handle_id", "format": "raw" },
+          { "path": "profile_id", "label": "profile_id", "format": "raw" }
+        ]
+      },
+      "link_with_sig(uint256 handle_id,uint256 profile_id,uint256 signatureDeadline)": {
+        "intent": "link_with_sig",
+        "fields": [
+          { "path": "handle_id", "label": "handle_id", "format": "raw" },
+          { "path": "profile_id", "label": "profile_id", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "mint(uint256 to,uint256 profile_id,uint256 profile_id_pointed,uint256 pubid_pointed)": {
+        "intent": "mint",
+        "fields": [
+          { "path": "to", "label": "to", "format": "raw" },
+          { "path": "profile_id", "label": "profile_id", "format": "raw" },
+          { "path": "profile_id_pointed", "label": "profile_id_pointed", "format": "raw" },
+          { "path": "pubid_pointed", "label": "pubid_pointed", "format": "raw" }
+        ]
+      },
+      "Mirror(uint256 profileId,string metadataURI,uint256 pointedProfileId,uint256 pointedPubId,uint256[] referrerProfileIds,uint256[] referrerPubIds,bytes referenceModuleData,uint256 nonce,uint256 deadline)": {
+        "intent": "mirror",
+        "fields": [
+          { "path": "profileId", "label": "profileId", "format": "raw" },
+          { "path": "metadataURI", "label": "metadataURI", "format": "raw" },
+          { "path": "pointedProfileId", "label": "pointedProfileId", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" },
+          { "label": "Pointed Pub Id", "path": "pointedPubId", "visible": "never" },
+          { "label": "Reference Module Data", "path": "referenceModuleData", "visible": "never" },
+          { "label": "Referrer Profile Ids", "path": "referrerProfileIds", "visible": "never" },
+          { "label": "Referrer Pub Ids", "path": "referrerPubIds", "visible": "never" }
+        ]
+      },
+      "mirror_with_sig(uint256 profile_id,uint256 profile_id_pointed,uint256 pubid_pointed,uint256 signatureDeadline)": {
+        "intent": "mirror_with_sig",
+        "fields": [
+          { "path": "profile_id", "label": "profile_id", "format": "raw" },
+          { "path": "profile_id_pointed", "label": "profile_id_pointed", "format": "raw" },
+          { "path": "pubid_pointed", "label": "pubid_pointed", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "Post(uint256 profileId,string contentURI,address[] actionModules,bytes[] actionModulesInitDatas,address referenceModule,bytes referenceModuleInitData,uint256 nonce,uint256 deadline)": {
+        "intent": "Post",
+        "fields": [
+          { "path": "profileId", "label": "Profile Id", "format": "raw" },
+          { "path": "contentURI", "label": "Post URI", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "label": "Reference Module Init Data", "path": "referenceModuleInitData", "visible": "never" },
+          { "label": "Action Modules", "path": "actionModules", "visible": "never" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" },
+          { "label": "Reference Module", "path": "referenceModule", "visible": "never" },
+          { "label": "Action Modules Init Datas", "path": "actionModulesInitDatas", "visible": "never" }
+        ]
+      },
+      "post_with_sign(uint256 profile_id,uint256 signatureDeadline)": {
+        "intent": "post_with_sign",
+        "fields": [
+          { "path": "profile_id", "label": "profile_id", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "Quote(uint256 profileId,string contentURI,uint256 pointedProfileId,uint256 pointedPubId,uint256 nonce,uint256 deadline)": {
+        "intent": "Quote",
+        "fields": [
+          { "path": "profileId", "label": "profileId", "format": "raw" },
+          { "path": "contentURI", "label": "contentURI", "format": "raw" },
+          { "path": "pointedProfileId", "label": "pointedProfileId", "format": "raw" },
+          { "path": "pointedPubId", "label": "pointedPubId", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "path": "deadline", "label": "deadline", "format": "raw" }
+        ]
+      },
+      "quote_with_sign(uint256 profile_id,uint256 profile_id_pointed,uint256 pubid_pointed,uint256 signatureDeadline)": {
+        "intent": "quote_with_sign",
+        "fields": [
+          { "path": "profile_id", "label": "profile_id", "format": "raw" },
+          { "path": "profile_id_pointed", "label": "profile_id_pointed", "format": "raw" },
+          { "path": "pubid_pointed", "label": "pubid_pointed", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "set_block_status(uint256 byProfileId,uint256 signatureDeadline)": {
+        "intent": "set_block_status",
+        "fields": [
+          { "path": "byProfileId", "label": "byProfileId", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "SetProfileMetadataURI(uint256 profileId,string metadataURI,uint256 nonce,uint256 deadline)": {
+        "intent": "SetProfileMetadataURI",
+        "fields": [
+          { "path": "profileId", "label": "profileId", "format": "raw" },
+          { "path": "metadataURI", "label": "metadataURI", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" }
+        ]
+      },
+      "set_block_status_with_sig(uint256 byProfileId,uint256 signatureDeadline)": {
+        "intent": "set_block_status_with_sig",
+        "fields": [
+          { "path": "byProfileId", "label": "byProfileId", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "SetFollowModule(uint256 profileId,address followModule,bytes followModuleInitData,uint256 nonce,uint256 deadline)": {
+        "intent": "Set Follow Module",
+        "fields": [
+          { "path": "profileId", "label": "profileId", "format": "raw" },
+          { "path": "followModule", "label": "followModule", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "label": "Deadline", "path": "deadline", "visible": "never" },
+          { "label": "Follow Module Init Data", "path": "followModuleInitData", "visible": "never" }
+        ]
+      },
+      "set_profile_metadata_with_sign(uint256 profileId,uint256 signatureDeadline)": {
+        "intent": "set_profile_metadata_with_sign",
+        "fields": [
+          { "path": "profileId", "label": "profileId", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      },
+      "Unfollow(uint256 unfollowerProfileId,uint256[] idsOfProfilesToUnfollow,uint256 nonce,uint256 deadline)": {
+        "intent": "Unfollow",
+        "fields": [
+          { "path": "unfollowerProfileId", "label": "Unfollower ProfileId", "format": "raw" },
+          { "path": "idsOfProfilesToUnfollow.[]", "label": "ids Of Profiles To Unfollow", "format": "raw" },
+          { "path": "nonce", "label": "nonce", "format": "raw" },
+          { "path": "deadline", "label": "deadline", "format": "raw" }
+        ]
+      },
+      "unfollow_with_sign(uint256 unfollowerProfileId,uint256 signatureDeadline)": {
+        "intent": "unfollow_with_sign",
+        "fields": [
+          { "path": "unfollowerProfileId", "label": "unfollowerProfileId", "format": "raw" },
+          { "path": "signatureDeadline", "label": "signatureDeadline", "format": "raw" }
+        ]
+      }
+    }
+  }
+}

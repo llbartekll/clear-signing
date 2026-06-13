@@ -1,0 +1,55 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [{ "chainId": 1, "address": "0xe63602a9b3dfe983187525ac985fec4f57b24ed5" }],
+      "domain": { "name": "DeGate Protocol", "version": "3.0.1" }
+    }
+  },
+  "metadata": { "owner": "DeGate Exchange Contract" },
+  "display": {
+    "formats": {
+      "AccountUpdate(address owner,uint32 accountID,uint32 feeTokenID,uint96 maxFee,uint256 publicKey,uint32 validUntil,uint32 nonce)": {
+        "intent": "DeGate AccountUpdate",
+        "fields": [
+          { "path": "owner", "label": "Owner", "format": "raw" },
+          { "path": "accountID", "label": "AccountID", "format": "raw" },
+          { "path": "feeTokenID", "label": "FeeTokenID", "format": "raw" },
+          { "path": "maxFee", "label": "MaxFee", "format": "raw" },
+          { "path": "publicKey", "label": "PublicKey", "format": "raw" },
+          { "path": "validUntil", "label": "ValidUntil", "format": "raw" },
+          { "path": "nonce", "label": "Nonce", "format": "raw" }
+        ]
+      },
+      "Withdrawal(address owner,uint32 accountID,uint32 tokenID,uint248 amount,uint32 feeTokenID,uint96 maxFee,address to,uint248 minGas,uint32 validUntil,uint32 storageID)": {
+        "intent": "DeGate Withdrawal",
+        "fields": [
+          { "path": "owner", "label": "Owner", "format": "raw" },
+          { "path": "accountID", "label": "AccountID", "format": "raw" },
+          { "path": "tokenID", "label": "TokenID", "format": "raw" },
+          { "path": "amount", "label": "Amount", "format": "raw" },
+          { "path": "feeTokenID", "label": "FeeTokenID", "format": "raw" },
+          { "path": "maxFee", "label": "MaxFee", "format": "raw" },
+          { "path": "to", "label": "To", "format": "raw" },
+          { "path": "minGas", "label": "MinGas", "format": "raw" },
+          { "path": "validUntil", "label": "ValidUntil", "format": "raw" },
+          { "path": "storageID", "label": "StorageID", "format": "raw" }
+        ]
+      },
+      "Transfer(address owner,uint32 accountID,uint32 tokenID,uint248 amount,uint32 feeTokenID,uint96 maxFee,address to,uint32 validUntil,uint32 storageID)": {
+        "intent": "DeGate Transfer",
+        "fields": [
+          { "path": "owner", "label": "Owner", "format": "raw" },
+          { "path": "accountID", "label": "AccountID", "format": "raw" },
+          { "path": "tokenID", "label": "TokenID", "format": "raw" },
+          { "path": "amount", "label": "Amount", "format": "raw" },
+          { "path": "feeTokenID", "label": "FeeTokenID", "format": "raw" },
+          { "path": "maxFee", "label": "MaxFee", "format": "raw" },
+          { "path": "to", "label": "To", "format": "raw" },
+          { "path": "validUntil", "label": "ValidUntil", "format": "raw" },
+          { "path": "storageID", "label": "StorageID", "format": "raw" }
+        ]
+      }
+    }
+  }
+}

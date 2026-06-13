@@ -1,0 +1,27 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "DepositContract",
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0x00000000219ab540356cBB839Cbe05303d7705Fa" },
+        { "chainId": 560048, "address": "0x00000000219ab540356cBB839Cbe05303d7705Fa" }
+      ]
+    }
+  },
+  "metadata": { "owner": "Ethereum Foundation", "info": { "url": "https://ethereum.foundation" }, "contractName": "DepositContract" },
+  "display": {
+    "formats": {
+      "deposit(bytes pubkey, bytes withdrawal_credentials, bytes signature, bytes32 deposit_data_root)": {
+        "intent": "Stake ETH",
+        "fields": [
+          { "label": "Validator public key", "format": "raw", "path": "#.pubkey", "visible": "always" },
+          { "label": "Withdraw credentials", "format": "raw", "path": "#.withdrawal_credentials", "visible": "always" },
+          { "label": "Amount to deposit", "format": "amount", "path": "@.value", "visible": "always" },
+          { "label": "Signature", "path": "#.signature", "visible": "never" },
+          { "label": "Deposit Data Root", "path": "#.deposit_data_root", "visible": "never" }
+        ]
+      }
+    }
+  }
+}

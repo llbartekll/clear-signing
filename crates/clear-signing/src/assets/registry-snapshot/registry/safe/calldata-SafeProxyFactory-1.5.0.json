@@ -1,0 +1,26 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "includes": "common-SafeProxyFactory.json",
+  "context": {
+    "$id": "SafeProxyFactory",
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0x14F2982D601c9458F93bd70B218933A6f8165e7b" },
+        { "chainId": 11155111, "address": "0x14F2982D601c9458F93bd70B218933A6f8165e7b" }
+      ]
+    }
+  },
+  "display": {
+    "formats": {
+      "createProxyWithNonceL2(address _singleton, bytes initializer, uint256 saltNonce)": {
+        "$id": "createProxyWithNonceL2",
+        "intent": "Create Safe",
+        "fields": [
+          { "path": "initializer", "format": "calldata", "label": "Account setup", "params": { "calleePath": "_singleton" } },
+          { "label": "Salt Nonce", "path": "saltNonce", "visible": "never" }
+        ]
+      }
+    }
+  },
+  "metadata": { "contractName": "SafeProxyFactory" }
+}

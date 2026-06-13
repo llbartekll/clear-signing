@@ -1,0 +1,24 @@
+{
+  "$schema": "../specs/erc7730-v2.schema.json",
+  "context": { "eip712": {} },
+  "display": {
+    "formats": {
+      "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)": {
+        "intent": "Authorize spending of tokens",
+        "fields": [
+          { "path": "spender", "label": "Spender", "format": "raw", "visible": "always" },
+          {
+            "path": "value",
+            "label": "Max spending amount",
+            "format": "tokenAmount",
+            "params": { "tokenPath": "@.to" },
+            "visible": "always"
+          },
+          { "path": "deadline", "label": "Valid until", "format": "date", "params": { "encoding": "timestamp" } },
+          { "label": "Owner", "path": "owner", "visible": "never" },
+          { "label": "Nonce", "path": "nonce", "visible": "never" }
+        ]
+      }
+    }
+  }
+}

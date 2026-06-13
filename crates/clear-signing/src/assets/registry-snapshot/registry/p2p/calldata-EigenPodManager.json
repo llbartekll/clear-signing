@@ -1,0 +1,14 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "EigenPodManager",
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0x91E677b07F7AF907ec9a428aafA9fc14a0d3A338" },
+        { "chainId": 560048, "address": "0xcd1442415Fc5C29Aa848A49d2e232720BE07976c" }
+      ]
+    }
+  },
+  "metadata": { "owner": "Eigen Labs, Inc.", "info": { "url": "https://www.eigencloud.xyz/" }, "contractName": "EigenPodManager" },
+  "display": { "formats": { "createPod()": { "intent": "Create EigenLayerPod", "fields": [] } } }
+}

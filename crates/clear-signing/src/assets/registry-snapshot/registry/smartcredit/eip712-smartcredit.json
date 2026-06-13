@@ -1,0 +1,26 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [{ "chainId": 1, "address": "0x72e9d9038ce484ee986fea183f8d8df93f9ada13" }],
+      "domain": { "name": "Credit Line", "version": "1.0.0" }
+    }
+  },
+  "metadata": { "owner": "SMARTCREDIT" },
+  "display": {
+    "formats": {
+      "LoanRequest(address collateralAddress,uint256 initialCollateralAmount,uint256 loanAmount,bytes32 loanId,uint64 loanInterestRate,uint64 loanTerm,address underlyingAddress)": {
+        "intent": "SmartCredit.io",
+        "fields": [
+          { "path": "collateralAddress", "label": "Collateral address", "format": "raw" },
+          { "path": "initialCollateralAmount", "label": "Initial Collateral Amount", "format": "raw" },
+          { "path": "loanAmount", "label": "Loan Amount", "format": "raw" },
+          { "path": "loanId", "label": "Loan ID", "format": "raw" },
+          { "path": "loanInterestRate", "label": "Loan interest rate", "format": "raw" },
+          { "path": "loanTerm", "label": "Load Term", "format": "raw" },
+          { "path": "underlyingAddress", "label": "Underlying Address", "format": "raw" }
+        ]
+      }
+    }
+  }
+}

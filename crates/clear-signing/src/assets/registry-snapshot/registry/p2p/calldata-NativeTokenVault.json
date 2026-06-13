@@ -1,0 +1,95 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "NativeTokenVault",
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0xb72668d6ff7a0e318f83097a754c6aed0f8af034" },
+        { "chainId": 560048, "address": "0x8f73c1ce7fe0e17f45b317b33620924a94256fbb" }
+      ]
+    }
+  },
+  "metadata": { "owner": "P2P Staking", "info": { "url": "https://www.p2p.org/" }, "contractName": "NativeTokenVault" },
+  "display": {
+    "formats": {
+      "deposit(address receiver, address referrer)": {
+        "intent": "Stake ETH with p2p",
+        "fields": [
+          {
+            "label": "Client address",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet", "contract"] },
+            "path": "#.receiver",
+            "visible": "always"
+          },
+          {
+            "label": "Referrer address",
+            "format": "addressName",
+            "params": { "types": ["contract", "eoa", "wallet"] },
+            "path": "#.referrer",
+            "visible": "always"
+          },
+          { "label": "Amount to deposit", "format": "amount", "path": "@.value", "visible": "always" }
+        ]
+      },
+      "updateStateAndDeposit(address receiver, address referrer, (bytes32 rewardsRoot, int160 reward, uint160 unlockedMevReward, bytes32[] proof) harvestParams)": {
+        "intent": "Stake ETH with p2p",
+        "fields": [
+          {
+            "label": "Client address",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet", "contract"] },
+            "path": "#.receiver",
+            "visible": "always"
+          },
+          {
+            "label": "Referrer address",
+            "format": "addressName",
+            "params": { "types": ["wallet", "eoa", "contract"] },
+            "path": "#.referrer",
+            "visible": "always"
+          },
+          { "label": "Amount to deposit", "format": "amount", "path": "@.value", "visible": "always" },
+          { "label": "Harvest Params", "path": "#.harvestParams", "visible": "never" },
+          { "label": "Harvest Params Rewards Root", "path": "#.harvestParams.rewardsRoot", "visible": "never" },
+          { "label": "Harvest Params Reward", "path": "#.harvestParams.reward", "visible": "never" },
+          { "label": "Harvest Params Unlocked Mev Reward", "path": "#.harvestParams.unlockedMevReward", "visible": "never" },
+          { "label": "Harvest Params Proof", "path": "#.harvestParams.proof.[]", "visible": "never" }
+        ]
+      },
+      "claimExitedAssets(uint256 positionTicket, uint256 timestamp, uint256 exitQueueIndex)": {
+        "intent": "Claim exited assets",
+        "fields": [
+          {
+            "label": "Exit initiated at",
+            "format": "date",
+            "params": { "encoding": "timestamp" },
+            "path": "#.timestamp",
+            "visible": "always"
+          },
+          { "label": "Position Ticket", "path": "#.positionTicket", "visible": "never" },
+          { "label": "Exit Queue Index", "path": "#.exitQueueIndex", "visible": "never" }
+        ]
+      },
+      "enterExitQueue(uint256 shares, address receiver)": {
+        "intent": "Exit funds",
+        "fields": [
+          {
+            "label": "Shares to exit",
+            "format": "tokenAmount",
+            "params": { "tokenPath": "@.to" },
+            "path": "#.shares",
+            "visible": "always"
+          },
+          {
+            "label": "Client address",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet", "contract"] },
+            "path": "#.receiver",
+            "visible": "always"
+          }
+        ]
+      }
+    }
+  }
+}

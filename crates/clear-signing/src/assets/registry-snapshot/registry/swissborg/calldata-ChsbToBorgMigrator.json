@@ -1,0 +1,31 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "CHSB to BORG Migrator",
+    "contract": { "deployments": [{ "chainId": 1, "address": "0xaA854688caAB725fe17b7D21b46fDA5AF365985a" }] }
+  },
+  "metadata": {
+    "owner": "SwissBorg",
+    "info": { "url": "https://migration.swissborg.com" },
+    "constants": { "chsbAddress": "0xba9d4199faB4f26eFE3551D490E3821486f135Ba" },
+    "contractName": "CHSB to BORG Migrator"
+  },
+  "display": {
+    "formats": {
+      "migrate(uint256 _amount)": {
+        "$id": "migrate",
+        "intent": "Migrate CHSB to BORG",
+        "interpolatedIntent": "Migrate {#._amount} to BORG",
+        "fields": [
+          {
+            "$id": "migrate",
+            "label": "CHSB Amount",
+            "format": "tokenAmount",
+            "params": { "token": "$.metadata.constants.chsbAddress" },
+            "path": "#._amount"
+          }
+        ]
+      }
+    }
+  }
+}

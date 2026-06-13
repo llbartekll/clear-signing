@@ -1,0 +1,55 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": { "contract": { "deployments": [{ "chainId": 1116, "address": "0x0000000000000000000000000000000000001011" }] } },
+  "metadata": { "owner": "CoreDAO CoreAgent Contract", "info": { "url": "https://coredao.org/" } },
+  "display": {
+    "formats": {
+      "delegateCoin(address candidate)": {
+        "intent": "Delegate CORE",
+        "fields": [
+          {
+            "path": "candidate",
+            "label": "Validator Address",
+            "format": "addressName",
+            "params": { "types": ["eoa", "contract"], "sources": ["local", "ens"] },
+            "visible": "always"
+          },
+          { "format": "amount", "label": "CORE amount", "path": "@.value" }
+        ]
+      },
+      "undelegateCoin(address candidate, uint256 amount)": {
+        "intent": "Unstake CORE",
+        "fields": [
+          {
+            "path": "candidate",
+            "label": "Validator Address",
+            "format": "addressName",
+            "params": { "types": ["eoa", "contract"], "sources": ["local", "ens"] },
+            "visible": "always"
+          },
+          { "path": "amount", "label": "CORE amount (0=All)", "format": "amount", "visible": "always" }
+        ]
+      },
+      "transferCoin(address sourceCandidate, address targetCandidate, uint256 amount)": {
+        "intent": "Move staked CORE",
+        "fields": [
+          {
+            "path": "sourceCandidate",
+            "label": "From Validator",
+            "format": "addressName",
+            "params": { "types": ["eoa", "contract"], "sources": ["local", "ens"] },
+            "visible": "always"
+          },
+          {
+            "path": "targetCandidate",
+            "label": "To Validator",
+            "format": "addressName",
+            "params": { "types": ["eoa", "contract"], "sources": ["local", "ens"] },
+            "visible": "always"
+          },
+          { "path": "amount", "label": "Amount (in CORE)", "format": "amount", "visible": "always" }
+        ]
+      }
+    }
+  }
+}

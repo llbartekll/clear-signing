@@ -1,0 +1,26 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [{ "chainId": 1, "address": "0xb66a603f4cfe17e3d27b87a8bfcad319856518b8" }],
+      "domain": { "name": "Rarible", "version": "2" }
+    }
+  },
+  "metadata": { "owner": "Rarible ERC-1155 Collection" },
+  "display": {
+    "formats": {
+      "Mint1155(uint256 tokenId,uint256 supply,string tokenURI,Part[] creators,Part[] royalties)Part(address account,uint96 value)": {
+        "intent": "Lazy Mint ERC-1155",
+        "fields": [
+          { "path": "tokenId", "label": "Token ID", "format": "raw" },
+          { "path": "tokenURI", "label": "Token URI", "format": "raw" },
+          { "path": "supply", "label": "Token Supply", "format": "raw" },
+          { "path": "creators.[].account", "label": "Creator account address", "format": "raw" },
+          { "path": "creators.[].value", "label": "Creator value (10000 = 100%)", "format": "raw" },
+          { "path": "royalties.[].account", "label": "Royalties account address", "format": "raw" },
+          { "path": "royalties.[].value", "label": "Royalties value (10000 = 100%)", "format": "raw" }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [{ "chainId": 1, "address": "0xdbd27635a534a3d3169ef0498beb56fb9c937489" }],
+      "domain": { "name": "GTC Governor Alpha" }
+    }
+  },
+  "metadata": { "owner": "GTC Governor Alpha" },
+  "display": {
+    "formats": {
+      "Ballot(uint256 proposalId,bool support)": {
+        "intent": "Gitcoin Governor",
+        "fields": [
+          { "path": "proposalId", "label": "Proposal id", "format": "raw" },
+          { "path": "support", "label": "Support", "format": "raw" }
+        ]
+      }
+    }
+  }
+}
