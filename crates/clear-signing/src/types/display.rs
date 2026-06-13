@@ -67,7 +67,9 @@ pub struct DisplayFormat {
     pub id: Option<String>,
 
     /// Human-readable intent label (string or object per spec).
-    #[serde(deserialize_with = "deserialize_intent")]
+    // `default` is required alongside `deserialize_with`: without it serde
+    // rejects an *absent* field even for `Option` (intent is spec-optional).
+    #[serde(default, deserialize_with = "deserialize_intent")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intent: Option<serde_json::Value>,
 
