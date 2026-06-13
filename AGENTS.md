@@ -6,7 +6,8 @@ UniFFI bindings (Kotlin + Swift) are implemented in the same crate via a statele
 ## Workspace Layout
 
 - Cargo workspace root at `/`
-- Single crate: `crates/clear-signing/`
+- Main crate: `crates/clear-signing/`
+- Repo automation: `xtask/` (`cargo xtask <command>`, alias in `.cargo/config.toml`)
 - Local Swift package manifest: `Package.swift`
 - iOS demo app: `wallet/Wallet.xcodeproj`
 
@@ -24,7 +25,9 @@ UniFFI checks and binding generation:
 ```sh
 cargo check -p clear-signing --features uniffi,github-registry
 cargo test -p clear-signing --features uniffi,github-registry     # 49 unit tests + 101 integration
-cargo clippy -p clear-signing --all-targets --features uniffi,github-registry -- -D warnings
+cargo test -p clear-signing --features bundled-registry           # + embedded snapshot tests
+cargo check -p clear-signing --features uniffi,github-registry,bundled-registry  # both-features cfg combo
+cargo clippy -p clear-signing --all-targets --features uniffi,github-registry,bundled-registry -- -D warnings
 ./scripts/generate_uniffi_bindings.sh
 ./scripts/build-xcframework.sh
 swift package resolve
@@ -109,7 +112,8 @@ Local Swift package product:
 | `engine.rs` | `DisplayModel`, `DisplayEntry` (Item/Group/Nested), `DisplayItem` | Main formatting pipeline + nested calldata |
 | `decoder.rs` | `FunctionSignature`, `ParamType`, `ArgumentValue` | Calldata decoding from function signatures |
 | `eip712.rs` | `TypedData`, `TypedDataDomain` | EIP-712 typed data support |
-| `resolver/` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource`, `resolve_descriptors_for_tx` | Descriptor resolution facade + split source, registry, typed-selection, and nested-resolution submodules |
+| `resolver/` | `DescriptorSource` (trait), `ResolvedDescriptor`, `StaticSource`, `GitHubRegistrySource`, `BundledRegistrySource`, `resolve_descriptors_for_tx` | Descriptor resolution facade + split source, registry, typed-selection, and nested-resolution submodules; `registry_common.rs` holds pure index/path helpers shared by `github_registry.rs` and `bundled_registry.rs` |
+| `resolver/bundled_registry.rs` | `BundledRegistrySource` | Offline descriptor source backed by the embedded registry snapshot (`bundled-registry` feature) |
 | `token.rs` | `TokenSource` (trait), `TokenMeta` | Token metadata trait — resolution is fully the wallet's responsibility via `DataProviderFfi` |
 | `merge.rs` | `merge_descriptor_values`, `merge_descriptors` | JSON-level descriptor merge for `includes` mechanism |
 | `address_book.rs` | `AddressBook` | Address → label resolution from descriptor metadata |
@@ -126,9 +130,10 @@ Keep resolver work split by responsibility.
 Rules when editing `crates/clear-signing/src/resolver/`:
 1. Keep typed outer-descriptor selection centralized in `typed_selection`; do not duplicate `domain` / `domainSeparator` / exact `encodeType` matching in callers.
 2. Keep registry/index loading, HTTP fetch, and cache behavior in `github_registry`; do not mix transport concerns with typed applicability logic.
-3. Keep recursive nested calldata walking in `nested_resolution`; do not move graph traversal back into source/index code.
-4. Keep `resolver/mod.rs` as a thin facade and re-export layer, not a new implementation dumping ground.
-5. Structural resolver refactors must preserve current behavior and tests unless the user explicitly approves a semantic change.
+3. Keep bundled/embedded snapshot loading in `bundled_registry`; shared pure index/path helpers (`Eip712IndexEntry`, `filter_typed_index_entries`, `resolve_relative_path`) live in `registry_common` — do not duplicate them per source.
+4. Keep recursive nested calldata walking in `nested_resolution`; do not move graph traversal back into source/index code.
+5. Keep `resolver/mod.rs` as a thin facade and re-export layer, not a new implementation dumping ground.
+6. Structural resolver refactors must preserve current behavior and tests unless the user explicitly approves a semantic change.
 
 ## V2 Registry Compatibility
 
@@ -171,6 +176,10 @@ Optional features:
   - Default registry: `https://raw.githubusercontent.com/ethereum/clear-signing-erc7730-registry/master` (official EF registry)
   - Registry source is cached via `tokio::sync::OnceCell` in FFI layer — index fetched once per process
   - UniFFI async exports use `#[uniffi::export(async_runtime = "tokio")]`; `uniffi` dep requires `features = ["tokio"]`
+- `bundled-registry`: offline descriptor resolution via `BundledRegistrySource` — registry snapshot embedded in the binary with `include_dir` (adds ~3 MB when enabled; mobile FFI consumers should opt in deliberately)
+  - Independent of `github-registry`; in the FFI layer the bundled source wins when both features are enabled (GitHub HTTP path compiled out)
+  - Snapshot lives at `crates/clear-signing/src/assets/registry-snapshot/` (committed, generated — never hand-edit); refresh with `cargo xtask update-registry-snapshot` (records upstream commit in `SNAPSHOT.rev`, prunes stale index entries referencing files absent upstream)
+  - Snapshot integrity is enforced by a unit-test sweep that loads every indexed descriptor (including full `includes` chains) from the embedded tree
 
 ## Skills
 
