@@ -269,34 +269,17 @@ async fn safe_exec_transaction_no_inner_descriptor() {
         Some(&clear_signing::FallbackReason::NestedCallNotClearSigned)
     );
 
-    // Transaction field should be a Nested with raw fallback — find by label
-    let nested = result
+    // Transaction field degrades to a scalar hex value (no inner descriptor),
+    // not a degraded Nested entry.
+    let item = result
         .entries
         .iter()
-        .find(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Transaction"))
-        .expect("expected Nested entry for Transaction");
-
-    match nested {
-        DisplayEntry::Nested {
-            label,
-            intent,
-            owner,
-            ..
-        } => {
-            assert_eq!(label, "Transaction");
-            assert!(
-                intent.contains("Unknown function"),
-                "expected raw fallback intent, got: {intent}"
-            );
-            assert!(
-                owner.is_none(),
-                "raw fallback nested entry must not claim an owner; got {owner:?}"
-            );
-        }
-        other => {
-            panic!("expected Nested for Transaction, got {:?}", other);
-        }
-    }
+        .find_map(|e| match e {
+            DisplayEntry::Item(item) if item.label == "Transaction" => Some(item),
+            _ => None,
+        })
+        .expect("expected scalar Item for Transaction");
+    assert_eq!(item.value, format!("0x{}", hex::encode(&inner_calldata)));
 }
 
 #[tokio::test]
@@ -426,26 +409,23 @@ async fn safe_exec_transaction_depth_limit() {
         Some(&clear_signing::FallbackReason::NestedCallNotClearSigned)
     );
 
-    // Walk down to find the depth-limited entry
-    fn find_depth_limited_nested(entries: &[DisplayEntry], depth: usize) -> bool {
+    // Walk down to find the depth-limited inner calldata, now rendered as a
+    // scalar hex Item (the level-3 field hits the depth limit and degrades).
+    fn find_scalar_item_value(entries: &[DisplayEntry], target: &str) -> bool {
         for entry in entries {
-            if let DisplayEntry::Nested {
-                intent, entries, ..
-            } = entry
-            {
-                if intent == "Unknown"
-                    && entries.iter().any(|inner| {
-                        matches!(
-                            inner,
-                            DisplayEntry::Item(item) if item.label == "Raw data"
-                        )
-                    })
-                {
-                    return true;
+            match entry {
+                DisplayEntry::Item(item) if item.value == target => return true,
+                DisplayEntry::Nested { entries, .. } => {
+                    if find_scalar_item_value(entries, target) {
+                        return true;
+                    }
                 }
-                if depth < 10 && find_depth_limited_nested(entries, depth + 1) {
-                    return true;
+                DisplayEntry::Group { items, .. } => {
+                    if items.iter().any(|item| item.value == target) {
+                        return true;
+                    }
                 }
+                _ => {}
             }
         }
         false
@@ -465,8 +445,9 @@ async fn safe_exec_transaction_depth_limit() {
             .any(|diagnostic| diagnostic.message.contains("depth limit")),
         "expected nested depth-limit diagnostic"
     );
+    let depth_limited_raw = format!("0x{}", hex::encode(&erc20_calldata));
     assert!(
-        find_depth_limited_nested(&result.entries, 0),
-        "expected raw nested fallback somewhere in nested structure"
+        find_scalar_item_value(&result.entries, &depth_limited_raw),
+        "expected depth-limited inner calldata as a scalar hex Item"
     );
 }

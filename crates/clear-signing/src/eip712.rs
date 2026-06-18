@@ -830,15 +830,10 @@ async fn render_typed_calldata_field(
                         "could not decode calldata hex",
                     ));
                     *nested_fallback = true;
-                    return Ok(DisplayEntry::Nested {
+                    return Ok(DisplayEntry::Item(DisplayItem {
                         label: label.to_string(),
-                        intent: "Unknown".to_string(),
-                        owner: None,
-                        entries: vec![DisplayEntry::Item(DisplayItem {
-                            label: "Raw data".to_string(),
-                            value: s.clone(),
-                        })],
-                    });
+                        value: s.clone(),
+                    }));
                 }
             }
         }
@@ -852,15 +847,10 @@ async fn render_typed_calldata_field(
                 "calldata field is not a hex string",
             ));
             *nested_fallback = true;
-            return Ok(DisplayEntry::Nested {
+            return Ok(DisplayEntry::Item(DisplayItem {
                 label: label.to_string(),
-                intent: "Unknown".to_string(),
-                owner: None,
-                entries: vec![DisplayEntry::Item(DisplayItem {
-                    label: "Raw data".to_string(),
-                    value: raw,
-                })],
-            });
+                value: raw,
+            }));
         }
     };
 
@@ -874,15 +864,7 @@ async fn render_typed_calldata_field(
             ),
         ));
         *nested_fallback = true;
-        return Ok(DisplayEntry::Nested {
-            label: label.to_string(),
-            intent: "Unknown".to_string(),
-            owner: None,
-            entries: vec![DisplayEntry::Item(DisplayItem {
-                label: "Raw data".to_string(),
-                value: format!("0x{}", hex::encode(&inner_calldata)),
-            })],
-        });
+        return Ok(crate::engine::raw_calldata_scalar(label, &inner_calldata));
     }
 
     let callee = match resolve_typed_nested_callee(message, params, container)? {
@@ -893,7 +875,7 @@ async fn render_typed_calldata_field(
                 "nested calldata callee could not be resolved",
             ));
             *nested_fallback = true;
-            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
+            return Ok(crate::engine::raw_calldata_scalar(label, &inner_calldata));
         }
     };
 
@@ -913,15 +895,7 @@ async fn render_typed_calldata_field(
             "inner calldata too short",
         ));
         *nested_fallback = true;
-        return Ok(DisplayEntry::Nested {
-            label: label.to_string(),
-            intent: "Unknown".to_string(),
-            owner: None,
-            entries: vec![DisplayEntry::Item(DisplayItem {
-                label: "Raw data".to_string(),
-                value: format!("0x{}", hex::encode(&inner_calldata)),
-            })],
-        });
+        return Ok(crate::engine::raw_calldata_scalar(label, &inner_calldata));
     }
 
     let inner_descriptor = descriptors.iter().find(|rd| {
@@ -938,7 +912,7 @@ async fn render_typed_calldata_field(
                 "No matching descriptor for inner call",
             ));
             *nested_fallback = true;
-            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
+            return Ok(crate::engine::raw_calldata_scalar(label, &inner_calldata));
         }
     };
 
@@ -952,7 +926,7 @@ async fn render_typed_calldata_field(
                 "No matching descriptor for inner call",
             ));
             *nested_fallback = true;
-            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
+            return Ok(crate::engine::raw_calldata_scalar(label, &inner_calldata));
         }
     };
 
@@ -964,7 +938,7 @@ async fn render_typed_calldata_field(
                 "inner calldata could not be decoded",
             ));
             *nested_fallback = true;
-            return Ok(crate::engine::build_raw_nested(label, &inner_calldata));
+            return Ok(crate::engine::raw_calldata_scalar(label, &inner_calldata));
         }
     };
 

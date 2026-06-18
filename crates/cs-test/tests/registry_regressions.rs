@@ -130,6 +130,16 @@ async fn paraswap_augustus_swapper_matches_registry() {
     assert_matches_registry("paraswap/calldata-AugustusSwapper-v6.2.tests.json").await;
 }
 
+/// Degraded nested calldata renders as a scalar hex value, not a degraded Nested
+/// entry. SafeL2 "Setup Safe" (Module = empty inner data) and "sign multisig"
+/// (Transaction = ERC-20 transfer whose callee has no descriptor here) both expect
+/// the inner calldata as a plain hex string; the inner callees are intentionally
+/// absent so resolution degrades.
+#[tokio::test]
+async fn safe_l2_scalar_calldata_matches_registry() {
+    assert_matches_registry("safe/calldata-SafeL2-1.3.0.tests.json").await;
+}
+
 /// Nested calldata. The "Create and Stake" call wraps a `createSplitterAndCall`
 /// whose `data` targets a *different* contract (selector 0xfe37d829, "Stake any
 /// amount per validator"). The runner indexes the vendored inner descriptor

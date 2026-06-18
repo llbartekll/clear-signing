@@ -355,17 +355,14 @@ async fn userop_no_matching_inner_descriptor() {
         Some(&clear_signing::FallbackReason::NestedCallNotClearSigned)
     );
 
-    // Embedded Call should degrade gracefully
+    // Embedded Call degrades to a scalar hex value (no inner descriptor).
     match &result.entries[1] {
-        DisplayEntry::Nested { label, intent, .. } => {
-            assert_eq!(label, "Embedded Call");
-            assert!(
-                intent.contains("Unknown function"),
-                "expected raw fallback, got: {intent}"
-            );
+        DisplayEntry::Item(item) => {
+            assert_eq!(item.label, "Embedded Call");
+            assert_eq!(item.value, format!("0x{}", hex::encode(&random_calldata)));
         }
         other => {
-            panic!("expected Nested for Embedded Call, got {:?}", other);
+            panic!("expected scalar Item for Embedded Call, got {:?}", other);
         }
     }
 }

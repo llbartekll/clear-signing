@@ -1427,15 +1427,10 @@ async fn render_calldata_field(
                 "calldata field is not bytes",
             ));
             *nested_fallback = true;
-            return Ok(DisplayEntry::Nested {
+            return Ok(DisplayEntry::Item(DisplayItem {
                 label: label.to_string(),
-                intent: "Unknown".to_string(),
-                owner: None,
-                entries: vec![DisplayEntry::Item(DisplayItem {
-                    label: "Raw data".to_string(),
-                    value: raw,
-                })],
-            });
+                value: raw,
+            }));
         }
     };
 
@@ -1449,15 +1444,7 @@ async fn render_calldata_field(
             ),
         ));
         *nested_fallback = true;
-        return Ok(DisplayEntry::Nested {
-            label: label.to_string(),
-            intent: "Unknown".to_string(),
-            owner: None,
-            entries: vec![DisplayEntry::Item(DisplayItem {
-                label: "Raw data".to_string(),
-                value: format!("0x{}", hex::encode(inner_calldata)),
-            })],
-        });
+        return Ok(raw_calldata_scalar(label, inner_calldata));
     }
 
     let callee = match resolve_nested_callee(ctx.decoded, params)? {
@@ -1469,7 +1456,7 @@ async fn render_calldata_field(
                 "nested calldata callee could not be resolved",
             ));
             *nested_fallback = true;
-            return Ok(build_raw_nested(label, inner_calldata));
+            return Ok(raw_calldata_scalar(label, inner_calldata));
         }
     };
 
@@ -1485,15 +1472,7 @@ async fn render_calldata_field(
             "inner calldata too short",
         ));
         *nested_fallback = true;
-        return Ok(DisplayEntry::Nested {
-            label: label.to_string(),
-            intent: "Unknown".to_string(),
-            owner: None,
-            entries: vec![DisplayEntry::Item(DisplayItem {
-                label: "Raw data".to_string(),
-                value: format!("0x{}", hex::encode(inner_calldata)),
-            })],
-        });
+        return Ok(raw_calldata_scalar(label, inner_calldata));
     }
 
     // Find matching inner descriptor by chain_id + callee address
@@ -1511,7 +1490,7 @@ async fn render_calldata_field(
                 "No matching descriptor for inner call",
             ));
             *nested_fallback = true;
-            return Ok(build_raw_nested(label, inner_calldata));
+            return Ok(raw_calldata_scalar(label, inner_calldata));
         }
     };
 
@@ -1528,7 +1507,7 @@ async fn render_calldata_field(
                     "No matching descriptor for inner call",
                 ));
                 *nested_fallback = true;
-                return Ok(build_raw_nested(label, inner_calldata));
+                return Ok(raw_calldata_scalar(label, inner_calldata));
             }
         };
 
@@ -1541,7 +1520,7 @@ async fn render_calldata_field(
                 "inner calldata could not be decoded",
             ));
             *nested_fallback = true;
-            return Ok(build_raw_nested(label, inner_calldata));
+            return Ok(raw_calldata_scalar(label, inner_calldata));
         }
     };
 
@@ -1564,7 +1543,7 @@ async fn render_calldata_field(
                     "No matching descriptor for inner call",
                 ));
                 *nested_fallback = true;
-                return Ok(build_raw_nested(label, inner_calldata));
+                return Ok(raw_calldata_scalar(label, inner_calldata));
             }
         };
 
@@ -1604,34 +1583,14 @@ async fn render_calldata_field(
     })
 }
 
-/// Build a raw-preview Nested entry for inner calldata when no descriptor matches.
-pub(crate) fn build_raw_nested(label: &str, calldata: &[u8]) -> DisplayEntry {
-    let selector = if calldata.len() >= 4 {
-        format!("0x{}", hex::encode(&calldata[..4]))
-    } else {
-        format!("0x{}", hex::encode(calldata))
-    };
-
-    let data = if calldata.len() > 4 {
-        &calldata[4..]
-    } else {
-        &[]
-    };
-
-    let mut entries = Vec::new();
-    for (i, chunk) in data.chunks(32).enumerate() {
-        entries.push(DisplayEntry::Item(DisplayItem {
-            label: format!("Param {}", i),
-            value: format!("0x{}", hex::encode(chunk)),
-        }));
-    }
-
-    DisplayEntry::Nested {
+/// Render inner calldata that could not be clear-signed as a scalar hex value.
+/// A `calldata` field always has a scalar representation; a nested sub-call is
+/// attached only when the inner call resolves and decodes.
+pub(crate) fn raw_calldata_scalar(label: &str, calldata: &[u8]) -> DisplayEntry {
+    DisplayEntry::Item(DisplayItem {
         label: label.to_string(),
-        intent: format!("Unknown function {}", selector),
-        owner: None,
-        entries,
-    }
+        value: format!("0x{}", hex::encode(calldata)),
+    })
 }
 
 /// Find the current display format from context (for excluded paths, etc.).

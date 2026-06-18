@@ -5695,7 +5695,7 @@ async fn test_nested_calldata_malformed_constant_params_error() {
 }
 
 #[tokio::test]
-async fn test_unresolved_nested_callee_falls_back_to_raw_preview() {
+async fn test_unresolved_nested_callee_renders_scalar_hex() {
     let selector = format!(
         "0x{}",
         hex::encode(decoder::parse_signature("consume()").unwrap().selector)
@@ -5738,12 +5738,113 @@ async fn test_unresolved_nested_callee_falls_back_to_raw_preview() {
         .await
         .unwrap();
 
+    // Unresolvable callee → the calldata field degrades to a scalar hex value
+    // (empty inner data here), not a degraded Nested entry.
+    assert_eq!(
+        result.fallback_reason(),
+        Some(&FallbackReason::NestedCallNotClearSigned)
+    );
     match &result.entries[0] {
-        DisplayEntry::Nested { intent, .. } => {
-            assert!(intent.starts_with("Unknown function"));
+        DisplayEntry::Item(item) => {
+            assert_eq!(item.label, "Inner");
+            assert_eq!(item.value, "0x");
         }
-        _ => panic!("expected Nested entry"),
+        _ => panic!("expected scalar Item entry"),
     }
+}
+
+#[tokio::test]
+async fn test_degraded_nested_calldata_renders_scalar() {
+    // A calldata field whose callee can't be resolved degrades to a scalar hex
+    // value (not a degraded Nested entry) — identically on calldata and EIP-712 —
+    // and the outer model still reports the nested-call fallback.
+    let inner = hex::decode("1234567890").unwrap();
+    let inner_hex = format!("0x{}", hex::encode(&inner));
+
+    let calldata_descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "outer(bytes data)": {
+                        "intent": "Outer",
+                        "fields": [
+                            {"path": "data", "label": "Inner", "format": "calldata", "params": {"calleePath": "missing"}}
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let calldata = build_single_bytes_calldata("outer(bytes)", &inner);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        calldata_result.fallback_reason(),
+        Some(&FallbackReason::NestedCallNotClearSigned)
+    );
+    match &calldata_result.entries[0] {
+        DisplayEntry::Item(item) => {
+            assert_eq!(item.label, "Inner");
+            assert_eq!(item.value, inner_hex);
+        }
+        _ => panic!("expected scalar Item on calldata path"),
+    }
+
+    let typed_descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Outer(bytes data)": {
+                        "intent": "Outer",
+                        "fields": [
+                            {"path": "data", "label": "Inner", "format": "calldata", "params": {"calleePath": "missing"}}
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Outer": [{ "name": "data", "type": "bytes" }] },
+        "primaryType": "Outer",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "data": inner_hex }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        typed_result.fallback_reason(),
+        Some(&FallbackReason::NestedCallNotClearSigned)
+    );
+
+    assert_semantic_parity(&calldata_result, &typed_result);
 }
 
 #[tokio::test]

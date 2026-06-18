@@ -227,10 +227,19 @@ async fn safe_setup() {
     );
     assert_eq!(get_entry_value(&result, "Payment"), "0 ETH");
 
-    // Verify nested module entry exists
-    let has_nested = result
+    // The Module setup targets a contract with no descriptor here, so the inner
+    // call degrades to a scalar hex value (not a nested entry).
+    let module = result
         .entries
         .iter()
-        .any(|e| matches!(e, DisplayEntry::Nested { label, .. } if label == "Module"));
-    assert!(has_nested, "setup should have a nested Module entry");
+        .find_map(|e| match e {
+            DisplayEntry::Item(item) if item.label == "Module" => Some(item),
+            _ => None,
+        })
+        .expect("setup should have a scalar Module entry");
+    assert!(
+        module.value.starts_with("0xfe51f643"),
+        "expected inner setup calldata as scalar hex, got: {}",
+        module.value
+    );
 }
