@@ -33,6 +33,10 @@ enum Cmd {
         /// input, unwritable output) are non-zero.
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
+        /// Resolve nested-call descriptors from this on-disk registry tree
+        /// (recursive). Calldata only; EIP-712 cases are unaffected.
+        #[arg(long)]
+        registry: Option<PathBuf>,
     },
 }
 
@@ -44,7 +48,8 @@ fn main() -> ExitCode {
             case,
             json,
             output,
-        } => match dispatch(file, case, json, output) {
+            registry,
+        } => match dispatch(file, case, json, output, registry) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::from(1),
             Err(e) => {
@@ -60,11 +65,12 @@ fn dispatch(
     case: Option<String>,
     json: bool,
     output: Option<PathBuf>,
+    registry: Option<PathBuf>,
 ) -> Result<bool> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let results = runtime.block_on(run_file(&file, case.as_deref()))?;
+    let results = runtime.block_on(run_file(&file, case.as_deref(), registry.as_deref()))?;
     if let Some(output_path) = output {
         // Registry mode: well-formed `results.json` is the contract. Per-case
         // pass/fail/error/skipped does not influence the process exit code.

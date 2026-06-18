@@ -13,7 +13,7 @@ fn fixture(name: &str) -> PathBuf {
 #[tokio::test]
 async fn runner_pipeline_executes_and_reports_failures() {
     let path = fixture("smoke.tests.json");
-    let results = run_file(&path, None)
+    let results = run_file(&path, None, None)
         .await
         .expect("run_file should succeed structurally");
 
@@ -55,7 +55,7 @@ async fn runner_pipeline_executes_and_reports_failures() {
 #[tokio::test]
 async fn runner_reports_missing_descriptor() {
     let path = fixture("does-not-exist.tests.json");
-    let err = run_file(&path, None)
+    let err = run_file(&path, None, None)
         .await
         .expect_err("missing file should error");
     let msg = format!("{err:#}");
@@ -65,7 +65,7 @@ async fn runner_reports_missing_descriptor() {
 #[tokio::test]
 async fn runner_errors_when_case_filter_matches_nothing() {
     let path = fixture("smoke.tests.json");
-    let err = run_file(&path, Some("does-not-exist-typo"))
+    let err = run_file(&path, Some("does-not-exist-typo"), None)
         .await
         .expect_err("missing case filter must error, not silently pass");
     let msg = format!("{err:#}");
@@ -78,7 +78,7 @@ async fn runner_errors_when_case_filter_matches_nothing() {
 #[tokio::test]
 async fn runner_executes_eip712_pipeline() {
     let path = fixture("permit2.tests.json");
-    let results = run_file(&path, None)
+    let results = run_file(&path, None, None)
         .await
         .expect("permit2 EIP-712 file should run");
     assert_eq!(results.len(), 1);

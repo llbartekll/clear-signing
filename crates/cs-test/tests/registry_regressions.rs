@@ -42,7 +42,7 @@ fn fixture(rel: &str) -> PathBuf {
 /// case so the red signal is actionable.
 async fn assert_matches_registry(rel: &str) {
     let path = fixture(rel);
-    let results = run_file(&path, None)
+    let results = run_file(&path, None, None)
         .await
         .unwrap_or_else(|e| panic!("{rel}: harness could not run fixture: {e:#}"));
 
@@ -138,4 +138,37 @@ async fn paraswap_augustus_swapper_matches_registry() {
 #[tokio::test]
 async fn kiln_fee_splitter_factory_matches_registry() {
     assert_matches_registry("kiln/calldata-kiln-fee-splitter-factory.tests.json").await;
+}
+
+/// `--registry` resolves nested-call descriptors from anywhere in an on-disk
+/// registry tree, not just beside the test file. The fixture places the kiln
+/// inner descriptor (`calldata-kiln-batch-deposit-v2.json`) under `ercs/`, a
+/// different subdir than the test file's `kiln/`, so the sibling-only directory
+/// scan cannot find it: the nested call resolves *with* `--registry` and not
+/// without it.
+#[tokio::test]
+async fn registry_flag_resolves_nested_across_subdirs() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/registry-tree");
+    let test = root.join("kiln/calldata-kiln-fee-splitter-factory.tests.json");
+
+    let with = run_file(&test, None, Some(&root))
+        .await
+        .expect("run with --registry");
+    let failed: Vec<_> = with
+        .iter()
+        .filter(|r| !r.passed || r.error.is_some())
+        .collect();
+    assert!(
+        failed.is_empty(),
+        "expected all cases to pass with --registry; first divergence: {:?}",
+        failed.first().and_then(|r| first_failure_message(r))
+    );
+
+    let without = run_file(&test, None, None)
+        .await
+        .expect("run without --registry");
+    assert!(
+        without.iter().any(|r| !r.passed),
+        "expected the nested case to diverge without --registry (inner unresolved)"
+    );
 }

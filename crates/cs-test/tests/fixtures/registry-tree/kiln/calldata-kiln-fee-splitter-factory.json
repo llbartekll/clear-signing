@@ -1,0 +1,109 @@
+{
+  "$schema": "https://eips.ethereum.org/assets/eip-7730/erc7730-v2.schema.json",
+  "context": {
+    "$id": "Kiln Staking - Fee Splitter",
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0x8659EEFF31CFcff580D37AF8e7Af250F8998aA83" },
+        { "chainId": 560048, "address": "0x1A76bc69922744807E86375f8B8AB8A7cf18Eb7a" }
+      ]
+    }
+  },
+  "metadata": { "owner": "Kiln", "info": { "url": "https://kiln.fi" }, "contractName": "Kiln Staking - Fee Splitter" },
+  "display": {
+    "formats": {
+      "createOperator(address _owner, string _name, uint256 _operatorFee, uint256 _maximumOperatorFee, address[] _recipients, uint256[] _percents)": {
+        "intent": "Create Operator",
+        "fields": [
+          {
+            "label": "Owner",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet", "contract"], "sources": ["ens", "local"] },
+            "path": "#._owner",
+            "visible": "always"
+          },
+          { "label": "Name", "format": "raw", "path": "#._name", "visible": "always" },
+          {
+            "label": "Operator Fee",
+            "format": "unit",
+            "params": { "base": "%", "decimals": 2 },
+            "path": "#._operatorFee",
+            "visible": "always"
+          },
+          {
+            "label": "Maximum Operator Fee",
+            "format": "unit",
+            "params": { "base": "%", "decimals": 2 },
+            "path": "#._maximumOperatorFee",
+            "visible": "always"
+          },
+          {
+            "label": "Recipients",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet", "contract"], "sources": ["local", "ens"] },
+            "path": "#._recipients.[]",
+            "visible": "always"
+          },
+          {
+            "label": "Percentages",
+            "format": "unit",
+            "params": { "base": "%", "decimals": 2 },
+            "path": "#._percents.[]",
+            "visible": "always"
+          }
+        ]
+      },
+      "createSplitter(address operator, bytes32 salt)": {
+        "intent": "Create Splitter",
+        "fields": [
+          {
+            "label": "Operator",
+            "format": "addressName",
+            "params": { "types": ["contract"], "sources": ["local", "ens"] },
+            "path": "#.operator",
+            "visible": "always"
+          },
+          { "label": "Salt", "format": "raw", "path": "#.salt" }
+        ]
+      },
+      "createSplitterAndCall(address operator, bytes32 salt, address callAddress, bytes data)": {
+        "intent": "Create and Stake",
+        "fields": [
+          {
+            "label": "Operator",
+            "format": "addressName",
+            "params": { "types": ["contract"], "sources": ["local", "ens"] },
+            "path": "#.operator",
+            "visible": "always"
+          },
+          { "label": "Salt", "format": "raw", "path": "#.salt" },
+          {
+            "label": "Call Address",
+            "format": "addressName",
+            "params": { "types": ["contract"], "sources": ["local", "ens"] },
+            "path": "#.callAddress"
+          },
+          {
+            "label": "Transaction",
+            "format": "calldata",
+            "params": { "calleePath": "#.callAddress", "amountPath": "@.value" },
+            "path": "#.data",
+            "visible": "always"
+          }
+        ]
+      },
+      "transferOwnership(address newOwner)": {
+        "intent": "Start owner transfer",
+        "fields": [
+          {
+            "label": "New Owner",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet", "contract"], "sources": ["local", "ens"] },
+            "path": "#.newOwner",
+            "visible": "always"
+          }
+        ]
+      }
+    }
+  }
+}
