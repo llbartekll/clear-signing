@@ -1578,9 +1578,11 @@ async fn render_calldata_field(
     };
 
     let mut inner_warnings = Vec::new();
+    let inner_expanded =
+        expand_display_fields(inner_descriptor, &inner_format.fields, &mut inner_warnings);
     let inner_entries = render_fields(
         &inner_ctx,
-        &inner_format.fields,
+        &inner_expanded,
         &mut inner_warnings,
         nested_fallback,
     )
