@@ -1938,6 +1938,113 @@ async fn test_eip712_address_name_sender() {
     }
 }
 
+#[tokio::test]
+async fn test_sender_address_constant_reference_renders_sender() {
+    // A `senderAddress` given as a `$.metadata.constants.*` reference must be
+    // resolved before the comparison: an address field equal to that constant
+    // renders "Sender". Shared calldata/EIP-712 (paraswap `addressAsNull`).
+    let calldata_descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": {
+                "owner": "test", "enums": {}, "maps": {},
+                "constants": {"addressAsNull": "0x0000000000000000000000000000000000000000"}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "transfer(address beneficiary)": {
+                        "intent": "Transfer",
+                        "fields": [
+                            {
+                                "path": "beneficiary",
+                                "label": "Beneficiary",
+                                "format": "addressName",
+                                "params": {"senderAddress": "$.metadata.constants.addressAsNull"}
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "transfer(address)",
+        &[addr_word("0x0000000000000000000000000000000000000000")],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        semantic_item_snapshot(&calldata_result.entries),
+        vec![("Beneficiary".to_string(), "Sender".to_string())]
+    );
+
+    let typed_descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": {
+                "owner": "test", "enums": {}, "maps": {},
+                "constants": {"addressAsNull": "0x0000000000000000000000000000000000000000"}
+            },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Transfer(address beneficiary)": {
+                        "intent": "Transfer",
+                        "fields": [
+                            {
+                                "path": "beneficiary",
+                                "label": "Beneficiary",
+                                "format": "addressName",
+                                "params": {"senderAddress": "$.metadata.constants.addressAsNull"}
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Transfer": [{ "name": "beneficiary", "type": "address" }]
+        },
+        "primaryType": "Transfer",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "beneficiary": "0x0000000000000000000000000000000000000000" }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        semantic_item_snapshot(&typed_result.entries),
+        vec![("Beneficiary".to_string(), "Sender".to_string())]
+    );
+
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
 // ─── #8: selectorPath parsing ───
 
 #[test]

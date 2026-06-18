@@ -1752,7 +1752,7 @@ async fn format_address_name(
                     resolve_path(ctx.decoded, sender_ref)
                         .and_then(|v| address_string_from_argument_value(&v))
                 } else {
-                    Some(sender_ref.to_string())
+                    Some(resolve_metadata_constant_str(ctx.descriptor, sender_ref))
                 };
                 if let Some(resolved) = resolved_addr {
                     if resolved.to_lowercase() == hex_addr.to_lowercase() {

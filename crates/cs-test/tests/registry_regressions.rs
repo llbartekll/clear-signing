@@ -120,6 +120,16 @@ async fn aave_wrapped_token_gateway_matches_registry() {
     assert_matches_registry("aave/calldata-WrappedTokenGatewayV3.tests.json").await;
 }
 
+/// `senderAddress` given as a `$.metadata.constants.*` reference (paraswap
+/// `addressAsNull` = `address(0)`). Every "Swap" case's `Beneficiary` field equals
+/// that constant and must render "Sender"; previously the literal reference string
+/// was compared against the address and never matched, so it rendered the raw zero
+/// address. All 9 cases are flat swaps with token metadata from the test's provider.
+#[tokio::test]
+async fn paraswap_augustus_swapper_matches_registry() {
+    assert_matches_registry("paraswap/calldata-AugustusSwapper-v6.2.tests.json").await;
+}
+
 /// Nested calldata. The "Create and Stake" call wraps a `createSplitterAndCall`
 /// whose `data` targets a *different* contract (selector 0xfe37d829, "Stake any
 /// amount per validator"). The runner indexes the vendored inner descriptor

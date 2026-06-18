@@ -1675,7 +1675,7 @@ async fn format_typed_value(
                                         _ => None,
                                     })
                             } else {
-                                Some(sender_ref.to_string())
+                                Some(resolve_metadata_constant_str(descriptor, sender_ref))
                             };
                         if let Some(resolved_addr) = resolved {
                             if resolved_addr.to_lowercase() == addr.to_lowercase() {
