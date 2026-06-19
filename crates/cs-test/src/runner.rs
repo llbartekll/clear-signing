@@ -57,7 +57,14 @@ pub async fn run_file(
                     p.display()
                 ));
             }
-            Some(build_calldata_source_from_registry(p))
+            let mut source = build_calldata_source_from_registry(p);
+            // The test file names the descriptor under test; make it authoritative
+            // for its own deployments so the outer call resolves to it even if the
+            // registry subtree omits it. Nested callees still resolve from the registry.
+            for dep in descriptor.context.deployments() {
+                source.add_calldata(dep.chain_id, &dep.address, descriptor.clone());
+            }
+            Some(source)
         }
         None => None,
     };
@@ -237,6 +244,13 @@ fn collect_descriptor_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
     paths.sort();
     for path in paths {
+        // Don't follow symlinks — avoids cycles and prevents escaping the root.
+        if std::fs::symlink_metadata(&path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            continue;
+        }
         if path.is_dir() {
             collect_descriptor_files(&path, out);
             continue;

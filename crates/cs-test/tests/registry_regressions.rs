@@ -181,4 +181,22 @@ async fn registry_flag_resolves_nested_across_subdirs() {
         without.iter().any(|r| !r.passed),
         "expected the nested case to diverge without --registry (inner unresolved)"
     );
+
+    // Even when --registry points at a subtree that lacks the OUTER descriptor
+    // (here `ercs/`, which holds only the inner), the descriptor under test is
+    // seeded from the test file, so the top-level call still resolves and the
+    // inner is found in the registry subtree.
+    let inner_only = run_file(&test, None, Some(&root.join("ercs")))
+        .await
+        .expect("run with inner-only --registry subtree");
+    let failed_inner: Vec<_> = inner_only
+        .iter()
+        .filter(|r| !r.passed || r.error.is_some())
+        .collect();
+    assert!(
+        failed_inner.is_empty(),
+        "outer descriptor must be seeded from the test file even when the registry \
+         subtree omits it; first divergence: {:?}",
+        failed_inner.first().and_then(|r| first_failure_message(r))
+    );
 }
