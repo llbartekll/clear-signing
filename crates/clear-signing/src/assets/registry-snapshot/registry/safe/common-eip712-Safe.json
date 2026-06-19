@@ -1,0 +1,62 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "display": {
+    "formats": {
+      "SafeTx(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,uint256 nonce)": {
+        "intent": "Safe",
+        "fields": [
+          {
+            "path": "operation",
+            "label": "Operation type",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "path": "data",
+            "label": "Transaction",
+            "format": "calldata",
+            "params": {
+              "calleePath": "to",
+              "amountPath": "value",
+              "spenderPath": "@.to"
+            },
+            "visible": "always"
+          },
+          {
+            "path": "baseGas",
+            "label": "Gas amount",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "path": "gasPrice",
+            "label": "Gas price",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "path": "gasToken",
+            "label": "Gas token",
+            "format": "raw"
+          },
+          {
+            "path": "refundReceiver",
+            "label": "Gas receiver",
+            "format": "raw",
+            "visible": "always"
+          },
+          {
+            "label": "Safe Tx Gas",
+            "path": "safeTxGas",
+            "visible": "never"
+          },
+          {
+            "label": "Nonce",
+            "path": "nonce",
+            "visible": "never"
+          }
+        ]
+      }
+    }
+  }
+}

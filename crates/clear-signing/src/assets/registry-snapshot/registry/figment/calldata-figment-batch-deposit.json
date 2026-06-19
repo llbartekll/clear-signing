@@ -1,0 +1,33 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "Figment ETH Depositor",
+    "contract": {
+      "deployments": [
+        { "chainId": 1, "address": "0x8B0d88B8Be3C15D746Feb0B1f18c883c03B6Aa62" },
+        { "chainId": 560048, "address": "0x7Ac74cb69104Cea773cc3154D47c930ca6462fe8" }
+      ]
+    }
+  },
+  "metadata": { "owner": "Figment", "info": { "url": "https://figment.io/" }, "contractName": "Figment ETH Depositor" },
+  "display": {
+    "formats": {
+      "deposit(bytes[] pubkeys, bytes[] withdrawal_credentials, bytes[] signatures, bytes32[] deposit_data_roots, uint256[] amounts_gwei)": {
+        "intent": "Stake ETH",
+        "fields": [
+          { "label": "Validator Public Key", "format": "raw", "path": "#.pubkeys.[]" },
+          { "label": "Withdraw Credentials", "format": "raw", "path": "#.withdrawal_credentials.[]" },
+          {
+            "label": "Amount to Deposit",
+            "format": "unit",
+            "params": { "base": "ETH", "decimals": 9 },
+            "path": "#.amounts_gwei.[]",
+            "visible": "always"
+          },
+          { "label": "Signatures", "path": "#.signatures.[]", "visible": "never" },
+          { "label": "Deposit Data Roots", "path": "#.deposit_data_roots.[]", "visible": "never" }
+        ]
+      }
+    }
+  }
+}

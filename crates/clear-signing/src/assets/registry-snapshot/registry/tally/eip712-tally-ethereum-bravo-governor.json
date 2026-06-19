@@ -1,0 +1,21 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [{ "chainId": 1, "address": "0x408ed6354d4973f66138c91495f2f2fcbd8724c3" }],
+      "domain": { "name": "Uniswap Governor Bravo" }
+    }
+  },
+  "metadata": { "owner": "Uniswap Governor Bravo" },
+  "display": {
+    "formats": {
+      "Ballot(uint256 proposalId,uint8 support)": {
+        "intent": "Uniswap Governor",
+        "fields": [
+          { "path": "proposalId", "label": "Proposal id", "format": "raw" },
+          { "path": "support", "label": "Support", "format": "raw" }
+        ]
+      }
+    }
+  }
+}

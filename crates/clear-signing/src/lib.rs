@@ -34,8 +34,10 @@ pub use outcome::{
     FormatOutcome, ResolvedDescriptorResolution,
 };
 pub use provider::{DataProvider, EmptyDataProvider};
-#[cfg(feature = "github-registry")]
+#[cfg(any(feature = "github-registry", feature = "bundled-registry"))]
 pub use resolver::resolve_descriptors_for_typed_data;
+#[cfg(feature = "bundled-registry")]
+pub use resolver::BundledRegistrySource;
 pub use resolver::{
     resolve_descriptors_for_tx, DescriptorSource, ResolvedDescriptor, TypedDescriptorLookup,
 };

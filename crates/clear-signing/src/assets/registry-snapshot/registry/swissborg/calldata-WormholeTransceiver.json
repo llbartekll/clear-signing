@@ -1,0 +1,18 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "BORG Bridge (Inbound)",
+    "contract": { "deployments": [{ "chainId": 1, "address": "0x45E581d6841F0a99Fc34F70871ef56b353813ddb" }] }
+  },
+  "metadata": { "owner": "SwissBorg", "info": { "url": "https://swissborg.com/bridge" }, "contractName": "BORG Bridge (Inbound)" },
+  "display": {
+    "formats": {
+      "receiveMessage(bytes encodedMessage)": {
+        "$id": "receiveMessage",
+        "intent": "Receive Bridged BORG",
+        "interpolatedIntent": "Receive Bridged BORG",
+        "fields": [{ "$id": "encodedMessage", "label": "Encoded Message", "format": "raw", "path": "#.encodedMessage", "visible": "always" }]
+      }
+    }
+  }
+}

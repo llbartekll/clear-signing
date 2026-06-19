@@ -1,0 +1,22 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "eip712": {
+      "deployments": [{ "chainId": 1, "address": "0x0cec1a9154ff802e7934fc916ed7ca50bde6844e" }],
+      "domain": { "name": "PoolTogether" }
+    }
+  },
+  "metadata": { "owner": "PoolTogether" },
+  "display": {
+    "formats": {
+      "Delegation(address delegatee,uint256 nonce,uint256 expiry)": {
+        "intent": "POOL token",
+        "fields": [
+          { "path": "delegatee", "label": "Delegatee", "format": "raw" },
+          { "path": "nonce", "label": "Nonce", "format": "raw" },
+          { "path": "expiry", "label": "Expiry", "format": "raw" }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "sAVAX",
+    "contract": { "deployments": [{ "chainId": 43114, "address": "0x2b2c81e08f1af8835a78bb2a90ae924ace0ea4be" }] }
+  },
+  "metadata": {
+    "owner": "BENQI",
+    "info": { "url": "https://benqi.fi" },
+    "constants": { "sAVAXaddress": "0x2b2c81e08f1af8835a78bb2a90ae924ace0ea4be" },
+    "contractName": "sAVAX"
+  },
+  "display": {
+    "formats": {
+      "submit()": {
+        "intent": "Stake AVAX",
+        "fields": [{ "label": "Amount to stake", "format": "amount", "path": "@.value", "visible": "always" }]
+      },
+      "requestUnlock(uint256 shareAmount)": {
+        "intent": "Request unstaking",
+        "fields": [
+          {
+            "label": "sAVAX amount",
+            "format": "tokenAmount",
+            "path": "#.shareAmount",
+            "params": { "token": "$.metadata.constants.sAVAXaddress" },
+            "visible": "always"
+          }
+        ]
+      },
+      "redeem()": { "intent": "Claim unstaked AVAX", "fields": [] },
+      "redeem(uint256 unlockIndex)": {
+        "intent": "Claim unstaked AVAX",
+        "fields": [{ "label": "Unlock index", "format": "raw", "path": "#.unlockIndex", "visible": "always" }]
+      },
+      "redeemOverdueShares()": { "intent": "Redeem Overdue", "fields": [] },
+      "redeemOverdueShares(uint256 unlockIndex)": {
+        "intent": "Redeem sAVAX",
+        "fields": [{ "label": "Unlock index", "format": "raw", "path": "#.unlockIndex", "visible": "always" }]
+      }
+    }
+  }
+}

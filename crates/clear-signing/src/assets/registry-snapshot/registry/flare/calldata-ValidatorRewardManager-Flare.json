@@ -1,0 +1,57 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": {
+    "$id": "ValidatorRewardManager-Flare",
+    "contract": { "deployments": [{ "chainId": 14, "address": "0xc0CF3Aaf93bd978C5BC662564Aa73E331f2eC0B5" }] }
+  },
+  "metadata": { "owner": "Flare Labs", "info": { "url": "https://flare.network/" }, "contractName": "ValidatorRewardManager-Flare" },
+  "display": {
+    "formats": {
+      "claim(address _rewardOwner, address _recipient, uint256 _rewardAmount, bool _wrap)": {
+        "intent": "Claim/Wrap Reward",
+        "fields": [
+          {
+            "label": "Reward Owner",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"] },
+            "path": "#._rewardOwner",
+            "visible": "always"
+          },
+          {
+            "label": "Recipient",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"] },
+            "path": "#._recipient",
+            "visible": "always"
+          },
+          { "label": "Reward Amount", "format": "amount", "path": "#._rewardAmount", "visible": "always" },
+          { "label": "Wrap", "format": "raw", "path": "#._wrap", "visible": "always" }
+        ]
+      },
+      "setClaimExecutors(address[] _executors)": {
+        "intent": "set executors",
+        "fields": [
+          {
+            "label": "Executor",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"] },
+            "path": "#._executors.[]",
+            "visible": "always"
+          }
+        ]
+      },
+      "setAllowedClaimRecipients(address[] _recipients)": {
+        "intent": "set recipients",
+        "fields": [
+          {
+            "label": "Recipient",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"] },
+            "path": "#._recipients.[]",
+            "visible": "always"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "includes": "uniswap-common-eip712.json",
+  "display": {
+    "formats": {
+      "PermitWitnessTransferFrom(TokenPermissions permitted,address spender,uint256 nonce,uint256 deadline,ExclusiveDutchOrder witness)DutchOutput(address token,uint256 startAmount,uint256 endAmount,address recipient)ExclusiveDutchOrder(OrderInfo info,uint256 decayStartTime,uint256 decayEndTime,address exclusiveFiller,uint256 exclusivityOverrideBps,address inputToken,uint256 inputStartAmount,uint256 inputEndAmount,DutchOutput[] outputs)OrderInfo(address reactor,address swapper,uint256 nonce,uint256 deadline,address additionalValidationContract,bytes additionalValidationData)TokenPermissions(address token,uint256 amount)": {
+        "intent": "UniswapX Exclusive Dutch Order",
+        "fields": [
+          { "path": "spender", "label": "Approve to spender", "format": "raw" },
+          {
+            "path": "permitted.amount",
+            "label": "Approve amount",
+            "format": "tokenAmount",
+            "params": { "tokenPath": "permitted.token" }
+          },
+          {
+            "path": "witness.inputStartAmount",
+            "label": "Spend max",
+            "format": "tokenAmount",
+            "params": { "tokenPath": "witness.inputToken" }
+          },
+          {
+            "path": "witness.outputs.[]",
+            "fields": [
+              { "path": "endAmount", "label": "Minimum amounts to receive", "format": "tokenAmount", "params": { "tokenPath": "token" } },
+              { "path": "recipient", "label": "On Addresses", "format": "raw" }
+            ]
+          },
+          { "path": "deadline", "label": "Approval expire", "format": "date", "params": { "encoding": "timestamp" } },
+          { "label": "Nonce", "path": "nonce", "visible": "never" },
+          { "label": "Witness Info", "path": "witness.info", "visible": "never" },
+          { "label": "Witness Decay Start Time", "path": "witness.decayStartTime", "visible": "never" },
+          { "label": "Witness Decay End Time", "path": "witness.decayEndTime", "visible": "never" },
+          { "label": "Witness Exclusive Filler", "path": "witness.exclusiveFiller", "visible": "never" },
+          { "label": "Witness Exclusivity Override Bps", "path": "witness.exclusivityOverrideBps", "visible": "never" },
+          { "label": "Witness Input End Amount", "path": "witness.inputEndAmount", "visible": "never" },
+          { "label": "Witness Outputs Start Amount", "path": "witness.outputs.[].startAmount", "visible": "never" }
+        ]
+      }
+    }
+  }
+}

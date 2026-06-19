@@ -8,19 +8,44 @@ use crate::{
     resolver::ResolvedDescriptor, token::TokenMeta, types::descriptor::Descriptor,
 };
 
-#[cfg(feature = "github-registry")]
-use crate::resolver::{DescriptorSource, GitHubRegistrySource};
+#[cfg(any(feature = "github-registry", feature = "bundled-registry"))]
+use crate::resolver::DescriptorSource;
 
-#[cfg(feature = "github-registry")]
+#[cfg(feature = "bundled-registry")]
+use crate::resolver::BundledRegistrySource;
+#[cfg(all(feature = "github-registry", not(feature = "bundled-registry")))]
+use crate::resolver::GitHubRegistrySource;
+
+#[cfg(all(feature = "github-registry", not(feature = "bundled-registry")))]
 const DEFAULT_REGISTRY_URL: &str =
     "https://raw.githubusercontent.com/ethereum/clear-signing-erc7730-registry/master";
 
-#[cfg(feature = "github-registry")]
-static REGISTRY_SOURCE: tokio::sync::OnceCell<GitHubRegistrySource> =
+// Registry source selection: the bundled snapshot wins when both registry
+// features are enabled — the GitHub HTTP path is compiled out entirely.
+#[cfg(feature = "bundled-registry")]
+type RegistrySourceImpl = BundledRegistrySource;
+#[cfg(all(feature = "github-registry", not(feature = "bundled-registry")))]
+type RegistrySourceImpl = GitHubRegistrySource;
+
+#[cfg(any(feature = "github-registry", feature = "bundled-registry"))]
+static REGISTRY_SOURCE: tokio::sync::OnceCell<RegistrySourceImpl> =
     tokio::sync::OnceCell::const_new();
 
-#[cfg(feature = "github-registry")]
-async fn get_registry_source() -> Result<&'static GitHubRegistrySource, FormatFailure> {
+#[cfg(feature = "bundled-registry")]
+async fn get_registry_source() -> Result<&'static RegistrySourceImpl, FormatFailure> {
+    REGISTRY_SOURCE
+        .get_or_try_init(|| async {
+            BundledRegistrySource::new().map_err(|e| FormatFailure::ResolutionFailed {
+                detail: format!("failed to initialize bundled registry: {e}"),
+                // Embedded build-time data — retrying cannot help.
+                retryable: false,
+            })
+        })
+        .await
+}
+
+#[cfg(all(feature = "github-registry", not(feature = "bundled-registry")))]
+async fn get_registry_source() -> Result<&'static RegistrySourceImpl, FormatFailure> {
     REGISTRY_SOURCE
         .get_or_try_init(|| async {
             GitHubRegistrySource::from_registry(DEFAULT_REGISTRY_URL)
@@ -280,11 +305,12 @@ pub async fn clear_signing_format_typed_data(
     crate::format_typed_data(&descriptors, &typed_data, provider.as_ref()).await
 }
 
-/// Resolve a calldata descriptor from the GitHub registry for a given chain + address.
+/// Resolve a calldata descriptor from the registry for a given chain + address.
 ///
 /// Returns the descriptor JSON string, or `None` if no descriptor is found.
-/// Requires the `github-registry` feature.
-#[cfg(feature = "github-registry")]
+/// Requires the `github-registry` or `bundled-registry` feature; the bundled
+/// snapshot wins when both are enabled.
+#[cfg(any(feature = "github-registry", feature = "bundled-registry"))]
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn clear_signing_resolve_descriptor(
     chain_id: u64,
@@ -306,11 +332,11 @@ pub async fn clear_signing_resolve_descriptor(
 
 /// Resolve all descriptors needed for EIP-712 typed data, including nested calldata.
 ///
-/// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
+/// Uses the configured registry source. Returns descriptor JSON strings in dependency order.
 /// First element is the outer EIP-712 descriptor, subsequent are inner calldata descriptors.
 /// Returns empty vec if no descriptor is found for the outer verifying contract.
 /// Automatically detects proxy contracts via `data_provider.get_implementation_address`.
-#[cfg(feature = "github-registry")]
+#[cfg(any(feature = "github-registry", feature = "bundled-registry"))]
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn clear_signing_resolve_descriptors_for_typed_data(
     typed_data_json: String,
@@ -357,11 +383,11 @@ pub async fn clear_signing_resolve_descriptors_for_typed_data(
 
 /// Resolve all descriptors needed for a transaction, including nested calldata.
 ///
-/// Uses the GitHub registry. Returns descriptor JSON strings in dependency order.
+/// Uses the configured registry source. Returns descriptor JSON strings in dependency order.
 /// First element is the outer descriptor, subsequent are inner callees.
 /// Returns empty vec if no descriptor is found for the outer address.
 /// Automatically detects proxy contracts via `data_provider.get_implementation_address`.
-#[cfg(feature = "github-registry")]
+#[cfg(any(feature = "github-registry", feature = "bundled-registry"))]
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn clear_signing_resolve_descriptors_for_tx(
     transaction: TransactionInput,

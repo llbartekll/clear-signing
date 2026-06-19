@@ -14,7 +14,7 @@ categories = ["cryptography::cryptocurrencies", "encoding"]
 exclude = ["tests/fixtures/**"]
 
 [package.metadata.docs.rs]
-features = ["uniffi", "github-registry"]
+features = ["uniffi", "github-registry", "bundled-registry"]
 
 [lib]
 name = "clear_signing"
@@ -34,6 +34,7 @@ required-features = ["github-registry"]
 default = []
 uniffi = ["dep:uniffi", "uniffi/cli"]
 github-registry = ["dep:reqwest"]
+bundled-registry = ["dep:include_dir"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -46,3 +47,4 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt", "macros", "sync"] }
 uniffi = { version = "0.31.0", default-features = false, features = ["tokio"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-webpki-roots"], optional = true }
+include_dir = { version = "0.7", optional = true }

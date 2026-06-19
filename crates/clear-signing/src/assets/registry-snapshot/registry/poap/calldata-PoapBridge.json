@@ -1,0 +1,27 @@
+{
+  "$schema": "../../specs/erc7730-v2.schema.json",
+  "context": { "contract": { "deployments": [{ "chainId": 1, "address": "0x0bb4D3e88243F4A057Db77341e6916B0e449b158" }] } },
+  "metadata": { "owner": "Proof of Attendance Protocol", "info": { "url": "https://poap.xyz/" } },
+  "display": {
+    "formats": {
+      "mintToken(uint256 eventId, uint256 tokenId, address receiver, uint256 expirationTime, bytes signature)": {
+        "$id": "mintToken",
+        "intent": "Mint POAP",
+        "fields": [
+          { "label": "Token Id", "format": "raw", "path": "#.tokenId", "visible": "always" },
+          {
+            "label": "Receiver",
+            "format": "addressName",
+            "params": { "types": ["eoa", "wallet"] },
+            "path": "#.receiver",
+            "visible": "always"
+          },
+          { "label": "Expiration Time", "format": "date", "params": { "encoding": "timestamp" }, "path": "#.expirationTime" },
+          { "path": "@.value", "label": "Migration Fee", "format": "amount" },
+          { "label": "Event Id", "path": "#.eventId", "visible": "never" },
+          { "label": "Signature", "path": "#.signature", "visible": "never" }
+        ]
+      }
+    }
+  }
+}
