@@ -3715,6 +3715,52 @@ async fn test_eip712_missing_verifying_contract_rejected_with_descriptors() {
     );
 }
 
+/// A format may omit `intent` (optional per spec). The descriptor must still
+/// parse rather than being rejected with "missing field `intent`".
+#[tokio::test]
+async fn test_format_without_intent_parses_and_renders() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "burn(uint256 amount)": {
+                        "fields": [{ "label": "Amount", "path": "amount", "format": "number" }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .expect("a format without intent must parse");
+
+    assert!(descriptor
+        .display
+        .formats
+        .get("burn(uint256 amount)")
+        .expect("format present")
+        .intent
+        .is_none());
+
+    let calldata = build_calldata("burn(uint256)", &[uint_word(5)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(
+        semantic_item_snapshot(&result.entries),
+        vec![("Amount".to_string(), "5".to_string())]
+    );
+}
+
 #[tokio::test]
 async fn test_eip712_outer_descriptor_match_is_required() {
     let descriptor = Descriptor::from_json(
