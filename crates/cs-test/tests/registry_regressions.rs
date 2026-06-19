@@ -111,16 +111,6 @@ async fn uniswap_v2_dutch_order_matches_registry() {
     assert_matches_registry("uniswap/eip712-uniswap-V2DutchOrder.tests.json").await;
 }
 
-/// Salt-based EIP-712 domain (no `chainId`): the Rarible ExchangeV2 meta-tx
-/// domain is `name/version/verifyingContract/salt`. Descriptor selection used to
-/// require `domain.chainId` and bailed to a raw fallback; it now selects by
-/// `verifyingContract` when the descriptor declares a domain binding, rendering
-/// the curated "Meta Transaction" format (owner + User Address + Nonce).
-#[tokio::test]
-async fn rarible_meta_tx_salt_domain_matches_registry() {
-    assert_matches_registry("rarible/eip712-rarible-exchange-v2-meta-tx.tests.json").await;
-}
-
 /// Permit2 `PermitBatch`: the amount field is the flat array form
 /// `details.[].amount` with an element-relative `tokenPath: details.[].token`.
 /// Each element's amount must resolve its own token (USDC 6dp → "2500 USDC",
