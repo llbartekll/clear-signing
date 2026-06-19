@@ -266,11 +266,30 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
     }
 }
 
+/// Whether a descriptor declares an EIP-712 domain binding (a non-empty
+/// `context.eip712.domain` or a `domainSeparator`). Used to allow chainId-absent
+/// (salt-based) domains to clear-sign when the descriptor pins the domain itself.
+fn descriptor_declares_eip712_domain(rd: &ResolvedDescriptor) -> bool {
+    let crate::types::context::DescriptorContext::Eip712(ctx) = &rd.descriptor.context else {
+        return false;
+    };
+    if ctx.eip712.domain_separator.is_some() {
+        return true;
+    }
+    ctx.eip712.domain.as_ref().is_some_and(|d| {
+        d.name.is_some()
+            || d.version.is_some()
+            || d.chain_id.is_some()
+            || d.verifying_contract.is_some()
+            || d.salt.is_some()
+    })
+}
+
 /// Format EIP-712 typed data for clear signing display.
 ///
 /// Takes a slice of pre-resolved descriptors. The outer descriptor is found by
-/// matching `chain_id + verifying_contract`. Remaining descriptors are available
-/// for nested calldata. Single-element slice = simple case, multi-element = nesting.
+/// matching `verifying_contract` (+ `chain_id` when the domain provides it).
+/// Remaining descriptors are available for nested calldata.
 pub async fn format_typed_data(
     descriptors: &[ResolvedDescriptor],
     data: &eip712::TypedData,
@@ -285,17 +304,19 @@ pub async fn format_typed_data(
         ));
     }
 
-    let chain_id = match data.domain.chain_id {
-        Some(chain_id) => chain_id,
-        None => {
-            return Ok(fallback_outcome(
-                eip712::build_typed_raw_fallback(data),
-                FallbackReason::InsufficientContext,
-                "insufficient_context",
-                "EIP-712 domain.chainId is required for descriptor-based clear signing".to_string(),
-            ));
-        }
-    };
+    // chainId is OPTIONAL in EIP-712 domains: salt-based domains (e.g. Polygon
+    // meta-transactions) omit it and bind via verifyingContract + a
+    // descriptor-declared domain instead. Fall back only when there is no chainId
+    // AND no candidate descriptor declares a domain to bind against.
+    let chain_id = data.domain.chain_id;
+    if chain_id.is_none() && !descriptors.iter().any(descriptor_declares_eip712_domain) {
+        return Ok(fallback_outcome(
+            eip712::build_typed_raw_fallback(data),
+            FallbackReason::InsufficientContext,
+            "insufficient_context",
+            "EIP-712 domain.chainId is required for descriptor-based clear signing".to_string(),
+        ));
+    }
     let verifying_contract = match data.domain.verifying_contract.as_deref() {
         Some(verifying_contract) => verifying_contract,
         None => {
@@ -327,8 +348,7 @@ pub async fn format_typed_data(
                 ));
             }
             let mut message = format!(
-                "no EIP-712 descriptor found for chain_id={} verifying_contract={} after domain and encodeType validation",
-                chain_id, verifying_contract
+                "no EIP-712 descriptor found for chain_id={chain_id:?} verifying_contract={verifying_contract} after domain and encodeType validation"
             );
             if !no_match.domain_errors.is_empty() {
                 message.push_str(": ");
