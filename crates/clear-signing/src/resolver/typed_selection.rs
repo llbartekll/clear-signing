@@ -22,11 +22,12 @@ pub(crate) fn select_typed_outer_descriptor<'a>(
     descriptors: &'a [ResolvedDescriptor],
     data: &crate::eip712::TypedData,
 ) -> Result<TypedOuterSelection<'a>, Error> {
-    // chainId is an OPTIONAL EIP-712 domain field: salt-based domains (e.g.
-    // Polygon meta-transactions) omit it and rely on `salt` for replay
-    // protection. verifyingContract is the required anchor; when chainId is
-    // present it must also match a declared deployment.
-    let chain_id = data.domain.chain_id;
+    let Some(chain_id) = data.domain.chain_id else {
+        return Ok(TypedOuterSelection::NoMatch(TypedOuterNoMatch {
+            domain_errors: Vec::new(),
+            format_misses: Vec::new(),
+        }));
+    };
     let Some(verifying_contract) = data.domain.verifying_contract.as_deref() else {
         return Ok(TypedOuterSelection::NoMatch(TypedOuterNoMatch {
             domain_errors: Vec::new(),
@@ -45,8 +46,7 @@ pub(crate) fn select_typed_outer_descriptor<'a>(
             .deployments()
             .iter()
             .any(|dep| {
-                dep.address.eq_ignore_ascii_case(verifying_contract)
-                    && chain_id.is_none_or(|cid| dep.chain_id == cid)
+                dep.chain_id == chain_id && dep.address.eq_ignore_ascii_case(verifying_contract)
             });
         if !deployment_matches {
             continue;
@@ -77,7 +77,8 @@ pub(crate) fn select_typed_outer_descriptor<'a>(
             format_misses,
         })),
         _ => Err(Error::Descriptor(format!(
-            "multiple EIP-712 descriptors match chain_id={chain_id:?} verifying_contract={verifying_contract} after domain and encodeType validation"
+            "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain and encodeType validation",
+            chain_id, verifying_contract
         ))),
     }
 }
