@@ -357,7 +357,7 @@ fn render_typed_fields<'a>(
                         if let Some(serde_json::Value::Array(items)) =
                             resolve_typed_path_in_context(message, base, container)?
                         {
-                            for item in &items {
+                            for (i, item) in items.iter().enumerate() {
                                 let val = if rest.is_empty() {
                                     Some(item.clone())
                                 } else {
@@ -366,11 +366,17 @@ fn render_typed_fields<'a>(
                                 if !check_typed_visibility(visible, &val, label, path_str)? {
                                     continue;
                                 }
+                                // Flat array path: rewrite element-relative param
+                                // paths (`x.[].token`) to the concrete index and
+                                // resolve against the root, matching the calldata
+                                // path. A bare root path (no `.[]`) stays root-relative.
+                                let item_params =
+                                    crate::engine::index_array_params(params.as_ref(), i);
                                 let formatted = format_typed_value(
                                     descriptor,
                                     &val,
                                     format.as_ref(),
-                                    params.as_ref(),
+                                    item_params.as_ref(),
                                     container,
                                     message,
                                     None,
@@ -2004,34 +2010,26 @@ async fn resolve_and_format_typed_interpolation(
         {
             if !items.is_empty() {
                 let mut parts = Vec::with_capacity(items.len());
-                for item in &items {
-                    // Element fields (non-empty `rest`) resolve relative to the
-                    // item, mirroring the scoped/bundled rendering path so an
-                    // item-relative `tokenPath` resolves per element.
-                    let (val, scoped_params, item_scope) = if rest.is_empty() {
-                        (Some(item.clone()), None, None)
+                for (i, item) in items.iter().enumerate() {
+                    let val = if rest.is_empty() {
+                        Some(item.clone())
                     } else {
-                        (
-                            resolve_typed_path_in_context(item, rest, container)?,
-                            item_scoped_typed_params(base, field.params),
-                            Some(item),
-                        )
+                        resolve_typed_path_in_context(item, rest, container)?
                     };
-                    let params = if rest.is_empty() {
-                        field.params
-                    } else {
-                        scoped_params.as_ref()
-                    };
+                    // Flat array path: rewrite element-relative param paths
+                    // (`x.[].token`) to the concrete index and resolve against the
+                    // root, matching the calldata interpolation path.
+                    let item_params = crate::engine::index_array_params(field.params, i);
                     let mut warnings = Vec::new();
                     parts.push(
                         format_typed_value(
                             descriptor,
                             &val,
                             field.format,
-                            params,
+                            item_params.as_ref(),
                             container,
                             message,
-                            item_scope,
+                            None,
                             data_provider,
                             &mut warnings,
                         )

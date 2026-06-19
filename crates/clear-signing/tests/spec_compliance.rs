@@ -1646,6 +1646,142 @@ async fn test_eip712_grouped_array_absolute_token_path_is_not_rewritten() {
     }
 }
 
+// ─── Array-element tokenPath parity (Permit2 PermitBatch shape) ───
+
+/// A field iterating an array of structs (`details.[].amount`) with an
+/// element-relative `tokenPath` (`details.[].token`) must resolve each
+/// element's own token, not resolve the path once against the root. Calldata
+/// and EIP-712 must agree. Mirrors Uniswap Permit2 `PermitBatch`.
+#[tokio::test]
+async fn test_array_element_token_path_resolves_per_element_calldata_eip712_parity() {
+    const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    const WETH: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+    let fields = serde_json::json!([
+        {
+            "path": "details.[].amount",
+            "label": "Amount allowance",
+            "format": "tokenAmount",
+            "params": { "tokenPath": "details.[].token" }
+        }
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "swap((address token,uint256 amount)[] details)": {
+                        "intent": "Authorize spending of tokens",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Swap(PermitDetails[] details)PermitDetails(address token,uint256 amount)": {
+                        "intent": "Authorize spending of tokens",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "swap((address token,uint256 amount)[] details)",
+        &[
+            uint_word(0x20),                    // offset to details array
+            uint_word(2),                       // details.length
+            address_word(USDC),                 // details[0].token
+            uint_word(2_500_000_000),           // details[0].amount -> 2500 USDC (6dp)
+            address_word(WETH),                 // details[1].token
+            uint_word(750_000_000_000_000_000), // details[1].amount -> 0.75 WETH (18dp)
+        ],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        USDC,
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+    tokens.insert(
+        1,
+        WETH,
+        TokenMeta {
+            symbol: "WETH".to_string(),
+            decimals: 18,
+            name: "Wrapped Ether".to_string(),
+        },
+    );
+
+    let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
+        .await
+        .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "PermitDetails": [
+                { "name": "token", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+            ],
+            "Swap": [
+                { "name": "details", "type": "PermitDetails[]" }
+            ]
+        },
+        "primaryType": "Swap",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "details": [
+                { "token": USDC, "amount": "2500000000" },
+                { "token": WETH, "amount": "750000000000000000" }
+            ]
+        }
+    }))
+    .unwrap();
+    let typed_result =
+        format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        semantic_item_snapshot(&calldata_result.entries),
+        vec![
+            ("Amount allowance".to_string(), "2500 USDC".to_string()),
+            ("Amount allowance".to_string(), "0.75 WETH".to_string()),
+        ]
+    );
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
 // ─── #20: EIP-712 domain completeness ───
 
 #[test]
@@ -1885,6 +2021,241 @@ async fn test_scoped_array_interpolated_intent_resolves_item_token() {
         result.interpolated_intent.as_deref(),
         Some("Receive 0.200297 USDC and 0.5 USDC")
     );
+}
+
+/// `interpolatedIntent` over an array-element field with an element-relative
+/// `tokenPath` must resolve each element's own token — in BOTH calldata and
+/// EIP-712 (the calldata interpolation path previously left the path unscoped,
+/// rendering raw integers while EIP-712 resolved per element).
+#[tokio::test]
+async fn test_array_interpolated_intent_item_token_calldata_eip712_parity() {
+    const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    const WETH: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        USDC,
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+    tokens.insert(
+        1,
+        WETH,
+        TokenMeta {
+            symbol: "WETH".to_string(),
+            decimals: 18,
+            name: "Wrapped Ether".to_string(),
+        },
+    );
+
+    let fields = serde_json::json!([
+        { "path": "outputs.[].endAmount", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "outputs.[].token" } }
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "fill((uint256 endAmount,address token)[] outputs)": {
+                        "intent": "Order",
+                        "interpolatedIntent": "Receive {outputs.[].endAmount}",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "fill((uint256 endAmount,address token)[] outputs)",
+        &[
+            uint_word(0x20),                    // offset to outputs array
+            uint_word(2),                       // outputs.length
+            uint_word(2_500_000_000),           // outputs[0].endAmount -> 2500 USDC
+            address_word(USDC),                 // outputs[0].token
+            uint_word(750_000_000_000_000_000), // outputs[1].endAmount -> 0.75 WETH
+            address_word(WETH),                 // outputs[1].token
+        ],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
+        .await
+        .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Order(Output[] outputs)Output(uint256 endAmount,address token)": {
+                        "intent": "Order",
+                        "interpolatedIntent": "Receive {outputs.[].endAmount}",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Order": [{ "name": "outputs", "type": "Output[]" }],
+            "Output": [
+                { "name": "endAmount", "type": "uint256" },
+                { "name": "token", "type": "address" }
+            ]
+        },
+        "primaryType": "Order",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "outputs": [
+                { "endAmount": "2500000000", "token": USDC },
+                { "endAmount": "750000000000000000", "token": WETH }
+            ]
+        }
+    }))
+    .unwrap();
+    let typed_result =
+        format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+            .await
+            .unwrap();
+
+    assert_eq!(
+        calldata_result.interpolated_intent.as_deref(),
+        Some("Receive 2500 USDC and 0.75 WETH")
+    );
+    assert_eq!(
+        typed_result.interpolated_intent.as_deref(),
+        Some("Receive 2500 USDC and 0.75 WETH")
+    );
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
+/// A bare (non-`.[]`) `tokenPath` on a simple array-element field is ROOT-relative
+/// and must keep resolving against the message root, not the scalar array element.
+/// Guards against rebasing element-relative scoping onto bare root paths. Both
+/// calldata and EIP-712.
+#[tokio::test]
+async fn test_array_bare_root_token_path_resolves_at_root_calldata_eip712_parity() {
+    const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        USDC,
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let fields = serde_json::json!([
+        { "path": "amounts.[]", "label": "Amount", "format": "tokenAmount", "params": { "tokenPath": "token" } }
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "pay(uint256[] amounts,address token)": {
+                        "intent": "Pay",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    // f(uint256[] amounts, address token): head is [offset-to-amounts, token].
+    let calldata = build_calldata(
+        "pay(uint256[] amounts,address token)",
+        &[
+            uint_word(0x40),          // offset to amounts (after the 2-word head)
+            address_word(USDC),       // token (root, shared by all elements)
+            uint_word(2),             // amounts.length
+            uint_word(2_500_000_000), // amounts[0] -> 2500 USDC
+            uint_word(1_000_000),     // amounts[1] -> 1 USDC
+        ],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
+        .await
+        .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Pay(uint256[] amounts,address token)": {
+                        "intent": "Pay",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Pay": [
+                { "name": "amounts", "type": "uint256[]" },
+                { "name": "token", "type": "address" }
+            ]
+        },
+        "primaryType": "Pay",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "amounts": ["2500000000", "1000000"], "token": USDC }
+    }))
+    .unwrap();
+    let typed_result =
+        format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+            .await
+            .unwrap();
+
+    let expected = vec![
+        ("Amount".to_string(), "2500 USDC".to_string()),
+        ("Amount".to_string(), "1 USDC".to_string()),
+    ];
+    assert_eq!(semantic_item_snapshot(&calldata_result.entries), expected);
+    assert_semantic_parity(&calldata_result, &typed_result);
 }
 
 // ─── #16: EIP-712 AddressName with senderAddress ───

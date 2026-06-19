@@ -247,7 +247,7 @@ fn render_fields<'a>(
                     // Check for .[] array iteration — expand into one entry per element
                     if let Some((base, rest)) = split_array_iter_path(path_str) {
                         if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
-                            for item in &items {
+                            for (i, item) in items.iter().enumerate() {
                                 let val = if rest.is_empty() {
                                     Some(item.clone())
                                 } else {
@@ -257,11 +257,12 @@ fn render_fields<'a>(
                                 if !check_visibility(visible, &val, label, path_str)? {
                                     continue;
                                 }
+                                let item_params = index_array_params(params.as_ref(), i);
                                 let formatted = format_value(
                                     ctx,
                                     &val,
                                     format.as_ref(),
-                                    params.as_ref(),
+                                    item_params.as_ref(),
                                     path_str,
                                     label,
                                     separator.as_deref(),
@@ -389,7 +390,7 @@ fn render_group_field_kind<'a>(
                 if let Some((base, rest)) = split_array_iter_path(path_str) {
                     if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
                         let mut bundles = Vec::new();
-                        for item in &items {
+                        for (i, item) in items.iter().enumerate() {
                             let val = if rest.is_empty() {
                                 Some(item.clone())
                             } else {
@@ -399,13 +400,14 @@ fn render_group_field_kind<'a>(
                             if !check_visibility(visible, &val, label, path_str)? {
                                 continue;
                             }
+                            let item_params = index_array_params(params.as_ref(), i);
                             let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata))
                             {
                                 flatten_display_entry(
                                     render_calldata_field(
                                         ctx,
                                         &val,
-                                        params.as_ref(),
+                                        item_params.as_ref(),
                                         label,
                                         warnings,
                                         nested_fallback,
@@ -419,7 +421,7 @@ fn render_group_field_kind<'a>(
                                         ctx,
                                         &val,
                                         format.as_ref(),
-                                        params.as_ref(),
+                                        item_params.as_ref(),
                                         path_str,
                                         label,
                                         separator.as_deref(),
@@ -1029,6 +1031,22 @@ pub(crate) fn split_array_iter_path(path: &str) -> Option<(&str, &str)> {
     // Strip leading dot from remaining path
     let rest = rest.strip_prefix('.').unwrap_or(rest);
     Some((base, rest))
+}
+
+/// Scope element-relative path params to the array element being rendered by
+/// rewriting the first `.[]` to a concrete index, so e.g. `tokenPath`
+/// `details.[].token` resolves to `details.[index].token` for element `index`.
+/// No-op when the param has no `.[]`. Shared by the calldata and EIP-712 flat
+/// array-iteration paths (field rendering + interpolation).
+pub(crate) fn index_array_params(
+    params: Option<&FormatParams>,
+    index: usize,
+) -> Option<FormatParams> {
+    let mut params = params.cloned()?;
+    if let Some(token_path) = params.token_path.as_ref() {
+        params.token_path = Some(token_path.replacen(".[]", &format!(".[{index}]"), 1));
+    }
+    Some(params)
 }
 
 fn visibility_context(label: &str, path: &str) -> String {
@@ -2222,19 +2240,20 @@ async fn resolve_and_format_for_interpolation(
         if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
             if !items.is_empty() {
                 let mut parts = Vec::with_capacity(items.len());
-                for item in &items {
+                for (i, item) in items.iter().enumerate() {
                     let val = if rest.is_empty() {
                         Some(item.clone())
                     } else {
                         navigate_value(item, &rest.split('.').collect::<Vec<_>>())
                     };
+                    let item_params = index_array_params(field.params, i);
                     let mut warnings = RenderDiagnostics::new();
                     parts.push(
                         format_value(
                             ctx,
                             &val,
                             field.format,
-                            field.params,
+                            item_params.as_ref(),
                             field.path,
                             field.label,
                             field.separator,

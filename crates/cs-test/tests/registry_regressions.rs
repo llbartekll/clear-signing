@@ -111,6 +111,17 @@ async fn uniswap_v2_dutch_order_matches_registry() {
     assert_matches_registry("uniswap/eip712-uniswap-V2DutchOrder.tests.json").await;
 }
 
+/// Permit2 `PermitBatch`: the amount field is the flat array form
+/// `details.[].amount` with an element-relative `tokenPath: details.[].token`.
+/// Each element's amount must resolve its own token (USDC 6dp → "2500 USDC",
+/// WETH 18dp → "0.75 WETH"); previously the iteration left `tokenPath` unscoped,
+/// so the per-element token never resolved and the raw integer was shown. The
+/// `PermitSingle` case (scalar `details.token`) covers the unaffected path.
+#[tokio::test]
+async fn uniswap_permit2_matches_registry() {
+    assert_matches_registry("uniswap/eip712-uniswap-permit2.tests.json").await;
+}
+
 /// #7: top-level `amount`-format fields rendered as raw integers instead of
 /// native-currency amounts. The `Borrow` case also covers `@.from`: its "Debtor"
 /// field reads the sender, supplied via the test case's `from` (the unsigned
