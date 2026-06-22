@@ -70,13 +70,14 @@ pub(crate) fn select_typed_outer_descriptor<'a>(
         }
     }
 
-    match matches.len() {
-        1 => Ok(TypedOuterSelection::Selected(matches.pop().expect("single match"))),
-        0 => Ok(TypedOuterSelection::NoMatch(TypedOuterNoMatch {
+    let mut iter = matches.into_iter();
+    match (iter.next(), iter.next()) {
+        (Some(selected), None) => Ok(TypedOuterSelection::Selected(selected)),
+        (None, _) => Ok(TypedOuterSelection::NoMatch(TypedOuterNoMatch {
             domain_errors,
             format_misses,
         })),
-        _ => Err(Error::Descriptor(format!(
+        (Some(_), Some(_)) => Err(Error::Descriptor(format!(
             "multiple EIP-712 descriptors match chain_id={} verifying_contract={} after domain and encodeType validation",
             chain_id, verifying_contract
         ))),

@@ -1033,10 +1033,12 @@ pub(crate) fn split_array_iter_path(path: &str) -> Option<(&str, &str)> {
     Some((base, rest))
 }
 
-/// Scope element-relative path params to the array element being rendered by
-/// rewriting the first `.[]` to a concrete index, so e.g. `tokenPath`
+/// Scope the element-relative `tokenPath` to the array element being rendered
+/// by rewriting its first `.[]` to a concrete index, so `tokenPath`
 /// `details.[].token` resolves to `details.[index].token` for element `index`.
-/// No-op when the param has no `.[]`. Shared by the calldata and EIP-712 flat
+/// No-op when `tokenPath` is absent or has no `.[]`. Only `tokenPath` is
+/// rewritten; other element-relative path params (`calleePath`, `amountPath`,
+/// `spenderPath`) are not scoped here. Shared by the calldata and EIP-712 flat
 /// array-iteration paths (field rendering + interpolation).
 pub(crate) fn index_array_params(
     params: Option<&FormatParams>,

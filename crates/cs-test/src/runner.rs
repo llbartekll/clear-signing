@@ -194,28 +194,51 @@ fn build_calldata_source_from_dir(
 }
 
 /// Read, resolve includes, and index a single descriptor file by its declared
-/// deployments — but only if it parses as a *contract* descriptor. Any read,
-/// include, or parse failure (or an EIP-712 descriptor) is silently skipped, so
-/// non-descriptor JSON in a registry tree is ignored.
+/// deployments — but only if it parses as a *contract* descriptor. A read,
+/// include, or parse failure is non-fatal (the file is skipped); when the file
+/// follows the registry descriptor naming convention (`calldata-*` / `eip712-*`)
+/// the failure is reported to stderr so a malformed descriptor surfaces instead
+/// of silently failing to index. A successfully parsed EIP-712 (non-contract)
+/// descriptor is skipped silently, so non-descriptor JSON in a tree is ignored.
 fn index_descriptor_file(
     source: &mut StaticSource,
     seen: &mut HashSet<(u64, String)>,
     path: &Path,
 ) {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return;
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) => return warn_if_descriptor(path, "read", &e),
     };
-    let Ok(resolved) = resolve_includes(&raw, path, 0) else {
-        return;
+    let resolved = match resolve_includes(&raw, path, 0) {
+        Ok(resolved) => resolved,
+        Err(e) => return warn_if_descriptor(path, "resolve includes for", &e),
     };
-    let Ok(desc) = Descriptor::from_json(&resolved) else {
-        return;
+    let desc = match Descriptor::from_json(&resolved) {
+        Ok(desc) => desc,
+        Err(e) => return warn_if_descriptor(path, "parse", &e),
     };
     if !matches!(desc.context, DescriptorContext::Contract(_)) {
         return;
     }
     for dep in desc.context.deployments() {
         index_descriptor(source, seen, dep.chain_id, &dep.address, &desc);
+    }
+}
+
+/// Report a descriptor-file load failure to stderr, but only for files that
+/// follow the registry naming convention (`calldata-*` / `eip712-*`). Other
+/// JSON in a tree is not a descriptor, so its failure to parse is not noteworthy
+/// and stays silent. Non-fatal: callers continue indexing the rest of the tree.
+fn warn_if_descriptor(path: &Path, action: &str, err: &impl std::fmt::Display) {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    if name.starts_with("calldata-") || name.starts_with("eip712-") {
+        eprintln!(
+            "cs-test: warning: failed to {action} descriptor {}: {err}",
+            path.display()
+        );
     }
 }
 
