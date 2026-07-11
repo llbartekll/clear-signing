@@ -109,6 +109,31 @@ fn build_two_array_calldata(sig_str: &str, addrs: &[&str], values: &[u64]) -> Ve
     calldata
 }
 
+fn build_three_array_calldata(
+    sig_str: &str,
+    first_values: &[u64],
+    second_values: &[u64],
+    addrs: &[&str],
+) -> Vec<u8> {
+    let sig = decoder::parse_signature(sig_str).unwrap();
+    let first_encoded = encode_uint_array(first_values);
+    let second_encoded = encode_uint_array(second_values);
+    let addresses_encoded = encode_address_array(addrs);
+    let first_offset = 96usize;
+    let second_offset = first_offset + first_encoded.len();
+    let addresses_offset = second_offset + second_encoded.len();
+
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&sig.selector);
+    calldata.extend_from_slice(&dynamic_offset_word(first_offset));
+    calldata.extend_from_slice(&dynamic_offset_word(second_offset));
+    calldata.extend_from_slice(&dynamic_offset_word(addresses_offset));
+    calldata.extend_from_slice(&first_encoded);
+    calldata.extend_from_slice(&second_encoded);
+    calldata.extend_from_slice(&addresses_encoded);
+    calldata
+}
+
 fn keccak256_test(bytes: &[u8]) -> [u8; 32] {
     let mut hasher = Keccak::v256();
     hasher.update(bytes);
@@ -1331,6 +1356,71 @@ async fn test_calldata_bundled_group_zips_array_items() {
 }
 
 #[tokio::test]
+async fn test_calldata_bundled_group_allows_hidden_array_guard_fields() {
+    let json = r#"{
+        "context": {
+            "contract": {
+                "deployments": [{"chainId": 1, "address": "0xabc"}]
+            }
+        },
+        "metadata": {"owner": "test", "enums": {}, "constants": {}, "maps": {}},
+        "display": {
+            "definitions": {},
+            "formats": {
+                "batch(uint256[] kinds,uint256[] amounts,address[] recipients)": {
+                    "intent": "Batch",
+                    "fields": [{
+                        "label": "Transfers",
+                        "iteration": "bundled",
+                        "fields": [
+                            {"path": "kinds.[]", "label": "Kind", "format": "number", "visible": {"mustBe": ["1"]}},
+                            {"path": "amounts.[]", "label": "Amount", "format": "number"},
+                            {"path": "recipients.[]", "label": "Recipient", "format": "address"}
+                        ]
+                    }]
+                }
+            }
+        }
+    }"#;
+
+    let descriptor = Descriptor::from_json(json).unwrap();
+    let calldata = build_three_array_calldata(
+        "batch(uint256[],uint256[],address[])",
+        &[1, 1],
+        &[100, 200],
+        &[
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000002",
+        ],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let result = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    match &result.entries[0] {
+        DisplayEntry::Group {
+            iteration, items, ..
+        } => {
+            assert!(matches!(iteration, GroupIteration::Bundled));
+            assert_eq!(items.len(), 4);
+            assert_eq!(items[0].label, "Amount");
+            assert_eq!(items[1].label, "Recipient");
+            assert_eq!(items[2].label, "Amount");
+            assert_eq!(items[3].label, "Recipient");
+        }
+        _ => panic!("expected bundled group"),
+    }
+}
+
+#[tokio::test]
 async fn test_eip712_bundled_group_zips_array_items() {
     let descriptor = Descriptor::from_json(
         r##"{
@@ -1389,6 +1479,86 @@ async fn test_eip712_bundled_group_zips_array_items() {
         } => {
             assert!(matches!(iteration, GroupIteration::Bundled));
             assert_eq!(items.len(), 4);
+        }
+        _ => panic!("expected bundled group"),
+    }
+}
+
+#[tokio::test]
+async fn test_eip712_bundled_group_allows_hidden_array_guard_fields() {
+    let descriptor = Descriptor::from_json(
+        r##"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Batch(Item[] items)Item(uint256 kind,uint256 amount,address recipient)": {
+                        "intent": "Batch",
+                        "fields": [{
+                            "label": "Transfers",
+                            "iteration": "bundled",
+                            "fields": [
+                                { "path": "items.[].kind", "label": "Kind", "format": "number", "visible": { "mustBe": [1] } },
+                                { "path": "items.[].amount", "label": "Amount", "format": "number" },
+                                { "path": "items.[].recipient", "label": "Recipient", "format": "address" }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"##,
+    )
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [
+                { "name": "items", "type": "Item[]" }
+            ],
+            "Item": [
+                { "name": "kind", "type": "uint256" },
+                { "name": "amount", "type": "uint256" },
+                { "name": "recipient", "type": "address" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "items": [
+                {
+                    "kind": 1,
+                    "amount": 100,
+                    "recipient": "0x0000000000000000000000000000000000000001"
+                },
+                {
+                    "kind": 1,
+                    "amount": 200,
+                    "recipient": "0x0000000000000000000000000000000000000002"
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let result = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    match &result.entries[0] {
+        DisplayEntry::Group {
+            iteration, items, ..
+        } => {
+            assert!(matches!(iteration, GroupIteration::Bundled));
+            assert_eq!(items.len(), 4);
+            assert_eq!(items[0].label, "Amount");
+            assert_eq!(items[1].label, "Recipient");
+            assert_eq!(items[2].label, "Amount");
+            assert_eq!(items[3].label, "Recipient");
         }
         _ => panic!("expected bundled group"),
     }
@@ -5584,6 +5754,85 @@ async fn test_visible_must_match_hides_matching_value_and_errors_on_mismatch() {
     }
 
     let mismatching = build_calldata("show(uint256,uint256)", &[uint_word(2), uint_word(5)]);
+    let mismatching_tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &mismatching,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let err = format_calldata(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &mismatching_tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("visible.mustMatch"));
+}
+
+#[tokio::test]
+async fn test_calldata_visibility_must_be_matches_decimal_strings_and_checksum_addresses() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "show(uint256 guard,address registry,uint256 value)": {
+                        "intent": "Show",
+                        "fields": [
+                            { "path": "guard", "label": "Guard", "format": "number", "visible": { "mustBe": ["1"] } },
+                            { "path": "registry", "label": "Registry", "format": "address", "visible": { "mustBe": ["0x000000000000000000000000000000000000aBcD"] } },
+                            { "path": "value", "label": "Value", "format": "number" }
+                        ]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+
+    let matching = build_calldata(
+        "show(uint256,address,uint256)",
+        &[
+            uint_word(1),
+            addr_word("0x000000000000000000000000000000000000abcd"),
+            uint_word(5),
+        ],
+    );
+    let matching_tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &matching,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let matching_result = format_calldata(
+        &wrap_rd(descriptor.clone(), 1, "0xabc"),
+        &matching_tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(matching_result.entries.len(), 1);
+    match &matching_result.entries[0] {
+        DisplayEntry::Item(item) => assert_eq!(item.label, "Value"),
+        _ => panic!("expected Item"),
+    }
+
+    let mismatching = build_calldata(
+        "show(uint256,address,uint256)",
+        &[
+            uint_word(2),
+            addr_word("0x000000000000000000000000000000000000abcd"),
+            uint_word(5),
+        ],
+    );
     let mismatching_tx = TransactionContext {
         chain_id: 1,
         to: "0xabc",
