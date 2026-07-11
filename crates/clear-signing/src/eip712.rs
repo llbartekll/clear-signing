@@ -453,10 +453,7 @@ fn render_typed_fields<'a>(
 
 enum TypedGroupRenderKind {
     Scalar(Vec<DisplayItem>),
-    Bundles {
-        len: usize,
-        bundles: Vec<Vec<DisplayItem>>,
-    },
+    Bundles(Vec<Vec<DisplayItem>>),
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -559,10 +556,7 @@ fn render_typed_group_field_kind<'a>(
                             };
                             bundles[index].extend(rendered);
                         }
-                        return Ok(TypedGroupRenderKind::Bundles {
-                            len: items.len(),
-                            bundles,
-                        });
+                        return Ok(TypedGroupRenderKind::Bundles(bundles));
                     }
                 }
 
@@ -681,7 +675,7 @@ fn render_typed_group_kind<'a>(
                 let all_bundles = !child_kinds.is_empty()
                     && child_kinds
                         .iter()
-                        .all(|k| matches!(k, TypedGroupRenderKind::Bundles { .. }));
+                        .all(|k| matches!(k, TypedGroupRenderKind::Bundles(_)));
                 let items = if all_bundles {
                     // Element-major: keep each array element's fields contiguous
                     // (e.g. [amount0, addr0, amount1, addr1]) rather than grouping
@@ -689,7 +683,7 @@ fn render_typed_group_kind<'a>(
                     let mut sets: Vec<_> = child_kinds
                         .into_iter()
                         .map(|k| match k {
-                            TypedGroupRenderKind::Bundles { bundles, .. } => bundles,
+                            TypedGroupRenderKind::Bundles(bundles) => bundles,
                             TypedGroupRenderKind::Scalar(_) => Vec::new(),
                         })
                         .collect();
@@ -708,7 +702,7 @@ fn render_typed_group_kind<'a>(
                         .into_iter()
                         .flat_map(|kind| match kind {
                             TypedGroupRenderKind::Scalar(items) => items,
-                            TypedGroupRenderKind::Bundles { bundles, .. } => {
+                            TypedGroupRenderKind::Bundles(bundles) => {
                                 bundles.into_iter().flatten().collect()
                             }
                         })
@@ -720,9 +714,7 @@ fn render_typed_group_kind<'a>(
                 let mut bundle_sets = Vec::new();
                 for kind in child_kinds {
                     match kind {
-                        TypedGroupRenderKind::Bundles { len, bundles } => {
-                            bundle_sets.push((len, bundles));
-                        }
+                        TypedGroupRenderKind::Bundles(bundles) => bundle_sets.push(bundles),
                         TypedGroupRenderKind::Scalar(_) => {
                             return Err(Error::Render(
                                 "bundled groups cannot mix array-expanded and scalar fields"
@@ -733,14 +725,14 @@ fn render_typed_group_kind<'a>(
                 }
 
                 if bundle_sets.is_empty() {
-                    return Ok(TypedGroupRenderKind::Bundles {
-                        len: 0,
-                        bundles: Vec::new(),
-                    });
+                    return Ok(TypedGroupRenderKind::Bundles(Vec::new()));
                 }
 
-                let expected_len = bundle_sets[0].0;
-                if bundle_sets.iter().any(|(len, _)| *len != expected_len) {
+                let expected_len = bundle_sets[0].len();
+                if bundle_sets
+                    .iter()
+                    .any(|bundles| bundles.len() != expected_len)
+                {
                     return Err(Error::Render(
                         "bundled groups require all array-expanded fields to have the same length"
                             .to_string(),
@@ -748,15 +740,12 @@ fn render_typed_group_kind<'a>(
                 }
 
                 let mut bundled = vec![Vec::new(); expected_len];
-                for (_, bundles) in bundle_sets {
+                for bundles in bundle_sets {
                     for (index, items) in bundles.into_iter().enumerate() {
                         bundled[index].extend(items);
                     }
                 }
-                Ok(TypedGroupRenderKind::Bundles {
-                    len: expected_len,
-                    bundles: bundled,
-                })
+                Ok(TypedGroupRenderKind::Bundles(bundled))
             }
         }
     })
@@ -801,7 +790,7 @@ async fn render_typed_field_group_entries<'a>(
                 Ok(items.into_iter().map(DisplayEntry::Item).collect())
             }
         }
-        TypedGroupRenderKind::Bundles { bundles, .. } => {
+        TypedGroupRenderKind::Bundles(bundles) => {
             let items: Vec<DisplayItem> = bundles.into_iter().flatten().collect();
             if items.is_empty() {
                 return Ok(Vec::new());
