@@ -12,7 +12,7 @@ use tiny_keccak::{Hasher, Keccak};
 use crate::engine::{
     ensure_single_nested_param_source, normalized_nested_calldata, parse_nested_address_param,
     parse_nested_amount_literal, parse_nested_selector_param, uint_bytes_from_biguint,
-    DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
+    with_field_encryption, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
@@ -334,9 +334,11 @@ fn render_typed_fields<'a>(
                     value: literal_value,
                     format,
                     params,
+                    encryption,
                     separator: _,
                     visible,
                 } => {
+                    let params = with_field_encryption(params, encryption);
                     // If literal value is provided (no path), resolve constant refs and use it
                     if let Some(lit) = literal_value {
                         if !check_typed_visibility(visible, &None, label, "")? {
@@ -490,9 +492,11 @@ fn render_typed_group_field_kind<'a>(
                 value: literal_value,
                 format,
                 params,
+                encryption,
                 separator: _,
                 visible,
             } => {
+                let params = with_field_encryption(params, encryption);
                 if let Some(lit) = literal_value {
                     if !check_typed_visibility(visible, &None, label, "")? {
                         return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
@@ -1607,12 +1611,13 @@ async fn format_typed_value(
         return Ok("<unresolved>".to_string());
     };
 
-    // Check encryption fallback
+    // Check encryption fallback — opaque handle, cannot decrypt here.
     if let Some(params) = params {
         if let Some(ref enc) = params.encryption {
-            if let Some(ref fallback) = enc.fallback_label {
-                return Ok(fallback.clone());
-            }
+            return Ok(enc
+                .fallback_label
+                .clone()
+                .unwrap_or_else(|| "[Encrypted]".to_string()));
         }
     }
 

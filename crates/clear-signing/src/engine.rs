@@ -21,8 +21,8 @@ use crate::render_shared::{
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
-    DisplayField, DisplayFormat, FieldFormat, FieldGroup, FormatParams, Iteration, SenderAddress,
-    UintLiteral, VisibleLiteral, VisibleRule,
+    DisplayField, DisplayFormat, EncryptionParams, FieldFormat, FieldGroup, FormatParams,
+    Iteration, SenderAddress, UintLiteral, VisibleLiteral, VisibleRule,
 };
 
 /// Maximum recursion depth for nested calldata formatting.
@@ -202,6 +202,26 @@ fn find_format<'a>(
 /// Render a list of display fields into display entries.
 ///
 /// Uses `Pin<Box<dyn Future>>` to support recursive calls (references, groups).
+/// Fold a field-level `encryption` block (sibling of `params` per the ERC-7730
+/// spec) into the `FormatParams` handed to `format_value`, which reads
+/// `params.encryption` to decide whether to emit the fallback label. Field-level
+/// encryption wins only when params-level encryption is absent.
+pub(crate) fn with_field_encryption(
+    params: &Option<FormatParams>,
+    encryption: &Option<EncryptionParams>,
+) -> Option<FormatParams> {
+    match encryption {
+        None => params.clone(),
+        Some(enc) => {
+            let mut p = params.clone().unwrap_or_default();
+            if p.encryption.is_none() {
+                p.encryption = Some(enc.clone());
+            }
+            Some(p)
+        }
+    }
+}
+
 fn render_fields<'a>(
     ctx: &'a RenderContext<'a>,
     fields: &[DisplayField],
@@ -226,9 +246,13 @@ fn render_fields<'a>(
                     value: literal_value,
                     format,
                     params,
+                    encryption,
                     separator,
                     visible,
                 } => {
+                    // Fold field-level encryption into params so format_value can
+                    // surface the fallback label for encrypted handles.
+                    let params = with_field_encryption(params, encryption);
                     // If literal value is provided (no path), resolve constant refs and use it
                     if let Some(lit) = literal_value {
                         if !check_visibility(visible, &None, label, "")? {
@@ -373,9 +397,11 @@ fn render_group_field_kind<'a>(
                 value: literal_value,
                 format,
                 params,
+                encryption,
                 separator,
                 visible,
             } => {
+                let params = with_field_encryption(params, encryption);
                 if let Some(lit) = literal_value {
                     if !check_visibility(visible, &None, label, "")? {
                         return Ok(GroupRenderKind::Scalar(Vec::new()));
@@ -632,10 +658,17 @@ pub(crate) fn expand_display_fields(
                 reference,
                 path,
                 params: ref_params,
+                encryption: ref_encryption,
                 visible,
             } => {
                 if let Some(resolved) = resolve_reference(descriptor, reference) {
-                    let merged = merge_ref_with_definition(resolved, path, ref_params, visible);
+                    let merged = merge_ref_with_definition(
+                        resolved,
+                        path,
+                        ref_params,
+                        ref_encryption,
+                        visible,
+                    );
                     expanded.extend(expand_display_fields(descriptor, &[merged], warnings));
                 } else {
                     warnings.push(render_warning(
@@ -686,7 +719,29 @@ pub(crate) fn expand_display_fields(
                     },
                 });
             }
-            DisplayField::Simple { .. } => expanded.push(field.clone()),
+            // Fold a field-level `encryption` block into `params` here, once, so
+            // every consumer of the expanded fields sees it — the renderer, the
+            // group renderer and `interpolatedIntent` alike. Missing it in any one
+            // of them would leak the raw ciphertext into that output.
+            DisplayField::Simple {
+                path,
+                label,
+                value,
+                format,
+                params,
+                encryption,
+                separator,
+                visible,
+            } => expanded.push(DisplayField::Simple {
+                path: path.clone(),
+                label: label.clone(),
+                value: value.clone(),
+                format: format.clone(),
+                params: with_field_encryption(params, encryption),
+                encryption: encryption.clone(),
+                separator: separator.clone(),
+                visible: visible.clone(),
+            }),
         }
     }
 
@@ -703,11 +758,13 @@ pub fn prepend_scope_path(field: &DisplayField, scope: &str) -> DisplayField {
             reference,
             path,
             params,
+            encryption,
             visible,
         } => DisplayField::Reference {
             reference: reference.clone(),
             path: Some(prepend_path(scope, path.as_deref())),
             params: params.as_ref().map(|p| prepend_params(scope, p)),
+            encryption: encryption.clone(),
             visible: visible.clone(),
         },
         DisplayField::Group { field_group } => DisplayField::Group {
@@ -738,6 +795,7 @@ pub fn prepend_scope_path(field: &DisplayField, scope: &str) -> DisplayField {
             value,
             format,
             params,
+            encryption,
             separator,
             visible,
         } => DisplayField::Simple {
@@ -746,6 +804,7 @@ pub fn prepend_scope_path(field: &DisplayField, scope: &str) -> DisplayField {
             value: value.clone(),
             format: format.clone(),
             params: params.as_ref().map(|p| prepend_params(scope, p)),
+            encryption: encryption.clone(),
             separator: separator.clone(),
             visible: visible.clone(),
         },
@@ -780,6 +839,7 @@ pub fn merge_ref_with_definition(
     definition: DisplayField,
     ref_path: &Option<String>,
     ref_params: &Option<FormatParams>,
+    ref_encryption: &Option<EncryptionParams>,
     ref_visible: &VisibleRule,
 ) -> DisplayField {
     match definition {
@@ -789,9 +849,13 @@ pub fn merge_ref_with_definition(
             value,
             format,
             params: def_params,
+            encryption: def_encryption,
             separator,
             visible: _,
         } => {
+            // Reference encryption overrides the definition's; either lives at
+            // field level (sibling of params) per the ERC-7730 spec.
+            let encryption = ref_encryption.clone().or(def_encryption);
             // Reference path takes precedence over definition path
             let path = ref_path.clone().or(def_path);
 
@@ -881,6 +945,7 @@ pub fn merge_ref_with_definition(
                 value,
                 format,
                 params,
+                encryption,
                 separator,
                 visible: ref_visible.clone(),
             }
@@ -1343,6 +1408,220 @@ fn resolve_nested_selector(
         .and_then(|value| selector_from_argument_value(&value)))
 }
 
+/// Placeholder shown for an undecryptable field whose descriptor declares no
+/// `fallbackLabel`. Deliberately generic — an encrypted field is not always an
+/// amount ("Amount: [Encrypted]" reads naturally against the field's own label).
+const DEFAULT_ENCRYPTED_PLACEHOLDER: &str = "[Encrypted]";
+
+/// Coarse plaintext category derived from a canonical Solidity `plaintextType`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlainKind {
+    Uint,
+    Int,
+    Address,
+    Bool,
+    Bytes,
+    String,
+}
+
+/// A descriptor's declared `plaintextType`, parsed.
+#[derive(Clone, Copy)]
+struct PlaintextType {
+    /// How the decrypted bytes are interpreted.
+    kind: PlainKind,
+    /// Widest plaintext the type can hold, in bytes. `None` for the unbounded
+    /// types (`bytes`, `string`).
+    max_bytes: Option<usize>,
+}
+
+/// Whether decrypted bytes are too wide for the declared plaintext type.
+///
+/// Integers, addresses and bools are big-endian quantities, so leading zeros
+/// carry no value — a wallet returning a zero-padded 32-byte ABI word is
+/// accepted as long as the value itself fits. For `bytesN` every byte is part of
+/// the value, so the raw length is what must fit.
+fn exceeds_plaintext_width(bytes: &[u8], ty: &PlaintextType) -> bool {
+    let Some(max) = ty.max_bytes else {
+        return false;
+    };
+    let significant = if ty.kind == PlainKind::Bytes {
+        bytes
+    } else {
+        let first = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
+        &bytes[first..]
+    };
+    significant.len() > max
+}
+
+/// Parse a canonical Solidity `plaintextType` into its value category and fixed
+/// byte width (`None` for dynamic `bytes`/`string`). Returns `None` for
+/// non-canonical types (bare `uint`/`int`, `euint64`, `uint7`, `bytes33`), so
+/// the caller can flag a descriptor error rather than silently guessing.
+fn parse_plaintext_type(t: &str) -> Option<PlaintextType> {
+    let bounded = |kind, max_bytes| {
+        Some(PlaintextType {
+            kind,
+            max_bytes: Some(max_bytes),
+        })
+    };
+    let unbounded = |kind| {
+        Some(PlaintextType {
+            kind,
+            max_bytes: None,
+        })
+    };
+
+    match t {
+        "bool" => return bounded(PlainKind::Bool, 1),
+        "address" => return bounded(PlainKind::Address, 20),
+        "string" => return unbounded(PlainKind::String),
+        "bytes" => return unbounded(PlainKind::Bytes),
+        _ => {}
+    }
+    if let Some(rest) = t.strip_prefix("uint").or_else(|| t.strip_prefix("int")) {
+        let signed = t.starts_with("int");
+        let bits: usize = rest.parse().ok()?;
+        if !(8..=256).contains(&bits) || !bits.is_multiple_of(8) {
+            return None;
+        }
+        let kind = if signed {
+            PlainKind::Int
+        } else {
+            PlainKind::Uint
+        };
+        return bounded(kind, bits / 8);
+    }
+    if let Some(n) = t.strip_prefix("bytes") {
+        let size: usize = n.parse().ok()?;
+        return (1..=32).contains(&size).then_some(PlaintextType {
+            kind: PlainKind::Bytes,
+            max_bytes: Some(size),
+        });
+    }
+    None
+}
+
+/// Raw big-endian bytes backing an `ArgumentValue` (the ciphertext/handle to
+/// hand to the wallet for decryption).
+fn argument_value_bytes(v: &ArgumentValue) -> Vec<u8> {
+    match v {
+        ArgumentValue::Address(a) => a.to_vec(),
+        ArgumentValue::Uint(b)
+        | ArgumentValue::Int(b)
+        | ArgumentValue::Bytes(b)
+        | ArgumentValue::FixedBytes(b) => b.clone(),
+        ArgumentValue::Bool(x) => vec![u8::from(*x)],
+        ArgumentValue::String(s) => s.as_bytes().to_vec(),
+        ArgumentValue::Array(_) | ArgumentValue::Tuple(_) => Vec::new(),
+    }
+}
+
+/// Build a typed `ArgumentValue` from decrypted big-endian bytes, driven by the
+/// descriptor's declared category (never by the bytes' shape).
+fn build_plaintext_value(kind: PlainKind, bytes: Vec<u8>) -> ArgumentValue {
+    match kind {
+        PlainKind::Uint => ArgumentValue::Uint(bytes),
+        PlainKind::Int => ArgumentValue::Int(bytes),
+        PlainKind::Bool => ArgumentValue::Bool(bytes.iter().any(|&b| b != 0)),
+        PlainKind::String => ArgumentValue::String(String::from_utf8_lossy(&bytes).into_owned()),
+        PlainKind::Bytes => ArgumentValue::Bytes(bytes),
+        PlainKind::Address => {
+            // Right-align the (≤20) bytes into a 20-byte address.
+            let mut a = [0u8; 20];
+            let n = bytes.len().min(20);
+            a[20 - n..].copy_from_slice(&bytes[bytes.len() - n..]);
+            ArgumentValue::Address(a)
+        }
+    }
+}
+
+/// Decrypt a field value via the wallet's `resolve_decrypted_value` and
+/// re-interpret the returned bytes as the descriptor's declared `plaintextType`.
+///
+/// Returns `Some(plaintext)` on success and `None` when the field should fall
+/// back to its label. Both failure modes push a diagnostic: `DecryptionFailed`
+/// (the value is real but unavailable — no provider, wallet returned `None`,
+/// malformed hex, or over-wide) and `EncryptionInvalidDescriptor` (the
+/// annotation itself is malformed). Unlike the TypeScript engine — whose value
+/// model lets it abort the whole format — the Rust pipeline degrades gracefully
+/// to the fallback for both, since a per-field render here can only yield a
+/// string.
+async fn decrypt_field_value(
+    ctx: &RenderContext<'_>,
+    encrypted: &ArgumentValue,
+    enc: &EncryptionParams,
+    warnings: &mut RenderDiagnostics,
+) -> Option<ArgumentValue> {
+    let (Some(scheme), Some(plaintext_type)) =
+        (enc.scheme.as_deref(), enc.plaintext_type.as_deref())
+    else {
+        warnings.push(render_warning(
+            RenderDiagnosticKind::EncryptionInvalidDescriptor,
+            "Field encryption requires both 'scheme' and 'plaintextType'",
+        ));
+        return None;
+    };
+
+    let Some(parsed_type) = parse_plaintext_type(plaintext_type) else {
+        warnings.push(render_warning(
+            RenderDiagnosticKind::EncryptionInvalidDescriptor,
+            format!("Unsupported encryption plaintextType '{plaintext_type}'"),
+        ));
+        return None;
+    };
+
+    // The contract the ciphertext is accessed through (container's `@.to`);
+    // absent for EIP-712 typed data with no verifyingContract.
+    let contract_address = resolve_path(ctx.decoded, "@.to")
+        .filter(|v| matches!(v, ArgumentValue::Address(_)))
+        .map(|v| format_address(&v));
+
+    let encrypted_hex = format!("0x{}", hex::encode(argument_value_bytes(encrypted)));
+
+    let result = ctx
+        .data_provider
+        .resolve_decrypted_value(
+            ctx.chain_id,
+            &encrypted_hex,
+            scheme,
+            contract_address.as_deref(),
+        )
+        .await;
+
+    let Some(hex_value) = result else {
+        warnings.push(render_warning(
+            RenderDiagnosticKind::DecryptionFailed,
+            format!("Could not decrypt '{scheme}' value"),
+        ));
+        return None;
+    };
+
+    let stripped = hex_value.strip_prefix("0x").unwrap_or(&hex_value);
+    let Ok(bytes) = hex::decode(stripped) else {
+        warnings.push(render_warning(
+            RenderDiagnosticKind::DecryptionFailed,
+            format!("Decrypted '{scheme}' value '{hex_value}' is not valid hex"),
+        ));
+        return None;
+    };
+
+    // A plaintext too wide for its declared type cannot be rendered faithfully —
+    // a 32-byte value read as a `uint64` amount would display a wildly wrong
+    // number. Treat it as a failed decryption rather than showing it.
+    if exceeds_plaintext_width(&bytes, &parsed_type) {
+        warnings.push(render_warning(
+            RenderDiagnosticKind::DecryptionFailed,
+            format!(
+                "Decrypted '{scheme}' value is {} bytes, too wide for '{plaintext_type}'",
+                bytes.len()
+            ),
+        ));
+        return None;
+    }
+
+    Some(build_plaintext_value(parsed_type.kind, bytes))
+}
+
 /// Format a decoded value according to its format type.
 #[allow(clippy::too_many_arguments)]
 async fn format_value(
@@ -1363,14 +1642,26 @@ async fn format_value(
         return Ok("<unresolved>".to_string());
     };
 
-    // Check for encryption — if present and we can't decrypt, use fallback
-    if let Some(params) = params {
-        if let Some(ref enc) = params.encryption {
-            if let Some(ref fallback) = enc.fallback_label {
-                return Ok(fallback.clone());
+    // Encryption (ERC-7730 `encryption`): decrypt via the wallet, then render the
+    // plaintext with the field's regular format (e.g. tokenAmount → "1 cUSDC").
+    // When decryption is unavailable the field renders its `fallbackLabel`; a
+    // malformed annotation degrades the same way, distinguished by diagnostic.
+    let decrypted_owned;
+    if let Some(enc) = params.and_then(|p| p.encryption.as_ref()) {
+        match decrypt_field_value(ctx, val, enc, warnings).await {
+            Some(v) => decrypted_owned = Some(v),
+            None => {
+                return Ok(enc
+                    .fallback_label
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_ENCRYPTED_PLACEHOLDER.to_string()));
             }
         }
+    } else {
+        decrypted_owned = None;
     }
+    // From here on `val` is the decrypted plaintext when decryption succeeded.
+    let val: &ArgumentValue = decrypted_owned.as_ref().unwrap_or(val);
 
     // Check for map reference
     if let Some(params) = params {
@@ -2467,6 +2758,7 @@ mod tests {
                 value: None,
                 format: Some(FieldFormat::Address),
                 params: None,
+                encryption: None,
                 separator: None,
                 visible: VisibleRule::Named(VisibleLiteral::Never),
             },
@@ -2476,6 +2768,7 @@ mod tests {
                 value: None,
                 format: Some(FieldFormat::Number),
                 params: None,
+                encryption: None,
                 separator: None,
                 visible: VisibleRule::Named(VisibleLiteral::Never),
             },
@@ -2535,6 +2828,7 @@ mod tests {
             value: None,
             format: Some(FieldFormat::AddressName),
             params: None,
+            encryption: None,
             separator: None,
             visible: VisibleRule::Always,
         }];

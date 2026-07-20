@@ -30,6 +30,8 @@ pub(crate) enum RenderDiagnosticKind {
     NestedDescriptorNotFound,
     NestedCalldataInvalidType,
     InteroperableAddressNameFallback,
+    DecryptionFailed,
+    EncryptionInvalidDescriptor,
     GenericRenderWarning,
 }
 
@@ -47,6 +49,8 @@ impl RenderDiagnosticKind {
             Self::NestedDescriptorNotFound => "nested_descriptor_not_found",
             Self::NestedCalldataInvalidType => "nested_calldata_invalid_type",
             Self::InteroperableAddressNameFallback => "interoperable_address_name_fallback",
+            Self::DecryptionFailed => "decryption_failed",
+            Self::EncryptionInvalidDescriptor => "encryption_invalid_descriptor",
             Self::GenericRenderWarning => "render_warning",
         }
     }

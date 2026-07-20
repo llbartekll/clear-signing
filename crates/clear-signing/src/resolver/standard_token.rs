@@ -206,6 +206,7 @@ fn build_field(spec: &SynthField) -> DisplayField {
         value: None,
         format: Some(format),
         params,
+        encryption: None,
         separator: None,
         visible: VisibleRule::Always,
     }
