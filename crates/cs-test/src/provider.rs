@@ -97,6 +97,17 @@ impl DataProvider for StubDataProvider {
         let ts = self.stub.block_timestamps.get(&key).copied();
         Box::pin(async move { ts })
     }
+
+    fn resolve_decrypted_value(
+        &self,
+        _chain_id: u64,
+        encrypted_value: &str,
+        _scheme: &str,
+        _contract_address: Option<&str>,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let plaintext = Self::lookup_in(&self.stub.decrypted_values, encrypted_value);
+        Box::pin(async move { plaintext })
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +146,25 @@ mod tests {
             Some("Treasury".into())
         );
         assert_eq!(p.resolve_ens_name(ADDR, 1, None).await, None);
+    }
+
+    #[tokio::test]
+    async fn decryption_reads_decrypted_values_by_handle() {
+        // Fixtures opt into the decrypt path per handle; an absent handle models
+        // a wallet that cannot decrypt, i.e. the fallback-label path.
+        let mut s = DataProviderStub::default();
+        s.decrypted_values
+            .insert("0xdead".to_string(), "0x2a".to_string());
+        let p = StubDataProvider::new(s);
+
+        assert_eq!(
+            p.resolve_decrypted_value(1, "0xDEAD", "fhevm", None).await,
+            Some("0x2a".into())
+        );
+        assert_eq!(
+            p.resolve_decrypted_value(1, "0xbeef", "fhevm", None).await,
+            None
+        );
     }
 
     #[tokio::test]

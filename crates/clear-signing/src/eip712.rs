@@ -9,6 +9,9 @@ use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 use tiny_keccak::{Hasher, Keccak};
 
+use crate::encryption::{
+    fallback_text, validate_annotation, Decryption, DecryptionCache, PlainKind,
+};
 use crate::engine::{
     ensure_single_nested_param_source, normalized_nested_calldata, parse_nested_address_param,
     parse_nested_amount_literal, parse_nested_selector_param, uint_bytes_from_biguint,
@@ -29,8 +32,8 @@ use crate::render_shared::{
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{
-    DisplayField, DisplayFormat, FieldFormat, FieldGroup, FormatParams, Iteration, VisibleLiteral,
-    VisibleRule,
+    DisplayField, DisplayFormat, EncryptionParams, FieldFormat, FieldGroup, FormatParams,
+    Iteration, VisibleLiteral, VisibleRule,
 };
 
 /// Maximum recursion depth for nested calldata in EIP-712 context.
@@ -97,10 +100,15 @@ struct TypedContainerContext<'a> {
     chain_id: Option<u64>,
     verifying_contract: Option<&'a str>,
     from: Option<&'a str>,
+    /// Decryptions already resolved for this message — a field is read for
+    /// visibility, for its entry and for `interpolatedIntent`, and the wallet
+    /// must only be asked once. Rides on the container because the container is
+    /// what already reaches every typed renderer.
+    decryption: &'a DecryptionCache,
 }
 
 impl<'a> TypedContainerContext<'a> {
-    fn from_typed_data(data: &'a TypedData) -> Self {
+    fn from_typed_data(data: &'a TypedData, decryption: &'a DecryptionCache) -> Self {
         Self {
             chain_id: data.domain.chain_id,
             verifying_contract: data.domain.verifying_contract.as_deref(),
@@ -108,6 +116,7 @@ impl<'a> TypedContainerContext<'a> {
                 .container
                 .as_ref()
                 .and_then(|container| container.from.as_deref()),
+            decryption,
         }
     }
 }
@@ -192,7 +201,8 @@ pub(crate) async fn format_typed_data_with_format(
     descriptors: &[ResolvedDescriptor],
     state: &mut RenderState,
 ) -> Result<DisplayModel, Error> {
-    let container = TypedContainerContext::from_typed_data(data);
+    let decryption = DecryptionCache::default();
+    let container = TypedContainerContext::from_typed_data(data, &decryption);
     let mut warnings = RenderDiagnostics::new();
     let mut nested_fallback = false;
     let expanded_fields =
@@ -345,10 +355,10 @@ fn render_typed_fields<'a>(
                             continue;
                         }
                         let resolved = resolve_metadata_constant_str(descriptor, lit);
-                        entries.push(DisplayEntry::Item(DisplayItem {
-                            label: label.clone(),
-                            value: resolved,
-                        }));
+                        entries.push(DisplayEntry::Item(DisplayItem::new(
+                            label.clone(),
+                            resolved,
+                        )));
                         continue;
                     }
 
@@ -365,15 +375,26 @@ fn render_typed_fields<'a>(
                                 } else {
                                     resolve_typed_path_in_context(item, rest, container)?
                                 };
-                                if !check_typed_visibility(visible, &val, label, path_str)? {
-                                    continue;
-                                }
                                 // Flat array path: rewrite element-relative param
                                 // paths (`x.[].token`) to the concrete index and
                                 // resolve against the root, matching the calldata
                                 // path. A bare root path (no `.[]`) stays root-relative.
                                 let item_params =
                                     crate::engine::index_array_params(params.as_ref(), i);
+                                if !is_typed_field_visible(
+                                    visible,
+                                    &val,
+                                    item_params.as_ref(),
+                                    label,
+                                    path_str,
+                                    container,
+                                    data_provider,
+                                    warnings,
+                                )
+                                .await?
+                                {
+                                    continue;
+                                }
                                 let formatted = format_typed_value(
                                     descriptor,
                                     &val,
@@ -389,6 +410,10 @@ fn render_typed_fields<'a>(
                                 entries.push(DisplayEntry::Item(DisplayItem {
                                     label: label.clone(),
                                     value: formatted,
+                                    raw_encrypted_value: typed_raw_encrypted_value(
+                                        &val,
+                                        item_params.as_ref(),
+                                    ),
                                 }));
                             }
                             continue;
@@ -398,7 +423,18 @@ fn render_typed_fields<'a>(
                     let value = resolve_typed_path_in_context(message, path_str, container)?;
 
                     // Check visibility
-                    if !check_typed_visibility(visible, &value, label, path_str)? {
+                    if !is_typed_field_visible(
+                        visible,
+                        &value,
+                        params.as_ref(),
+                        label,
+                        path_str,
+                        container,
+                        data_provider,
+                        warnings,
+                    )
+                    .await?
+                    {
                         continue;
                     }
 
@@ -438,6 +474,7 @@ fn render_typed_fields<'a>(
                     entries.push(DisplayEntry::Item(DisplayItem {
                         label: label.clone(),
                         value: formatted,
+                        raw_encrypted_value: typed_raw_encrypted_value(&value, params.as_ref()),
                     }));
                 }
                 DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
@@ -501,10 +538,10 @@ fn render_typed_group_field_kind<'a>(
                     if !check_typed_visibility(visible, &None, label, "")? {
                         return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
                     }
-                    return Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem {
-                        label: label.clone(),
-                        value: resolve_metadata_constant_str(descriptor, lit),
-                    }]));
+                    return Ok(TypedGroupRenderKind::Scalar(vec![DisplayItem::new(
+                        label.clone(),
+                        resolve_metadata_constant_str(descriptor, lit),
+                    )]));
                 }
 
                 let path_str = path.as_deref().unwrap_or("");
@@ -519,10 +556,21 @@ fn render_typed_group_field_kind<'a>(
                             } else {
                                 resolve_typed_path_in_context(item, rest, container)?
                             };
-                            if !check_typed_visibility(visible, &val, label, path_str)? {
+                            let item_params = item_scoped_typed_params(base, params.as_ref());
+                            if !is_typed_field_visible(
+                                visible,
+                                &val,
+                                item_params.as_ref(),
+                                label,
+                                path_str,
+                                container,
+                                data_provider,
+                                warnings,
+                            )
+                            .await?
+                            {
                                 continue;
                             }
-                            let item_params = item_scoped_typed_params(base, params.as_ref());
                             let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata))
                             {
                                 crate::engine::flatten_display_entry(
@@ -556,6 +604,10 @@ fn render_typed_group_field_kind<'a>(
                                         warnings,
                                     )
                                     .await?,
+                                    raw_encrypted_value: typed_raw_encrypted_value(
+                                        &val,
+                                        item_params.as_ref(),
+                                    ),
                                 }]
                             };
                             bundles.push(rendered);
@@ -565,7 +617,18 @@ fn render_typed_group_field_kind<'a>(
                 }
 
                 let value = resolve_typed_path_in_context(message, path_str, container)?;
-                if !check_typed_visibility(visible, &value, label, path_str)? {
+                if !is_typed_field_visible(
+                    visible,
+                    &value,
+                    params.as_ref(),
+                    label,
+                    path_str,
+                    container,
+                    data_provider,
+                    warnings,
+                )
+                .await?
+                {
                     return Ok(TypedGroupRenderKind::Scalar(Vec::new()));
                 }
 
@@ -604,6 +667,7 @@ fn render_typed_group_field_kind<'a>(
                         warnings,
                     )
                     .await?,
+                    raw_encrypted_value: typed_raw_encrypted_value(&value, params.as_ref()),
                 }]))
             }
             DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
@@ -840,10 +904,10 @@ async fn render_typed_calldata_field(
                         "could not decode calldata hex",
                     ));
                     *nested_fallback = true;
-                    return Ok(DisplayEntry::Item(DisplayItem {
-                        label: label.to_string(),
-                        value: s.clone(),
-                    }));
+                    return Ok(DisplayEntry::Item(DisplayItem::new(
+                        label.to_string(),
+                        s.clone(),
+                    )));
                 }
             }
         }
@@ -857,10 +921,7 @@ async fn render_typed_calldata_field(
                 "calldata field is not a hex string",
             ));
             *nested_fallback = true;
-            return Ok(DisplayEntry::Item(DisplayItem {
-                label: label.to_string(),
-                value: raw,
-            }));
+            return Ok(DisplayEntry::Item(DisplayItem::new(label.to_string(), raw)));
         }
     };
 
@@ -999,18 +1060,18 @@ pub(crate) fn build_typed_raw_fallback(data: &TypedData) -> DisplayModel {
                 .get(&field.name)
                 .map(json_value_to_string)
                 .unwrap_or_else(|| "<missing>".to_string());
-            entries.push(DisplayEntry::Item(DisplayItem {
-                label: field.name.clone(),
+            entries.push(DisplayEntry::Item(DisplayItem::new(
+                field.name.clone(),
                 value,
-            }));
+            )));
         }
     } else if let Some(obj) = data.message.as_object() {
         // Fallback: iterate message keys
         for (key, val) in obj {
-            entries.push(DisplayEntry::Item(DisplayItem {
-                label: key.clone(),
-                value: json_value_to_string(val),
-            }));
+            entries.push(DisplayEntry::Item(DisplayItem::new(
+                key.clone(),
+                json_value_to_string(val),
+            )));
         }
     }
 
@@ -1595,6 +1656,151 @@ fn resolve_typed_nested_selector(
     })
 }
 
+/// The ciphertext an encrypted typed-data field carries.
+///
+/// Handles are `bytes32`/`bytes` in practice, i.e. `0x` hex strings; a numeric
+/// handle is accepted as its big-endian bytes. Anything else (bool, array,
+/// object) cannot be a ciphertext.
+fn typed_ciphertext_bytes(val: &serde_json::Value) -> Option<Vec<u8>> {
+    let decimal = match val {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if let Some(hex_str) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
+                return hex::decode(hex_str).ok();
+            }
+            trimmed.to_string()
+        }
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    decimal.parse::<BigUint>().ok().map(|n| n.to_bytes_be())
+}
+
+/// The value an encrypted typed-data field carries in the signing request,
+/// 0x-hex, for [`DisplayItem::raw_encrypted_value`] — the typed twin of
+/// `engine::raw_encrypted_value`. Normalized through `typed_ciphertext_bytes`, so
+/// a handle authored as a decimal string is reported as hex.
+fn typed_raw_encrypted_value(
+    value: &Option<serde_json::Value>,
+    params: Option<&FormatParams>,
+) -> Option<String> {
+    params.and_then(|p| p.encryption.as_ref())?;
+    let bytes = typed_ciphertext_bytes(value.as_ref()?)?;
+    Some(format!("0x{}", hex::encode(bytes)))
+}
+
+/// Build a typed-data value from a decrypted plaintext, in the shapes an EIP-712
+/// message carries them: decimal strings for numbers, `0x` hex for addresses and
+/// byte strings. The declared category drives this, never the bytes' shape.
+fn typed_value_from_plaintext(kind: PlainKind, bytes: &[u8]) -> serde_json::Value {
+    let string = |s: String| serde_json::Value::String(s);
+    match kind {
+        PlainKind::Uint => string(BigUint::from_bytes_be(bytes).to_string()),
+        // Two's-complement word — the declared width is already baked in.
+        PlainKind::Int => string(crate::engine::int_to_bigint(bytes).to_string()),
+        PlainKind::Bool => serde_json::Value::Bool(bytes.iter().any(|&b| b != 0)),
+        PlainKind::Address | PlainKind::Bytes => string(format!("0x{}", hex::encode(bytes))),
+        PlainKind::String => string(String::from_utf8_lossy(bytes).into_owned()),
+    }
+}
+
+/// What an encrypted typed-data field renders from: the plaintext, or the text
+/// standing in for it.
+enum TypedPlaintext {
+    Value(serde_json::Value),
+    /// The field's `fallbackLabel` (or a generic placeholder) — never the
+    /// ciphertext.
+    Fallback(String),
+}
+
+/// Decrypt an encrypted typed-data field value, mirroring the calldata path: the
+/// wallet is asked once per handle, the plaintext is re-read as the declared
+/// `plaintextType`, and every recoverable failure degrades to the field's
+/// fallback text with a diagnostic.
+///
+/// `Err` is a malformed annotation, fatal like any other descriptor error.
+async fn decrypt_typed_value(
+    val: &serde_json::Value,
+    enc: &EncryptionParams,
+    container: TypedContainerContext<'_>,
+    data_provider: &dyn DataProvider,
+    warnings: &mut RenderDiagnostics,
+) -> Result<TypedPlaintext, Error> {
+    let Some(ciphertext) = typed_ciphertext_bytes(val) else {
+        warnings.push(render_warning(
+            RenderDiagnosticKind::DecryptionFailed,
+            format!(
+                "encrypted field value '{}' is not a hex or numeric handle",
+                json_value_to_string(val)
+            ),
+        ));
+        return Ok(TypedPlaintext::Fallback(fallback_text(enc)));
+    };
+
+    // The contract the ciphertext is accessed through, EIP-55 checksummed like
+    // calldata's `@.to`; absent when the domain declares no `verifyingContract`
+    // or it is not a well-formed address.
+    let contract_address = container
+        .verifying_contract
+        .map(|addr| serde_json::Value::String(addr.to_string()))
+        .as_ref()
+        .and_then(coerce_typed_address_string)
+        .map(|addr| checksum_address_string(&addr));
+
+    let outcome = container
+        .decryption
+        .resolve(
+            data_provider,
+            container.chain_id,
+            contract_address.as_deref(),
+            &ciphertext,
+            enc,
+            warnings,
+        )
+        .await?;
+
+    Ok(match outcome {
+        Decryption::Plaintext { kind, bytes } => {
+            TypedPlaintext::Value(typed_value_from_plaintext(kind, &bytes))
+        }
+        Decryption::Fallback { text, .. } => TypedPlaintext::Fallback(text),
+    })
+}
+
+/// Whether a typed-data field is visible, evaluating conditional rules against
+/// the decrypted plaintext for encrypted fields — the calldata rule, see
+/// `engine::is_field_visible` for why.
+#[allow(clippy::too_many_arguments)]
+async fn is_typed_field_visible(
+    rule: &VisibleRule,
+    value: &Option<serde_json::Value>,
+    params: Option<&FormatParams>,
+    label: &str,
+    path: &str,
+    container: TypedContainerContext<'_>,
+    data_provider: &dyn DataProvider,
+    warnings: &mut RenderDiagnostics,
+) -> Result<bool, Error> {
+    let Some(enc) = params.and_then(|p| p.encryption.as_ref()) else {
+        return check_typed_visibility(rule, value, label, path);
+    };
+    validate_annotation(enc)?;
+
+    let plaintext = match (rule, value) {
+        (VisibleRule::Condition(_), Some(val)) => {
+            match decrypt_typed_value(val, enc, container, data_provider, warnings).await? {
+                TypedPlaintext::Value(plaintext) => Some(plaintext),
+                TypedPlaintext::Fallback(_) => None,
+            }
+        }
+        _ => return check_typed_visibility(rule, value, label, path),
+    };
+    check_typed_visibility(rule, &plaintext, label, path)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn format_typed_value(
     descriptor: &Descriptor,
@@ -1611,15 +1817,21 @@ async fn format_typed_value(
         return Ok("<unresolved>".to_string());
     };
 
-    // Check encryption fallback — opaque handle, cannot decrypt here.
-    if let Some(params) = params {
-        if let Some(ref enc) = params.encryption {
-            return Ok(enc
-                .fallback_label
-                .clone()
-                .unwrap_or_else(|| "[Encrypted]".to_string()));
+    // Encryption (ERC-7730 `encryption`): decrypt via the wallet, then render the
+    // plaintext with the field's regular format — the same path calldata takes,
+    // using the typed container's chainId and verifyingContract. When decryption
+    // is unavailable the field renders its `fallbackLabel`.
+    let decrypted_owned;
+    if let Some(enc) = params.and_then(|p| p.encryption.as_ref()) {
+        match decrypt_typed_value(val, enc, container, data_provider, warnings).await? {
+            TypedPlaintext::Value(plaintext) => decrypted_owned = Some(plaintext),
+            TypedPlaintext::Fallback(text) => return Ok(text),
         }
+    } else {
+        decrypted_owned = None;
     }
+    // From here on `val` is the decrypted plaintext when decryption succeeded.
+    let val: &serde_json::Value = decrypted_owned.as_ref().unwrap_or(val);
 
     // Map reference
     if let Some(params) = params {

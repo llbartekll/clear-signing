@@ -7,6 +7,7 @@ use std::pin::Pin;
 use num_bigint::{BigInt, BigUint, Sign};
 
 use crate::decoder::{ArgumentValue, DecodedArguments};
+use crate::encryption::{validate_annotation, Decryption, DecryptionCache, PlainKind};
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
 use crate::path::{apply_collection_access, CollectionSelection};
@@ -74,6 +75,29 @@ pub enum GroupIteration {
 pub struct DisplayItem {
     pub label: String,
     pub value: String,
+    /// For a field carrying an ERC-7730 `encryption` annotation, its value as it
+    /// appears in the signing request — 0x-hex, the ciphertext itself or a
+    /// pointer to it — before decryption.
+    ///
+    /// Set whether or not decryption succeeded. When it did not, `value` is the
+    /// descriptor's `fallbackLabel` (or a generic placeholder) and a
+    /// `decryption_failed` diagnostic is recorded; the spec RECOMMENDS wallets
+    /// show this raw value — fully or truncated — next to that placeholder, so
+    /// the user can tell a real value is present but withheld.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_encrypted_value: Option<String>,
+}
+
+impl DisplayItem {
+    /// A plain label+value item, i.e. every field without an `encryption`
+    /// annotation.
+    pub fn new(label: String, value: String) -> Self {
+        Self {
+            label,
+            value,
+            raw_encrypted_value: None,
+        }
+    }
 }
 
 /// Rendering context passed through the pipeline (immutable).
@@ -84,6 +108,11 @@ struct RenderContext<'a> {
     data_provider: &'a dyn DataProvider,
     descriptors: &'a [ResolvedDescriptor],
     depth: u8,
+    /// Decryptions already resolved for this frame's arguments — a field is read
+    /// for visibility, for its entry and for `interpolatedIntent`, and the wallet
+    /// must only be asked once. Nested calldata frames get their own, since the
+    /// same handle under a different `@.to` is a different access check.
+    decryption: DecryptionCache,
 }
 
 type RenderDiagnostics = Vec<FormatDiagnostic>;
@@ -112,6 +141,7 @@ pub(crate) async fn format_calldata(
         data_provider,
         descriptors,
         depth: 0,
+        decryption: DecryptionCache::default(),
     };
 
     let mut warnings = RenderDiagnostics::new();
@@ -259,10 +289,10 @@ fn render_fields<'a>(
                             continue;
                         }
                         let resolved = resolve_metadata_constant_str(ctx.descriptor, lit);
-                        entries.push(DisplayEntry::Item(DisplayItem {
-                            label: label.clone(),
-                            value: resolved,
-                        }));
+                        entries.push(DisplayEntry::Item(DisplayItem::new(
+                            label.clone(),
+                            resolved,
+                        )));
                         continue;
                     }
 
@@ -278,10 +308,20 @@ fn render_fields<'a>(
                                     let rest_segments: Vec<&str> = rest.split('.').collect();
                                     navigate_value(item, &rest_segments)
                                 };
-                                if !check_visibility(visible, &val, label, path_str)? {
+                                let item_params = index_array_params(params.as_ref(), i);
+                                if !is_field_visible(
+                                    ctx,
+                                    visible,
+                                    &val,
+                                    item_params.as_ref(),
+                                    label,
+                                    path_str,
+                                    warnings,
+                                )
+                                .await?
+                                {
                                     continue;
                                 }
-                                let item_params = index_array_params(params.as_ref(), i);
                                 let formatted = format_value(
                                     ctx,
                                     &val,
@@ -296,6 +336,10 @@ fn render_fields<'a>(
                                 entries.push(DisplayEntry::Item(DisplayItem {
                                     label: label.clone(),
                                     value: formatted,
+                                    raw_encrypted_value: raw_encrypted_value(
+                                        &val,
+                                        item_params.as_ref(),
+                                    ),
                                 }));
                             }
                             continue;
@@ -306,7 +350,17 @@ fn render_fields<'a>(
                     let value = resolve_path(ctx.decoded, path_str);
 
                     // Check visibility
-                    if !check_visibility(visible, &value, label, path_str)? {
+                    if !is_field_visible(
+                        ctx,
+                        visible,
+                        &value,
+                        params.as_ref(),
+                        label,
+                        path_str,
+                        warnings,
+                    )
+                    .await?
+                    {
                         continue;
                     }
 
@@ -347,6 +401,7 @@ fn render_fields<'a>(
                     entries.push(DisplayEntry::Item(DisplayItem {
                         label: label.clone(),
                         value: formatted,
+                        raw_encrypted_value: raw_encrypted_value(&value, params.as_ref()),
                     }));
                 }
                 DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
@@ -372,10 +427,7 @@ pub(crate) fn flatten_display_entry(entry: DisplayEntry) -> Vec<DisplayItem> {
         DisplayEntry::Item(item) => vec![item],
         DisplayEntry::Group { items, .. } => items,
         DisplayEntry::Nested { intent, .. } => {
-            vec![DisplayItem {
-                label: "Nested call".to_string(),
-                value: intent,
-            }]
+            vec![DisplayItem::new("Nested call".to_string(), intent)]
         }
     }
 }
@@ -406,10 +458,10 @@ fn render_group_field_kind<'a>(
                     if !check_visibility(visible, &None, label, "")? {
                         return Ok(GroupRenderKind::Scalar(Vec::new()));
                     }
-                    return Ok(GroupRenderKind::Scalar(vec![DisplayItem {
-                        label: label.clone(),
-                        value: resolve_metadata_constant_str(ctx.descriptor, lit),
-                    }]));
+                    return Ok(GroupRenderKind::Scalar(vec![DisplayItem::new(
+                        label.clone(),
+                        resolve_metadata_constant_str(ctx.descriptor, lit),
+                    )]));
                 }
 
                 let path_str = path.as_deref().unwrap_or("");
@@ -423,10 +475,20 @@ fn render_group_field_kind<'a>(
                                 let rest_segments: Vec<&str> = rest.split('.').collect();
                                 navigate_value(item, &rest_segments)
                             };
-                            if !check_visibility(visible, &val, label, path_str)? {
+                            let item_params = index_array_params(params.as_ref(), i);
+                            if !is_field_visible(
+                                ctx,
+                                visible,
+                                &val,
+                                item_params.as_ref(),
+                                label,
+                                path_str,
+                                warnings,
+                            )
+                            .await?
+                            {
                                 continue;
                             }
-                            let item_params = index_array_params(params.as_ref(), i);
                             let rendered = if matches!(format.as_ref(), Some(FieldFormat::Calldata))
                             {
                                 flatten_display_entry(
@@ -454,6 +516,10 @@ fn render_group_field_kind<'a>(
                                         warnings,
                                     )
                                     .await?,
+                                    raw_encrypted_value: raw_encrypted_value(
+                                        &val,
+                                        item_params.as_ref(),
+                                    ),
                                 }]
                             };
                             bundles.push(rendered);
@@ -463,7 +529,17 @@ fn render_group_field_kind<'a>(
                 }
 
                 let value = resolve_path(ctx.decoded, path_str);
-                if !check_visibility(visible, &value, label, path_str)? {
+                if !is_field_visible(
+                    ctx,
+                    visible,
+                    &value,
+                    params.as_ref(),
+                    label,
+                    path_str,
+                    warnings,
+                )
+                .await?
+                {
                     return Ok(GroupRenderKind::Scalar(Vec::new()));
                 }
 
@@ -494,6 +570,7 @@ fn render_group_field_kind<'a>(
                         warnings,
                     )
                     .await?,
+                    raw_encrypted_value: raw_encrypted_value(&value, params.as_ref()),
                 }]))
             }
             DisplayField::Reference { .. } | DisplayField::Scope { .. } => {
@@ -1408,99 +1485,6 @@ fn resolve_nested_selector(
         .and_then(|value| selector_from_argument_value(&value)))
 }
 
-/// Placeholder shown for an undecryptable field whose descriptor declares no
-/// `fallbackLabel`. Deliberately generic — an encrypted field is not always an
-/// amount ("Amount: [Encrypted]" reads naturally against the field's own label).
-const DEFAULT_ENCRYPTED_PLACEHOLDER: &str = "[Encrypted]";
-
-/// Coarse plaintext category derived from a canonical Solidity `plaintextType`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PlainKind {
-    Uint,
-    Int,
-    Address,
-    Bool,
-    Bytes,
-    String,
-}
-
-/// A descriptor's declared `plaintextType`, parsed.
-#[derive(Clone, Copy)]
-struct PlaintextType {
-    /// How the decrypted bytes are interpreted.
-    kind: PlainKind,
-    /// Widest plaintext the type can hold, in bytes. `None` for the unbounded
-    /// types (`bytes`, `string`).
-    max_bytes: Option<usize>,
-}
-
-/// Whether decrypted bytes are too wide for the declared plaintext type.
-///
-/// Integers, addresses and bools are big-endian quantities, so leading zeros
-/// carry no value — a wallet returning a zero-padded 32-byte ABI word is
-/// accepted as long as the value itself fits. For `bytesN` every byte is part of
-/// the value, so the raw length is what must fit.
-fn exceeds_plaintext_width(bytes: &[u8], ty: &PlaintextType) -> bool {
-    let Some(max) = ty.max_bytes else {
-        return false;
-    };
-    let significant = if ty.kind == PlainKind::Bytes {
-        bytes
-    } else {
-        let first = bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len());
-        &bytes[first..]
-    };
-    significant.len() > max
-}
-
-/// Parse a canonical Solidity `plaintextType` into its value category and fixed
-/// byte width (`None` for dynamic `bytes`/`string`). Returns `None` for
-/// non-canonical types (bare `uint`/`int`, `euint64`, `uint7`, `bytes33`), so
-/// the caller can flag a descriptor error rather than silently guessing.
-fn parse_plaintext_type(t: &str) -> Option<PlaintextType> {
-    let bounded = |kind, max_bytes| {
-        Some(PlaintextType {
-            kind,
-            max_bytes: Some(max_bytes),
-        })
-    };
-    let unbounded = |kind| {
-        Some(PlaintextType {
-            kind,
-            max_bytes: None,
-        })
-    };
-
-    match t {
-        "bool" => return bounded(PlainKind::Bool, 1),
-        "address" => return bounded(PlainKind::Address, 20),
-        "string" => return unbounded(PlainKind::String),
-        "bytes" => return unbounded(PlainKind::Bytes),
-        _ => {}
-    }
-    if let Some(rest) = t.strip_prefix("uint").or_else(|| t.strip_prefix("int")) {
-        let signed = t.starts_with("int");
-        let bits: usize = rest.parse().ok()?;
-        if !(8..=256).contains(&bits) || !bits.is_multiple_of(8) {
-            return None;
-        }
-        let kind = if signed {
-            PlainKind::Int
-        } else {
-            PlainKind::Uint
-        };
-        return bounded(kind, bits / 8);
-    }
-    if let Some(n) = t.strip_prefix("bytes") {
-        let size: usize = n.parse().ok()?;
-        return (1..=32).contains(&size).then_some(PlaintextType {
-            kind: PlainKind::Bytes,
-            max_bytes: Some(size),
-        });
-    }
-    None
-}
-
 /// Raw big-endian bytes backing an `ArgumentValue` (the ciphertext/handle to
 /// hand to the wallet for decryption).
 fn argument_value_bytes(v: &ArgumentValue) -> Vec<u8> {
@@ -1516,9 +1500,23 @@ fn argument_value_bytes(v: &ArgumentValue) -> Vec<u8> {
     }
 }
 
-/// Build a typed `ArgumentValue` from decrypted big-endian bytes, driven by the
-/// descriptor's declared category (never by the bytes' shape).
-fn build_plaintext_value(kind: PlainKind, bytes: Vec<u8>) -> ArgumentValue {
+/// The value an encrypted field carries in the signing request, 0x-hex, for
+/// [`DisplayItem::raw_encrypted_value`]. `None` for a field with no `encryption`
+/// annotation, or one whose path did not resolve.
+fn raw_encrypted_value(
+    value: &Option<ArgumentValue>,
+    params: Option<&FormatParams>,
+) -> Option<String> {
+    params.and_then(|p| p.encryption.as_ref())?;
+    let bytes = argument_value_bytes(value.as_ref()?);
+    Some(format!("0x{}", hex::encode(bytes)))
+}
+
+/// Build a typed `ArgumentValue` from a decrypted plaintext, driven by the
+/// descriptor's declared category (never by the bytes' shape). Integer
+/// plaintexts arrive as 32-byte two's-complement words, so they render exactly
+/// like an ABI-decoded argument of the same value.
+fn argument_value_from_plaintext(kind: PlainKind, bytes: Vec<u8>) -> ArgumentValue {
     match kind {
         PlainKind::Uint => ArgumentValue::Uint(bytes),
         PlainKind::Int => ArgumentValue::Int(bytes),
@@ -1526,7 +1524,7 @@ fn build_plaintext_value(kind: PlainKind, bytes: Vec<u8>) -> ArgumentValue {
         PlainKind::String => ArgumentValue::String(String::from_utf8_lossy(&bytes).into_owned()),
         PlainKind::Bytes => ArgumentValue::Bytes(bytes),
         PlainKind::Address => {
-            // Right-align the (≤20) bytes into a 20-byte address.
+            // Right-align the (at most 20) bytes into a 20-byte address.
             let mut a = [0u8; 20];
             let n = bytes.len().min(20);
             a[20 - n..].copy_from_slice(&bytes[bytes.len() - n..]);
@@ -1535,91 +1533,98 @@ fn build_plaintext_value(kind: PlainKind, bytes: Vec<u8>) -> ArgumentValue {
     }
 }
 
-/// Decrypt a field value via the wallet's `resolve_decrypted_value` and
-/// re-interpret the returned bytes as the descriptor's declared `plaintextType`.
+/// What an encrypted field renders from: the plaintext, or the text standing in
+/// for it.
+enum FieldPlaintext {
+    Value(ArgumentValue),
+    /// The field's `fallbackLabel` (or a generic placeholder) — never the
+    /// ciphertext.
+    Fallback(String),
+}
+
+/// Decrypt a field value via the wallet and re-interpret the plaintext as the
+/// descriptor's declared `plaintextType`.
 ///
-/// Returns `Some(plaintext)` on success and `None` when the field should fall
-/// back to its label. Both failure modes push a diagnostic: `DecryptionFailed`
-/// (the value is real but unavailable — no provider, wallet returned `None`,
-/// malformed hex, or over-wide) and `EncryptionInvalidDescriptor` (the
-/// annotation itself is malformed). Unlike the TypeScript engine — whose value
-/// model lets it abort the whole format — the Rust pipeline degrades gracefully
-/// to the fallback for both, since a per-field render here can only yield a
-/// string.
+/// Memoized on the render frame, so the wallet is asked once per encrypted value
+/// however many times the field is read. `Err` is a malformed annotation, which
+/// is fatal like any other descriptor error.
 async fn decrypt_field_value(
     ctx: &RenderContext<'_>,
     encrypted: &ArgumentValue,
     enc: &EncryptionParams,
     warnings: &mut RenderDiagnostics,
-) -> Option<ArgumentValue> {
-    let (Some(scheme), Some(plaintext_type)) =
-        (enc.scheme.as_deref(), enc.plaintext_type.as_deref())
-    else {
-        warnings.push(render_warning(
-            RenderDiagnosticKind::EncryptionInvalidDescriptor,
-            "Field encryption requires both 'scheme' and 'plaintextType'",
-        ));
-        return None;
-    };
-
-    let Some(parsed_type) = parse_plaintext_type(plaintext_type) else {
-        warnings.push(render_warning(
-            RenderDiagnosticKind::EncryptionInvalidDescriptor,
-            format!("Unsupported encryption plaintextType '{plaintext_type}'"),
-        ));
-        return None;
-    };
-
-    // The contract the ciphertext is accessed through (container's `@.to`);
-    // absent for EIP-712 typed data with no verifyingContract.
+) -> Result<FieldPlaintext, Error> {
+    // The contract the ciphertext is accessed through (container's `@.to`).
     let contract_address = resolve_path(ctx.decoded, "@.to")
         .filter(|v| matches!(v, ArgumentValue::Address(_)))
         .map(|v| format_address(&v));
 
-    let encrypted_hex = format!("0x{}", hex::encode(argument_value_bytes(encrypted)));
-
-    let result = ctx
-        .data_provider
-        .resolve_decrypted_value(
-            ctx.chain_id,
-            &encrypted_hex,
-            scheme,
+    let outcome = ctx
+        .decryption
+        .resolve(
+            ctx.data_provider,
+            Some(ctx.chain_id),
             contract_address.as_deref(),
+            &argument_value_bytes(encrypted),
+            enc,
+            warnings,
         )
-        .await;
+        .await?;
 
-    let Some(hex_value) = result else {
-        warnings.push(render_warning(
-            RenderDiagnosticKind::DecryptionFailed,
-            format!("Could not decrypt '{scheme}' value"),
-        ));
-        return None;
+    Ok(match outcome {
+        Decryption::Plaintext { kind, bytes } => {
+            FieldPlaintext::Value(argument_value_from_plaintext(kind, bytes))
+        }
+        Decryption::Fallback { text, .. } => FieldPlaintext::Fallback(text),
+    })
+}
+
+/// Whether a field is visible, evaluating conditional rules against the value
+/// the user is actually signing.
+///
+/// Plain fields evaluate their own decoded value. An encrypted field evaluates
+/// its decrypted plaintext: `visible.mustMatch` / `ifNotIn` describe the
+/// cleartext, and comparing them against the ciphertext handle is meaningless —
+/// `mustMatch` would reject values that do match, and `ifNotIn` would decide
+/// visibility on a comparison nobody verified.
+///
+/// When decryption is unavailable the plaintext is unknown, so the rule sees
+/// `None`: an unverifiable condition never hides the field, and `mustMatch`
+/// still refuses to pass it silently. (The TypeScript library evaluates the rule
+/// against the handle in that case, which reaches the same outcome for both rule
+/// kinds — a handle is never in an `ifNotIn` list, and never satisfies
+/// `mustMatch` — but says something the ciphertext cannot support.)
+///
+/// Rules that ignore the value never trigger decryption at all — no wallet
+/// prompt for a field whose visibility does not depend on it. TypeScript
+/// decrypts before evaluating any rule and drops the warning with the hidden
+/// field, so this asks the wallet strictly less often for the same output.
+async fn is_field_visible(
+    ctx: &RenderContext<'_>,
+    rule: &VisibleRule,
+    value: &Option<ArgumentValue>,
+    params: Option<&FormatParams>,
+    label: &str,
+    path: &str,
+    warnings: &mut RenderDiagnostics,
+) -> Result<bool, Error> {
+    let Some(enc) = params.and_then(|p| p.encryption.as_ref()) else {
+        return check_visibility(rule, value, label, path);
     };
+    // A descriptor bug is rejected wherever it appears, even on a field this rule
+    // is about to hide — no wallet round-trip needed to notice it.
+    validate_annotation(enc)?;
 
-    let stripped = hex_value.strip_prefix("0x").unwrap_or(&hex_value);
-    let Ok(bytes) = hex::decode(stripped) else {
-        warnings.push(render_warning(
-            RenderDiagnosticKind::DecryptionFailed,
-            format!("Decrypted '{scheme}' value '{hex_value}' is not valid hex"),
-        ));
-        return None;
+    let plaintext = match (rule, value) {
+        (VisibleRule::Condition(_), Some(val)) => {
+            match decrypt_field_value(ctx, val, enc, warnings).await? {
+                FieldPlaintext::Value(plaintext) => Some(plaintext),
+                FieldPlaintext::Fallback(_) => None,
+            }
+        }
+        _ => return check_visibility(rule, value, label, path),
     };
-
-    // A plaintext too wide for its declared type cannot be rendered faithfully —
-    // a 32-byte value read as a `uint64` amount would display a wildly wrong
-    // number. Treat it as a failed decryption rather than showing it.
-    if exceeds_plaintext_width(&bytes, &parsed_type) {
-        warnings.push(render_warning(
-            RenderDiagnosticKind::DecryptionFailed,
-            format!(
-                "Decrypted '{scheme}' value is {} bytes, too wide for '{plaintext_type}'",
-                bytes.len()
-            ),
-        ));
-        return None;
-    }
-
-    Some(build_plaintext_value(parsed_type.kind, bytes))
+    check_visibility(rule, &plaintext, label, path)
 }
 
 /// Format a decoded value according to its format type.
@@ -1648,14 +1653,9 @@ async fn format_value(
     // malformed annotation degrades the same way, distinguished by diagnostic.
     let decrypted_owned;
     if let Some(enc) = params.and_then(|p| p.encryption.as_ref()) {
-        match decrypt_field_value(ctx, val, enc, warnings).await {
-            Some(v) => decrypted_owned = Some(v),
-            None => {
-                return Ok(enc
-                    .fallback_label
-                    .clone()
-                    .unwrap_or_else(|| DEFAULT_ENCRYPTED_PLACEHOLDER.to_string()));
-            }
+        match decrypt_field_value(ctx, val, enc, warnings).await? {
+            FieldPlaintext::Value(plaintext) => decrypted_owned = Some(plaintext),
+            FieldPlaintext::Fallback(text) => return Ok(text),
         }
     } else {
         decrypted_owned = None;
@@ -1738,10 +1738,7 @@ async fn render_calldata_field(
                 "calldata field is not bytes",
             ));
             *nested_fallback = true;
-            return Ok(DisplayEntry::Item(DisplayItem {
-                label: label.to_string(),
-                value: raw,
-            }));
+            return Ok(DisplayEntry::Item(DisplayItem::new(label.to_string(), raw)));
         }
     };
 
@@ -1865,6 +1862,7 @@ async fn render_calldata_field(
         data_provider: ctx.data_provider,
         descriptors: ctx.descriptors,
         depth: ctx.depth + 1,
+        decryption: DecryptionCache::default(),
     };
 
     let mut inner_warnings = Vec::new();
@@ -1898,10 +1896,10 @@ async fn render_calldata_field(
 /// A `calldata` field always has a scalar representation; a nested sub-call is
 /// attached only when the inner call resolves and decodes.
 pub(crate) fn raw_calldata_scalar(label: &str, calldata: &[u8]) -> DisplayEntry {
-    DisplayEntry::Item(DisplayItem {
-        label: label.to_string(),
-        value: format!("0x{}", hex::encode(calldata)),
-    })
+    DisplayEntry::Item(DisplayItem::new(
+        label.to_string(),
+        format!("0x{}", hex::encode(calldata)),
+    ))
 }
 
 /// Find the current display format from context (for excluded paths, etc.).
@@ -2135,7 +2133,7 @@ fn unsigned_biguint_from_argument_value_for_amount(val: &ArgumentValue) -> Optio
 }
 
 /// Convert signed integer bytes (two's complement, big-endian) to BigInt.
-fn int_to_bigint(bytes: &[u8]) -> BigInt {
+pub(crate) fn int_to_bigint(bytes: &[u8]) -> BigInt {
     if bytes.is_empty() {
         return BigInt::from(0);
     }
@@ -2683,6 +2681,7 @@ mod tests {
             data_provider: &provider,
             descriptors: &[],
             depth: 0,
+            decryption: DecryptionCache::default(),
         };
         let params: FormatParams =
             serde_json::from_value(serde_json::json!({"$ref": "$.metadata.enums.dex"})).unwrap();
@@ -2749,6 +2748,7 @@ mod tests {
             data_provider: &data_provider,
             descriptors: &[],
             depth: 0,
+            decryption: DecryptionCache::default(),
         };
 
         let fields = vec![
@@ -2845,6 +2845,7 @@ mod tests {
             data_provider: &data_provider,
             descriptors: &[],
             depth: 0,
+            decryption: DecryptionCache::default(),
         };
 
         let result = interpolate_intent("Withdraw to {to}", &ctx, &fields, &[])

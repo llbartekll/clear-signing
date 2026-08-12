@@ -124,6 +124,22 @@ final class WalletMetadataProvider: DataProviderFfi, @unchecked Sendable {
         }
     }
 
+    /// ERC-7730 `encryption`: the wallet decrypts, the library re-reads the
+    /// plaintext as the descriptor's declared `plaintextType`.
+    ///
+    /// This demo wallet holds no FHE keys, so it declines and encrypted fields
+    /// render their `fallbackLabel`. A real integration would decrypt the handle
+    /// for `scheme` against `contractAddress` (the container the value is
+    /// accessed through) and return the plaintext as 0x-hex big-endian bytes.
+    func resolveDecryptedValue(
+        chainId: UInt64,
+        encryptedValue: String,
+        scheme: String,
+        contractAddress: String?
+    ) -> String? {
+        nil
+    }
+
     private enum ProxySlot {
         /// EIP-1967 implementation slot: keccak256("eip1967.proxy.implementation") - 1
         static let eip1967 = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc"

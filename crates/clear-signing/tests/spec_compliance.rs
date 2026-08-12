@@ -220,6 +220,21 @@ fn semantic_item_snapshot(entries: &[DisplayEntry]) -> Vec<(String, String)> {
     snapshot
 }
 
+/// `raw_encrypted_value` per rendered item, in order.
+fn raw_encrypted_values(entries: &[DisplayEntry]) -> Vec<Option<String>> {
+    entries
+        .iter()
+        .flat_map(|entry| match entry {
+            DisplayEntry::Item(item) => vec![item.raw_encrypted_value.clone()],
+            DisplayEntry::Group { items, .. } => items
+                .iter()
+                .map(|i| i.raw_encrypted_value.clone())
+                .collect(),
+            DisplayEntry::Nested { .. } => vec![None],
+        })
+        .collect()
+}
+
 fn assert_semantic_parity(calldata_model: &DisplayModel, typed_model: &DisplayModel) {
     assert_eq!(calldata_model.intent, typed_model.intent);
     assert_eq!(
@@ -6327,4 +6342,244 @@ async fn test_resolver_finds_nested_descriptor_with_constant_callee_and_chain_id
         "0x1000000000000000000000000000000000000001"
     );
     assert_eq!(descriptors[1].chain_id, 10);
+}
+
+// ─── ERC-7730 `encryption`: calldata / EIP-712 parity ───
+
+/// The handle both containers carry for the encrypted amount.
+const ENCRYPTED_HANDLE: &str = "0xabcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+const CONFIDENTIAL_TOKEN: &str = "0x00000000000000000000000000000000000000c1";
+/// The wrapper contract, i.e. calldata's `@.to` and the typed domain's
+/// `verifyingContract` — the container the wallet checks access against.
+const ENCRYPTION_CONTRACT: &str = "0x0000000000000000000000000000000000000abc";
+
+/// Wallet that can decrypt the handle above and knows the token, recording the
+/// container it was handed so both flows can be compared.
+struct DecryptingProvider {
+    calls: std::sync::Mutex<Vec<(u64, Option<String>)>>,
+}
+
+impl DecryptingProvider {
+    fn new() -> Self {
+        Self {
+            calls: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl clear_signing::DataProvider for DecryptingProvider {
+    fn resolve_token(
+        &self,
+        chain_id: u64,
+        address: &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Option<clear_signing::TokenMeta>> + Send + '_>,
+    > {
+        let hit = chain_id == 1 && address.eq_ignore_ascii_case(CONFIDENTIAL_TOKEN);
+        Box::pin(async move {
+            hit.then(|| clear_signing::TokenMeta {
+                symbol: "cUSDC".to_string(),
+                decimals: 6,
+                name: "Confidential USDC".to_string(),
+            })
+        })
+    }
+
+    fn resolve_decrypted_value(
+        &self,
+        chain_id: u64,
+        encrypted_value: &str,
+        scheme: &str,
+        contract_address: Option<&str>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send + '_>> {
+        // Recorded verbatim: both containers must hand the wallet the same
+        // chain and the same EIP-55 checksummed contract, not merely the same
+        // address in some casing.
+        self.calls
+            .lock()
+            .unwrap()
+            .push((chain_id, contract_address.map(str::to_string)));
+        let hit = scheme == "fhevm" && encrypted_value.eq_ignore_ascii_case(ENCRYPTED_HANDLE);
+        Box::pin(async move { hit.then(|| format!("0x{:016x}", 1_000_000u64)) })
+    }
+}
+
+fn encrypted_amount_fields() -> serde_json::Value {
+    serde_json::json!([
+        {
+            "path": "amount",
+            "label": "Amount",
+            "format": "tokenAmount",
+            "params": { "token": CONFIDENTIAL_TOKEN },
+            "encryption": {
+                "scheme": "fhevm",
+                "plaintextType": "uint64",
+                "fallbackLabel": "[Encrypted Amount]"
+            }
+        }
+    ])
+}
+
+fn encrypted_calldata_descriptor() -> Vec<ResolvedDescriptor> {
+    let descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": ENCRYPTION_CONTRACT}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "confidentialTransfer(bytes32 amount)": {
+                        "intent": "Confidential transfer",
+                        "fields": encrypted_amount_fields()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    wrap_rd(descriptor, 1, ENCRYPTION_CONTRACT)
+}
+
+fn encrypted_typed_descriptor() -> Vec<ResolvedDescriptor> {
+    let descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": ENCRYPTION_CONTRACT}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "ConfidentialTransfer(bytes32 amount)": {
+                        "intent": "Confidential transfer",
+                        "fields": encrypted_amount_fields()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    wrap_rd(descriptor, 1, ENCRYPTION_CONTRACT)
+}
+
+fn encrypted_typed_data() -> TypedData {
+    serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "ConfidentialTransfer": [{ "name": "amount", "type": "bytes32" }]
+        },
+        "primaryType": "ConfidentialTransfer",
+        "domain": { "chainId": 1, "verifyingContract": ENCRYPTION_CONTRACT },
+        "message": { "amount": ENCRYPTED_HANDLE }
+    }))
+    .unwrap()
+}
+
+fn encrypted_calldata() -> Vec<u8> {
+    let mut handle = [0u8; 32];
+    handle.copy_from_slice(&hex::decode(ENCRYPTED_HANDLE.trim_start_matches("0x")).unwrap());
+    build_calldata("confidentialTransfer(bytes32)", &[handle])
+}
+
+#[tokio::test]
+async fn test_eip712_encryption_decrypts_like_calldata() {
+    // Typed data must reach the wallet's decryptor exactly as calldata does,
+    // using the domain's chainId and verifyingContract as the container.
+    let calldata = encrypted_calldata();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: ENCRYPTION_CONTRACT,
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let calldata_provider = DecryptingProvider::new();
+    let calldata_result =
+        format_calldata(&encrypted_calldata_descriptor(), &tx, &calldata_provider)
+            .await
+            .unwrap();
+
+    let typed_provider = DecryptingProvider::new();
+    let typed_result = format_typed_data(
+        &encrypted_typed_descriptor(),
+        &encrypted_typed_data(),
+        &typed_provider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        semantic_item_snapshot(&calldata_result.entries),
+        vec![("Amount".to_string(), "1 cUSDC".to_string())]
+    );
+    assert_semantic_parity(&calldata_result, &typed_result);
+    assert!(calldata_result.diagnostics().is_empty());
+    assert!(typed_result.diagnostics().is_empty());
+
+    // Both containers report the handle beside the plaintext.
+    for result in [&calldata_result, &typed_result] {
+        assert_eq!(
+            raw_encrypted_values(&result.entries),
+            vec![Some(ENCRYPTED_HANDLE.to_string())]
+        );
+    }
+
+    // Both flows hand the wallet the same chain and the same container contract,
+    // compared verbatim — typed data must EIP-55 checksum it exactly as calldata
+    // does rather than passing the domain string through as authored.
+    let calldata_calls = calldata_provider.calls.lock().unwrap().clone();
+    let typed_calls = typed_provider.calls.lock().unwrap().clone();
+    assert_eq!(calldata_calls, typed_calls);
+    assert_eq!(calldata_calls.len(), 1);
+    let (chain_id, contract) = &calldata_calls[0];
+    assert_eq!(*chain_id, 1);
+    assert!(contract
+        .as_deref()
+        .is_some_and(|c| c.eq_ignore_ascii_case(ENCRYPTION_CONTRACT)));
+}
+
+#[tokio::test]
+async fn test_eip712_encryption_falls_back_like_calldata() {
+    // No decryptor: both containers render the descriptor's fallbackLabel and
+    // report `decryption_failed`, and neither leaks the handle.
+    let calldata = encrypted_calldata();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: ENCRYPTION_CONTRACT,
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result =
+        format_calldata(&encrypted_calldata_descriptor(), &tx, &EmptyDataProvider)
+            .await
+            .unwrap();
+    let typed_result = format_typed_data(
+        &encrypted_typed_descriptor(),
+        &encrypted_typed_data(),
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        semantic_item_snapshot(&typed_result.entries),
+        vec![("Amount".to_string(), "[Encrypted Amount]".to_string())]
+    );
+    assert_semantic_parity(&calldata_result, &typed_result);
+    for result in [&calldata_result, &typed_result] {
+        assert!(result
+            .diagnostics()
+            .iter()
+            .any(|d| d.code == "decryption_failed"));
+        // The fallback label hides the value, so the handle is what lets a wallet
+        // show that something real was withheld.
+        assert_eq!(
+            raw_encrypted_values(&result.entries),
+            vec![Some(ENCRYPTED_HANDLE.to_string())]
+        );
+    }
 }

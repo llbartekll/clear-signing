@@ -543,6 +543,21 @@ public protocol DataProviderFfi: AnyObject, Sendable {
     func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64)  -> UInt64?
     
     /**
+     * Decrypt a field value carrying an ERC-7730 `encryption` annotation.
+     *
+     * `encrypted_value` is 0x-hex of the raw field bytes (the handle);
+     * `contract_address` is the container's `@.to` — for typed data the domain's
+     * `verifyingContract`, absent when it declares none. Return the plaintext as
+     * 0x-hex of its big-endian bytes; the library re-interprets it via the
+     * descriptor's declared `plaintextType`.
+     *
+     * Return `None` when the value cannot be decrypted (unsupported scheme,
+     * declined signature, no access) — the field then renders its
+     * `fallbackLabel`. Wallets with no decryption support return `None` always.
+     */
+    func resolveDecryptedValue(chainId: UInt64, encryptedValue: String, scheme: String, contractAddress: String?)  -> String?
+    
+    /**
      * Detect proxy contract implementation address.
      *
      * Called when descriptor resolution by `tx.to` fails. Wallets should read
@@ -661,6 +676,31 @@ open func resolveBlockTimestamp(chainId: UInt64, blockNumber: UInt64) -> UInt64?
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(chainId),
         FfiConverterUInt64.lower(blockNumber),$0
+    )
+})
+}
+    
+    /**
+     * Decrypt a field value carrying an ERC-7730 `encryption` annotation.
+     *
+     * `encrypted_value` is 0x-hex of the raw field bytes (the handle);
+     * `contract_address` is the container's `@.to` — for typed data the domain's
+     * `verifyingContract`, absent when it declares none. Return the plaintext as
+     * 0x-hex of its big-endian bytes; the library re-interprets it via the
+     * descriptor's declared `plaintextType`.
+     *
+     * Return `None` when the value cannot be decrypted (unsupported scheme,
+     * declined signature, no access) — the field then renders its
+     * `fallbackLabel`. Wallets with no decryption support return `None` always.
+     */
+open func resolveDecryptedValue(chainId: UInt64, encryptedValue: String, scheme: String, contractAddress: String?) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+    uniffi_clear_signing_fn_method_dataproviderffi_resolve_decrypted_value(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(chainId),
+        FfiConverterString.lower(encryptedValue),
+        FfiConverterString.lower(scheme),
+        FfiConverterOptionString.lower(contractAddress),$0
     )
 })
 }
@@ -845,6 +885,36 @@ fileprivate struct UniffiCallbackInterfaceDataProviderFfi {
                 writeReturn: writeReturn
             )
         },
+        resolveDecryptedValue: { (
+            uniffiHandle: UInt64,
+            chainId: UInt64,
+            encryptedValue: RustBuffer,
+            scheme: RustBuffer,
+            contractAddress: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String? in
+                guard let uniffiObj = try? FfiConverterTypeDataProviderFfi.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.resolveDecryptedValue(
+                     chainId: try FfiConverterUInt64.lift(chainId),
+                     encryptedValue: try FfiConverterString.lift(encryptedValue),
+                     scheme: try FfiConverterString.lift(scheme),
+                     contractAddress: try FfiConverterOptionString.lift(contractAddress)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterOptionString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
         getImplementationAddress: { (
             uniffiHandle: UInt64,
             chainId: UInt64,
@@ -942,12 +1012,36 @@ public func FfiConverterTypeDataProviderFfi_lower(_ value: DataProviderFfi) -> U
 public struct DisplayItem: Equatable, Hashable {
     public var label: String
     public var value: String
+    /**
+     * For a field carrying an ERC-7730 `encryption` annotation, its value as it
+     * appears in the signing request — 0x-hex, the ciphertext itself or a
+     * pointer to it — before decryption.
+     *
+     * Set whether or not decryption succeeded. When it did not, `value` is the
+     * descriptor's `fallbackLabel` (or a generic placeholder) and a
+     * `decryption_failed` diagnostic is recorded; the spec RECOMMENDS wallets
+     * show this raw value — fully or truncated — next to that placeholder, so
+     * the user can tell a real value is present but withheld.
+     */
+    public var rawEncryptedValue: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(label: String, value: String) {
+    public init(label: String, value: String, 
+        /**
+         * For a field carrying an ERC-7730 `encryption` annotation, its value as it
+         * appears in the signing request — 0x-hex, the ciphertext itself or a
+         * pointer to it — before decryption.
+         *
+         * Set whether or not decryption succeeded. When it did not, `value` is the
+         * descriptor's `fallbackLabel` (or a generic placeholder) and a
+         * `decryption_failed` diagnostic is recorded; the spec RECOMMENDS wallets
+         * show this raw value — fully or truncated — next to that placeholder, so
+         * the user can tell a real value is present but withheld.
+         */rawEncryptedValue: String?) {
         self.label = label
         self.value = value
+        self.rawEncryptedValue = rawEncryptedValue
     }
 
     
@@ -967,13 +1061,15 @@ public struct FfiConverterTypeDisplayItem: FfiConverterRustBuffer {
         return
             try DisplayItem(
                 label: FfiConverterString.read(from: &buf), 
-                value: FfiConverterString.read(from: &buf)
+                value: FfiConverterString.read(from: &buf), 
+                rawEncryptedValue: FfiConverterOptionString.read(from: &buf)
         )
     }
 
     public static func write(_ value: DisplayItem, into buf: inout [UInt8]) {
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterString.write(value.value, into: &buf)
+        FfiConverterOptionString.write(value.rawEncryptedValue, into: &buf)
     }
 }
 
@@ -2251,7 +2347,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_block_timestamp() != 18212) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_clear_signing_checksum_method_dataproviderffi_get_implementation_address() != 349) {
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_resolve_decrypted_value() != 38507) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_clear_signing_checksum_method_dataproviderffi_get_implementation_address() != 2788) {
         return InitializationResult.apiChecksumMismatch
     }
 
