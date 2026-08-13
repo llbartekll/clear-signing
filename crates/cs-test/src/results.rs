@@ -136,7 +136,7 @@ fn render_entries(entries: &[DisplayEntry]) -> Vec<FieldEntry> {
     let mut out = Vec::new();
     for entry in entries {
         match entry {
-            DisplayEntry::Item(DisplayItem { label, value }) => {
+            DisplayEntry::Item(DisplayItem { label, value, .. }) => {
                 out.push(FieldEntry {
                     label: label.clone(),
                     value: FieldValue::Value(value.clone()),
@@ -144,7 +144,7 @@ fn render_entries(entries: &[DisplayEntry]) -> Vec<FieldEntry> {
             }
             DisplayEntry::Group { items, .. } => {
                 // Group fields flatten into the surrounding sequence per the registry spec.
-                for DisplayItem { label, value } in items {
+                for DisplayItem { label, value, .. } in items {
                     out.push(FieldEntry {
                         label: label.clone(),
                         value: FieldValue::Value(value.clone()),
@@ -225,14 +225,8 @@ mod tests {
             label: "g".into(),
             iteration: GroupIteration::Bundled,
             items: vec![
-                DisplayItem {
-                    label: "A".into(),
-                    value: "1".into(),
-                },
-                DisplayItem {
-                    label: "B".into(),
-                    value: "2".into(),
-                },
+                DisplayItem::new("A".into(), "1".into()),
+                DisplayItem::new("B".into(), "2".into()),
             ],
         }]);
         let r = pass_result(m);
@@ -252,14 +246,8 @@ mod tests {
     #[test]
     fn duplicate_labels_emit_separate_entries() {
         let m = model_with(vec![
-            DisplayEntry::Item(DisplayItem {
-                label: "Signer".into(),
-                value: "0xaaa".into(),
-            }),
-            DisplayEntry::Item(DisplayItem {
-                label: "Signer".into(),
-                value: "0xbbb".into(),
-            }),
+            DisplayEntry::Item(DisplayItem::new("Signer".into(), "0xaaa".into())),
+            DisplayEntry::Item(DisplayItem::new("Signer".into(), "0xbbb".into())),
         ]);
         let r = pass_result(m);
         let file = build_results_file(std::slice::from_ref(&r));
@@ -312,10 +300,10 @@ mod tests {
             label: "Inner call".into(),
             intent: "Transfer".into(),
             owner: Some("Inner DAO".into()),
-            entries: vec![DisplayEntry::Item(DisplayItem {
-                label: "To".into(),
-                value: "0xabc".into(),
-            })],
+            entries: vec![DisplayEntry::Item(DisplayItem::new(
+                "To".into(),
+                "0xabc".into(),
+            ))],
         }]);
         let r = pass_result(m);
         let file = build_results_file(std::slice::from_ref(&r));

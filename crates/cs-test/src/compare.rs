@@ -336,14 +336,14 @@ fn flatten_actual(entries: &[DisplayEntry]) -> Vec<ActualField<'_>> {
     let mut out = Vec::new();
     for entry in entries {
         match entry {
-            DisplayEntry::Item(DisplayItem { label, value }) => {
+            DisplayEntry::Item(DisplayItem { label, value, .. }) => {
                 out.push(ActualField::Scalar {
                     label: label.as_str(),
                     value: value.as_str(),
                 });
             }
             DisplayEntry::Group { items, .. } => {
-                for DisplayItem { label, value } in items {
+                for DisplayItem { label, value, .. } in items {
                     out.push(ActualField::Scalar {
                         label: label.as_str(),
                         value: value.as_str(),
@@ -400,10 +400,7 @@ mod tests {
     }
 
     fn item(label: &str, value: &str) -> DisplayEntry {
-        DisplayEntry::Item(DisplayItem {
-            label: label.to_string(),
-            value: value.to_string(),
-        })
+        DisplayEntry::Item(DisplayItem::new(label.to_string(), value.to_string()))
     }
 
     fn nested(label: &str, intent: &str, entries: Vec<DisplayEntry>) -> DisplayEntry {

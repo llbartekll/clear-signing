@@ -111,6 +111,11 @@ pub struct DataProviderStub {
     pub nft_collection_names: HashMap<String, String>,
     #[serde(default, rename = "blockTimestamps")]
     pub block_timestamps: HashMap<String, u64>,
+    /// Plaintexts a stub wallet can decrypt, keyed by the 0x-hex handle the
+    /// descriptor's `encryption` annotation points at. A handle that is absent
+    /// models a wallet that cannot decrypt (the fallback-label path).
+    #[serde(default, rename = "decryptedValues")]
+    pub decrypted_values: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +144,9 @@ impl DataProviderStub {
             }
             for (k, v) in &case.block_timestamps {
                 out.block_timestamps.insert(k.clone(), *v);
+            }
+            for (k, v) in &case.decrypted_values {
+                out.decrypted_values.insert(k.clone(), v.clone());
             }
         }
         out

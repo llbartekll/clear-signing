@@ -109,6 +109,10 @@ pub enum DisplayField {
         #[serde(skip_serializing_if = "Option::is_none")]
         params: Option<FormatParams>,
 
+        /// Encryption override for the referenced definition (field-level, per spec).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encryption: Option<EncryptionParams>,
+
         /// Visibility rule (from the referencing field).
         #[serde(default = "default_visible")]
         visible: VisibleRule,
@@ -151,6 +155,10 @@ pub enum DisplayField {
 
         #[serde(skip_serializing_if = "Option::is_none")]
         params: Option<FormatParams>,
+
+        /// Encryption metadata (field-level, sibling of `params`, per ERC-7730 spec).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        encryption: Option<EncryptionParams>,
 
         /// Separator string for array-typed values.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -266,7 +274,7 @@ pub enum FieldFormat {
 }
 
 /// Format parameters — varies by format type.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FormatParams {
     /// Token address path for tokenAmount/tokenTicker (resolved from calldata).
     #[serde(rename = "tokenPath")]

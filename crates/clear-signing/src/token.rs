@@ -164,6 +164,55 @@ impl DataProvider for CompositeDataProvider {
             None
         })
     }
+
+    fn resolve_block_timestamp(
+        &self,
+        chain_id: u64,
+        block_number: u64,
+    ) -> Pin<Box<dyn Future<Output = Option<u64>> + Send + '_>> {
+        Box::pin(async move {
+            for provider in &self.providers {
+                if let Some(ts) = provider
+                    .resolve_block_timestamp(chain_id, block_number)
+                    .await
+                {
+                    return Some(ts);
+                }
+            }
+            None
+        })
+    }
+
+    /// First provider able to decrypt wins. Without this delegation a decryptor
+    /// wrapped in a composite is unreachable and every encrypted field renders
+    /// its fallback, even though the wallet can decrypt.
+    fn resolve_decrypted_value(
+        &self,
+        chain_id: u64,
+        encrypted_value: &str,
+        scheme: &str,
+        contract_address: Option<&str>,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let encrypted_value = encrypted_value.to_string();
+        let scheme = scheme.to_string();
+        let contract_address = contract_address.map(str::to_string);
+        Box::pin(async move {
+            for provider in &self.providers {
+                if let Some(plaintext) = provider
+                    .resolve_decrypted_value(
+                        chain_id,
+                        &encrypted_value,
+                        &scheme,
+                        contract_address.as_deref(),
+                    )
+                    .await
+                {
+                    return Some(plaintext);
+                }
+            }
+            None
+        })
+    }
 }
 
 /// In-memory token source for testing.
@@ -268,5 +317,45 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(meta2.symbol, "USDT");
+    }
+
+    /// Provider that only decrypts, i.e. the shape a wallet's decryptor takes
+    /// when it is composed with a token source.
+    struct DecryptOnlyProvider;
+
+    impl DataProvider for DecryptOnlyProvider {
+        fn resolve_decrypted_value(
+            &self,
+            _chain_id: u64,
+            encrypted_value: &str,
+            scheme: &str,
+            _contract_address: Option<&str>,
+        ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+            let hit = scheme == "fhevm" && encrypted_value == "0xdead";
+            Box::pin(async move { hit.then(|| "0x2a".to_string()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_composite_delegates_decryption() {
+        // A decryptor behind a token source must still be reached — otherwise
+        // every encrypted field renders its fallback for wallets that compose.
+        let composite = CompositeDataProvider::new(vec![
+            Box::new(WellKnownTokenSource::new()),
+            Box::new(DecryptOnlyProvider),
+        ]);
+
+        assert_eq!(
+            composite
+                .resolve_decrypted_value(1, "0xdead", "fhevm", None)
+                .await,
+            Some("0x2a".to_string())
+        );
+        assert_eq!(
+            composite
+                .resolve_decrypted_value(1, "0xdead", "unknown-scheme", None)
+                .await,
+            None
+        );
     }
 }

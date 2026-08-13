@@ -280,7 +280,14 @@ typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod4)(uint64_t, uint64_t
 #endif
 #ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD5
 #define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD5
-typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod5)(uint64_t, uint64_t, RustBuffer, RustBuffer* _Nonnull, 
+typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod5)(uint64_t, uint64_t, RustBuffer, RustBuffer, RustBuffer, RustBuffer* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD6
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_DATA_PROVIDER_FFI_METHOD6
+typedef void (*UniffiCallbackInterfaceDataProviderFfiMethod6)(uint64_t, uint64_t, RustBuffer, RustBuffer* _Nonnull, 
         RustCallStatus *_Nonnull uniffiCallStatus
     );
 
@@ -295,7 +302,8 @@ typedef struct UniffiVTableCallbackInterfaceDataProviderFfi {
     UniffiCallbackInterfaceDataProviderFfiMethod2 _Nonnull resolveLocalName;
     UniffiCallbackInterfaceDataProviderFfiMethod3 _Nonnull resolveNftCollectionName;
     UniffiCallbackInterfaceDataProviderFfiMethod4 _Nonnull resolveBlockTimestamp;
-    UniffiCallbackInterfaceDataProviderFfiMethod5 _Nonnull getImplementationAddress;
+    UniffiCallbackInterfaceDataProviderFfiMethod5 _Nonnull resolveDecryptedValue;
+    UniffiCallbackInterfaceDataProviderFfiMethod6 _Nonnull getImplementationAddress;
 } UniffiVTableCallbackInterfaceDataProviderFfi;
 
 #endif
@@ -337,6 +345,11 @@ RustBuffer uniffi_clear_signing_fn_method_dataproviderffi_resolve_nft_collection
 #ifndef UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_FN_METHOD_DATAPROVIDERFFI_RESOLVE_BLOCK_TIMESTAMP
 #define UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_FN_METHOD_DATAPROVIDERFFI_RESOLVE_BLOCK_TIMESTAMP
 RustBuffer uniffi_clear_signing_fn_method_dataproviderffi_resolve_block_timestamp(uint64_t ptr, uint64_t chain_id, uint64_t block_number, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_FN_METHOD_DATAPROVIDERFFI_RESOLVE_DECRYPTED_VALUE
+#define UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_FN_METHOD_DATAPROVIDERFFI_RESOLVE_DECRYPTED_VALUE
+RustBuffer uniffi_clear_signing_fn_method_dataproviderffi_resolve_decrypted_value(uint64_t ptr, uint64_t chain_id, RustBuffer encrypted_value, RustBuffer scheme, RustBuffer contract_address, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_FN_METHOD_DATAPROVIDERFFI_GET_IMPLEMENTATION_ADDRESS
@@ -697,6 +710,12 @@ uint16_t uniffi_clear_signing_checksum_method_dataproviderffi_resolve_nft_collec
 #ifndef UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_BLOCK_TIMESTAMP
 #define UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_BLOCK_TIMESTAMP
 uint16_t uniffi_clear_signing_checksum_method_dataproviderffi_resolve_block_timestamp(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_DECRYPTED_VALUE
+#define UNIFFI_FFIDEF_UNIFFI_CLEAR_SIGNING_CHECKSUM_METHOD_DATAPROVIDERFFI_RESOLVE_DECRYPTED_VALUE
+uint16_t uniffi_clear_signing_checksum_method_dataproviderffi_resolve_decrypted_value(void
     
 );
 #endif
