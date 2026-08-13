@@ -69,6 +69,29 @@ pub trait DataProvider: Send + Sync {
         let _ = (chain_id, block_number);
         Box::pin(async { None })
     }
+
+    /// Decrypt a field value carrying an ERC-7730 `encryption` annotation.
+    ///
+    /// Optional and scheme-specific — decryption generally needs a live
+    /// connection, a user signature, and an access-control check, so it lives in
+    /// the wallet, not the library. `encrypted_value` is 0x-hex of the raw field
+    /// bytes; `contract_address` is the container's `@.to` (absent for EIP-712
+    /// domains without a `verifyingContract`).
+    ///
+    /// Return the plaintext as 0x-hex of its big-endian bytes; the library
+    /// re-interprets it via the descriptor's declared `plaintextType`. Return
+    /// `None` when the value cannot be decrypted (unsupported scheme, declined
+    /// signature, no access) — the field then renders its `fallbackLabel`.
+    fn resolve_decrypted_value(
+        &self,
+        chain_id: u64,
+        encrypted_value: &str,
+        scheme: &str,
+        contract_address: Option<&str>,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let _ = (chain_id, encrypted_value, scheme, contract_address);
+        Box::pin(async { None })
+    }
 }
 
 /// No-op data provider — all methods return `None`.

@@ -9,6 +9,7 @@ uniffi::setup_scaffolding!();
 pub mod decoder;
 pub mod eip712;
 mod eip712_domain;
+mod encryption;
 pub mod engine;
 pub mod error;
 pub mod merge;
@@ -251,10 +252,10 @@ pub(crate) fn build_raw_fallback(calldata: &[u8]) -> DisplayModel {
 
     // Split into 32-byte words
     for (i, chunk) in data.chunks(32).enumerate() {
-        entries.push(DisplayEntry::Item(DisplayItem {
-            label: format!("Param {}", i),
-            value: format!("0x{}", hex::encode(chunk)),
-        }));
+        entries.push(DisplayEntry::Item(DisplayItem::new(
+            format!("Param {}", i),
+            format!("0x{}", hex::encode(chunk)),
+        )));
     }
 
     DisplayModel {

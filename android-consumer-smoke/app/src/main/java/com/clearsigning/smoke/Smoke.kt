@@ -15,6 +15,13 @@ private class FakeDataProvider : DataProviderFfi {
 
     override fun resolveBlockTimestamp(chainId: ULong, blockNumber: ULong): ULong? = null
 
+    override fun resolveDecryptedValue(
+        chainId: ULong,
+        encryptedValue: String,
+        scheme: String,
+        contractAddress: String?
+    ): String? = null
+
     override fun getImplementationAddress(chainId: ULong, address: String): String? = null
 }
 

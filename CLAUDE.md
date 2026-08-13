@@ -93,11 +93,12 @@ UniFFI FFI exports in `src/uniffi_compat/mod.rs`:
 - `clear_signing_merge_descriptors(including_json, included_json)` — merge two descriptor JSONs for `includes` mechanism
 
 UniFFI FFI records:
+- `DisplayItem { label, value, raw_encrypted_value }` — `raw_encrypted_value` is the 0x-hex value of a field carrying an `encryption` annotation, reported whether or not decryption succeeded
 - `TransactionInput { chain_id, to, calldata_hex, value_hex, from_address }` — FFI-safe transaction input
 - `TokenMetaFfi { symbol, decimals, name }` — FFI-safe token metadata (used by `DataProviderFfi` return type)
 
 UniFFI FFI traits:
-- `DataProviderFfi` — wallet-implemented trait for token metadata, ENS/local name resolution, NFT collection names, and proxy detection (`get_implementation_address`); methods are synchronous across FFI boundary
+- `DataProviderFfi` — wallet-implemented trait for token metadata, ENS/local name resolution, NFT collection names, field decryption (`resolve_decrypted_value`), and proxy detection (`get_implementation_address`); methods are synchronous across FFI boundary
 
 Local Swift package product:
 - `ClearSigning` (binary target + Swift wrapper target)
@@ -160,7 +161,7 @@ The library supports v2 registry descriptor features:
 - **`excluded` paths**: Deprecated v1 field now functional in rendering
 - **Intent as object**: `intent` can be string or `{"label": "..."}` object
 - **Interpolation escape sequences**: `{{` and `}}` produce literal braces
-- **Encryption params**: `scheme` and `plaintextType` fields (parsing only)
+- **Encryption (`encryption`)**: wallet-delegated decryption via `DataProvider::resolve_decrypted_value` (calldata and EIP-712 alike, sharing `encryption.rs`; behaviour mirrors the TypeScript library). The plaintext is re-read as the declared `plaintextType` — integers normalized to a 32-byte two's-complement word so `intN` keeps its sign, negatives required at full declared width, only `0x00` padding stripped — then rendered with the field's normal format. Decrypted once per value per render (memoized, so entry / `interpolatedIntent` / conditional visibility agree and the wallet prompts once); conditional `visible` rules see the plaintext, never the handle. A wallet that cannot decrypt renders `fallbackLabel` (or `[Encrypted]`) with a `decryption_failed` diagnostic, and `DisplayItem.raw_encrypted_value` reports the handle either way (spec RECOMMENDS showing it). A malformed annotation (no `scheme`/`plaintextType`, non-canonical type) is a descriptor bug: `Error::Descriptor` → `FormatFailure::InvalidDescriptor`, validated even for hidden fields
 - **EIP-712 domain completeness**: `version`, `chainId`, `salt` fields on descriptor domain
 - **`includes` mechanism**: Descriptor inheritance via `"includes": "./base.json"` — JSON-level merge, field arrays merge by `path`, nested includes with depth limit 3, `GitHubRegistrySource` resolves automatically
 - **Proxy detection**: FFI layer auto-detects proxy contracts (EIP-1967, Safe slot 0) via `DataProviderFfi.get_implementation_address()` — retries descriptor resolution with implementation address when direct lookup fails; wallet implements the RPC storage reads

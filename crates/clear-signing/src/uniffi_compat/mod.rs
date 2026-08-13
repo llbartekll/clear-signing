@@ -95,6 +95,24 @@ pub trait DataProviderFfi: Send + Sync {
         chain_id: u64,
     ) -> Option<String>;
     fn resolve_block_timestamp(&self, chain_id: u64, block_number: u64) -> Option<u64>;
+    /// Decrypt a field value carrying an ERC-7730 `encryption` annotation.
+    ///
+    /// `encrypted_value` is 0x-hex of the raw field bytes (the handle);
+    /// `contract_address` is the container's `@.to` — for typed data the domain's
+    /// `verifyingContract`, absent when it declares none. Return the plaintext as
+    /// 0x-hex of its big-endian bytes; the library re-interprets it via the
+    /// descriptor's declared `plaintextType`.
+    ///
+    /// Return `None` when the value cannot be decrypted (unsupported scheme,
+    /// declined signature, no access) — the field then renders its
+    /// `fallbackLabel`. Wallets with no decryption support return `None` always.
+    fn resolve_decrypted_value(
+        &self,
+        chain_id: u64,
+        encrypted_value: String,
+        scheme: String,
+        contract_address: Option<String>,
+    ) -> Option<String>;
     /// Detect proxy contract implementation address.
     ///
     /// Called when descriptor resolution by `tx.to` fails. Wallets should read
@@ -185,6 +203,26 @@ impl DataProvider for DataProviderFfiProxy {
         Box::pin(async move {
             let result = tokio::task::spawn_blocking(move || {
                 inner.resolve_block_timestamp(chain_id, block_number)
+            })
+            .await;
+            result.ok().flatten()
+        })
+    }
+
+    fn resolve_decrypted_value(
+        &self,
+        chain_id: u64,
+        encrypted_value: &str,
+        scheme: &str,
+        contract_address: Option<&str>,
+    ) -> Pin<Box<dyn Future<Output = Option<String>> + Send + '_>> {
+        let encrypted_value = encrypted_value.to_string();
+        let scheme = scheme.to_string();
+        let contract_address = contract_address.map(str::to_string);
+        let inner = Arc::clone(&self.0);
+        Box::pin(async move {
+            let result = tokio::task::spawn_blocking(move || {
+                inner.resolve_decrypted_value(chain_id, encrypted_value, scheme, contract_address)
             })
             .await;
             result.ok().flatten()
@@ -858,6 +896,16 @@ mod tests {
                 None
             }
         }
+        fn resolve_decrypted_value(
+            &self,
+            _chain_id: u64,
+            encrypted_value: String,
+            scheme: String,
+            _contract_address: Option<String>,
+        ) -> Option<String> {
+            (scheme == "fhevm" && encrypted_value == format!("0x{}", "ab".repeat(32)))
+                .then(|| format!("0x{:016x}", 42u64))
+        }
         fn get_implementation_address(&self, _chain_id: u64, _address: String) -> Option<String> {
             None
         }
@@ -930,6 +978,83 @@ mod tests {
         }
     }
 
+    /// Regression: a Swift/Kotlin wallet's decryptor must reach the engine.
+    ///
+    /// `DataProviderFfi::resolve_decrypted_value` is bridged by
+    /// `DataProviderFfiProxy`; without that bridge every foreign integration
+    /// silently renders the fallback label even though the wallet can decrypt.
+    #[tokio::test]
+    async fn format_calldata_decrypts_through_data_provider_ffi() {
+        let handle = "ab".repeat(32);
+        let descriptor_json = r#"{
+            "context": {
+                "contract": {
+                    "deployments": [
+                        { "chainId": 1, "address": "0xdac17f958d2ee523a2206206994597c13d831ec7" }
+                    ]
+                }
+            },
+            "metadata": { "owner": "test", "contractName": "Confidential" },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "confidentialTransfer(bytes32 amount)": {
+                        "intent": "Confidential transfer",
+                        "fields": [
+                            {
+                                "path": "amount",
+                                "label": "Amount",
+                                "format": "number",
+                                "encryption": {
+                                    "scheme": "fhevm",
+                                    "plaintextType": "uint64",
+                                    "fallbackLabel": "[Encrypted Amount]"
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+        }"#
+        .to_string();
+
+        let selector = {
+            let sig = "confidentialTransfer(bytes32)";
+            let parsed = crate::decoder::parse_signature(sig).expect("valid signature");
+            hex::encode(parsed.selector)
+        };
+        let transaction = TransactionInput {
+            chain_id: 1,
+            to: "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
+            calldata_hex: format!("0x{selector}{handle}"),
+            value_hex: None,
+            from_address: None,
+        };
+
+        // With the wallet's decryptor: the plaintext is rendered.
+        let provider: Arc<dyn DataProviderFfi> = Arc::new(MockDataProviderFfi);
+        let result = clear_signing_format_calldata(
+            vec![descriptor_json.clone()],
+            transaction.clone(),
+            Some(provider),
+        )
+        .await
+        .expect("calldata formatting with decryptor should succeed");
+        match &result.entries[0] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "42"),
+            _ => panic!("expected item entry"),
+        }
+
+        // Without one: the fallback label, never the handle.
+        let no_provider = clear_signing_format_calldata(vec![descriptor_json], transaction, None)
+            .await
+            .expect("calldata formatting without decryptor should still succeed");
+        match &no_provider.entries[0] {
+            DisplayEntry::Item(item) => assert_eq!(item.value, "[Encrypted Amount]"),
+            _ => panic!("expected item entry"),
+        }
+    }
+
     /// DataProvider that reports a proxy → implementation mapping.
     ///
     /// Models the real Aave V3 Pool on Optimism: the descriptor in the registry is keyed
@@ -969,6 +1094,15 @@ mod tests {
             None
         }
         fn resolve_block_timestamp(&self, _chain_id: u64, _block_number: u64) -> Option<u64> {
+            None
+        }
+        fn resolve_decrypted_value(
+            &self,
+            _chain_id: u64,
+            _encrypted_value: String,
+            _scheme: String,
+            _contract_address: Option<String>,
+        ) -> Option<String> {
             None
         }
         fn get_implementation_address(&self, _chain_id: u64, address: String) -> Option<String> {
@@ -1132,6 +1266,15 @@ mod tests {
                 None
             }
             fn resolve_block_timestamp(&self, _: u64, _: u64) -> Option<u64> {
+                None
+            }
+            fn resolve_decrypted_value(
+                &self,
+                _: u64,
+                _: String,
+                _: String,
+                _: Option<String>,
+            ) -> Option<String> {
                 None
             }
             fn get_implementation_address(&self, _: u64, _: String) -> Option<String> {
