@@ -420,10 +420,10 @@ async fn safe_exec_transaction_depth_limit() {
                         return true;
                     }
                 }
-                DisplayEntry::Group { items, .. } => {
-                    if items.iter().any(|item| item.value == target) {
-                        return true;
-                    }
+                DisplayEntry::Group { items, .. }
+                    if items.iter().any(|item| item.value == target) =>
+                {
+                    return true;
                 }
                 _ => {}
             }
