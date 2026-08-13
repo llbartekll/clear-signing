@@ -58,7 +58,11 @@ pub struct Rendered {
     pub intent: String,
     #[serde(rename = "interpolatedIntent", skip_serializing_if = "Option::is_none")]
     pub interpolated_intent: Option<String>,
-    pub owner: String,
+    /// Optional per the v2 test schema: a descriptor may declare no
+    /// `metadata.owner`. Omitted rather than emitted as "" so `rendered`
+    /// mirrors the shape of `expected` in the fixture.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
     pub fields: Vec<FieldEntry>,
 }
 
@@ -78,7 +82,9 @@ pub enum FieldValue {
 #[derive(Debug, Serialize)]
 pub struct NestedRendered {
     pub intent: String,
-    pub owner: String,
+    /// Optional for the same reason as `Rendered::owner`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
     pub fields: Vec<FieldEntry>,
 }
 
@@ -121,7 +127,7 @@ fn render_model(model: &DisplayModel) -> Rendered {
     Rendered {
         intent: model.intent.clone(),
         interpolated_intent: model.interpolated_intent.clone(),
-        owner: model.owner.clone().unwrap_or_default(),
+        owner: model.owner.clone(),
         fields: render_entries(&model.entries),
     }
 }
@@ -155,7 +161,7 @@ fn render_entries(entries: &[DisplayEntry]) -> Vec<FieldEntry> {
                     label: label.clone(),
                     value: FieldValue::Nested(NestedRendered {
                         intent: intent.clone(),
-                        owner: owner.clone().unwrap_or_default(),
+                        owner: owner.clone(),
                         fields: render_entries(entries),
                     }),
                 });
@@ -278,6 +284,17 @@ mod tests {
     }
 
     #[test]
+    fn owner_omitted_when_absent() {
+        let r = pass_result(model_with(vec![]));
+        let file = build_results_file(std::slice::from_ref(&r));
+        let body = serde_json::to_string(&file).unwrap();
+        assert!(
+            !body.contains("owner"),
+            "owner should be omitted when the descriptor declares none, got: {body}"
+        );
+    }
+
+    #[test]
     fn nested_calldata_emits_recursive_object() {
         let m = model_with(vec![DisplayEntry::Nested {
             label: "Inner call".into(),
@@ -298,7 +315,7 @@ mod tests {
             other => panic!("expected nested, got {other:?}"),
         };
         assert_eq!(nested.intent, "Transfer");
-        assert_eq!(nested.owner, "Inner DAO");
+        assert_eq!(nested.owner.as_deref(), Some("Inner DAO"));
         assert_eq!(nested.fields.len(), 1);
         assert_eq!(nested.fields[0].label, "To");
         assert!(matches!(&nested.fields[0].value, FieldValue::Value(v) if v == "0xabc"));
