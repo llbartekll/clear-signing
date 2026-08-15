@@ -549,8 +549,8 @@ fn render_typed_group_field_kind<'a>(
                     if let Some(serde_json::Value::Array(items)) =
                         resolve_typed_path_in_context(message, base, container)?
                     {
-                        let mut bundles = Vec::new();
-                        for item in &items {
+                        let mut bundles = vec![Vec::new(); items.len()];
+                        for (index, item) in items.iter().enumerate() {
                             let val = if rest.is_empty() {
                                 Some(item.clone())
                             } else {
@@ -610,7 +610,7 @@ fn render_typed_group_field_kind<'a>(
                                     ),
                                 }]
                             };
-                            bundles.push(rendered);
+                            bundles[index].extend(rendered);
                         }
                         return Ok(TypedGroupRenderKind::Bundles(bundles));
                     }
@@ -751,7 +751,7 @@ fn render_typed_group_kind<'a>(
                     let mut sets: Vec<_> = child_kinds
                         .into_iter()
                         .map(|k| match k {
-                            TypedGroupRenderKind::Bundles(b) => b,
+                            TypedGroupRenderKind::Bundles(bundles) => bundles,
                             TypedGroupRenderKind::Scalar(_) => Vec::new(),
                         })
                         .collect();

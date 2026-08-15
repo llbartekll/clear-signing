@@ -467,7 +467,7 @@ fn render_group_field_kind<'a>(
                 let path_str = path.as_deref().unwrap_or("");
                 if let Some((base, rest)) = split_array_iter_path(path_str) {
                     if let Some(ArgumentValue::Array(items)) = resolve_path(ctx.decoded, base) {
-                        let mut bundles = Vec::new();
+                        let mut bundles = vec![Vec::new(); items.len()];
                         for (i, item) in items.iter().enumerate() {
                             let val = if rest.is_empty() {
                                 Some(item.clone())
@@ -522,7 +522,7 @@ fn render_group_field_kind<'a>(
                                     ),
                                 }]
                             };
-                            bundles.push(rendered);
+                            bundles[i].extend(rendered);
                         }
                         return Ok(GroupRenderKind::Bundles(bundles));
                     }
@@ -605,7 +605,7 @@ fn render_group_kind<'a>(
                     let mut sets: Vec<_> = child_kinds
                         .into_iter()
                         .map(|k| match k {
-                            GroupRenderKind::Bundles(b) => b,
+                            GroupRenderKind::Bundles(bundles) => bundles,
                             GroupRenderKind::Scalar(_) => Vec::new(),
                         })
                         .collect();
@@ -1201,6 +1201,78 @@ fn visibility_context(label: &str, path: &str) -> String {
     }
 }
 
+fn visibility_string_literals_match(actual: &str, expected: &str) -> bool {
+    actual == expected
+        || (actual.starts_with("0x")
+            && expected.starts_with("0x")
+            && actual.eq_ignore_ascii_case(expected))
+}
+
+fn parse_visibility_unsigned_literal(literal: &str) -> Option<BigUint> {
+    let trimmed = literal.trim();
+    if trimmed.is_empty() || trimmed.starts_with('-') {
+        return None;
+    }
+
+    if let Some(hex_literal) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
+        if hex_literal.is_empty() {
+            return None;
+        }
+        return BigUint::parse_bytes(hex_literal.as_bytes(), 16);
+    }
+
+    BigUint::parse_bytes(trimmed.as_bytes(), 10)
+}
+
+fn visibility_unsigned_integer_value(value: &ArgumentValue) -> Option<BigUint> {
+    match value {
+        ArgumentValue::Uint(bytes) => Some(BigUint::from_bytes_be(bytes)),
+        _ => None,
+    }
+}
+
+fn visibility_value_matches_argument(value: &ArgumentValue, expected: &serde_json::Value) -> bool {
+    let actual_json = value.to_json_value();
+    if &actual_json == expected {
+        return true;
+    }
+
+    if let (serde_json::Value::String(actual), serde_json::Value::String(expected)) =
+        (&actual_json, expected)
+    {
+        if visibility_string_literals_match(actual, expected) {
+            return true;
+        }
+    }
+
+    let Some(actual_number) = visibility_unsigned_integer_value(value) else {
+        return false;
+    };
+
+    match expected {
+        serde_json::Value::Number(expected_number) => expected_number
+            .as_u64()
+            .is_some_and(|expected| actual_number == BigUint::from(expected)),
+        serde_json::Value::String(expected_string) => {
+            parse_visibility_unsigned_literal(expected_string)
+                .is_some_and(|expected| actual_number == expected)
+        }
+        _ => false,
+    }
+}
+
+fn visibility_list_matches_argument(
+    expected_values: &[serde_json::Value],
+    value: &ArgumentValue,
+) -> bool {
+    expected_values
+        .iter()
+        .any(|expected| visibility_value_matches_argument(value, expected))
+}
+
 /// Check if a field should be visible based on the visibility rule and decoded value.
 fn check_visibility(
     rule: &VisibleRule,
@@ -1226,12 +1298,15 @@ fn check_visibility(
                 return Ok(true);
             };
 
-            let json_val = val.to_json_value();
-            if cond.hides_for_if_not_in(&json_val) {
+            if cond
+                .if_not_in
+                .as_ref()
+                .is_some_and(|excluded| visibility_list_matches_argument(excluded, val))
+            {
                 return Ok(false);
             }
-            if cond.must_match.is_some() {
-                if cond.matches_must_match(&json_val) {
+            if let Some(required) = cond.must_match.as_ref() {
+                if visibility_list_matches_argument(required, val) {
                     return Ok(false);
                 }
                 return Err(Error::Render(format!(
