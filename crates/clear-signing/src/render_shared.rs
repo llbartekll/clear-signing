@@ -23,6 +23,8 @@ pub(crate) fn chain_name(chain_id: u64) -> String {
         42161 => "Arbitrum One".to_string(),
         42170 => "Arbitrum Nova".to_string(),
         43114 => "Avalanche".to_string(),
+        14 => "Flare".to_string(),
+        19 => "Songbird".to_string(),
         59144 => "Linea".to_string(),
         534352 => "Scroll".to_string(),
         7777777 => "Zora".to_string(),
@@ -81,6 +83,10 @@ pub(crate) fn native_token_meta(chain_id: u64) -> TokenMeta {
         56 | 97 => ("BNB", "BNB"),
         43114 | 43113 => ("AVAX", "Avalanche"),
         250 => ("FTM", "Fantom"),
+        14 => ("FLR", "Flare"),
+        19 => ("SGB", "Songbird"),
+        114 => ("C2FLR", "Coston2 Flare"),
+        16 => ("CFLR", "Coston Flare"),
         42161 | 421613 => ("ETH", "Ether"),
         10 | 420 => ("ETH", "Ether"),
         8453 | 84531 => ("ETH", "Ether"),
@@ -432,6 +438,8 @@ mod tests {
         assert_eq!(native_token_meta(1).symbol, "ETH");
         assert_eq!(native_token_meta(137).symbol, "MATIC");
         assert_eq!(native_token_meta(56).symbol, "BNB");
+        assert_eq!(native_token_meta(14).symbol, "FLR");
+        assert_eq!(native_token_meta(19).symbol, "SGB");
         assert_eq!(native_token_meta(99999).symbol, "ETH");
     }
 
@@ -439,6 +447,8 @@ mod tests {
     fn test_chain_name() {
         assert_eq!(chain_name(1), "Ethereum");
         assert_eq!(chain_name(137), "Polygon");
+        assert_eq!(chain_name(14), "Flare");
+        assert_eq!(chain_name(19), "Songbird");
         assert_eq!(chain_name(99999), "Chain 99999");
     }
 
