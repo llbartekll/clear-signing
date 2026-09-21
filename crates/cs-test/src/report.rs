@@ -41,8 +41,12 @@ fn failure_json(f: &Failure) -> serde_json::Value {
         } => {
             serde_json::json!({ "kind": "intent", "path": path, "expected": expected, "actual": actual })
         }
-        Failure::InterpolatedIntentMismatch { expected, actual } => {
-            serde_json::json!({ "kind": "interpolatedIntent", "expected": expected, "actual": actual })
+        Failure::InterpolatedIntentMismatch {
+            path,
+            expected,
+            actual,
+        } => {
+            serde_json::json!({ "kind": "interpolatedIntent", "path": path, "expected": expected, "actual": actual })
         }
         Failure::OwnerMismatch {
             path,
@@ -101,8 +105,15 @@ fn render_failure(f: &Failure) -> String {
             expected,
             actual,
         } => format!("intent{}: expected {expected:?}, got {actual:?}", at(path)),
-        Failure::InterpolatedIntentMismatch { expected, actual } => {
-            format!("interpolated intent: expected {expected:?}, got {actual:?}")
+        Failure::InterpolatedIntentMismatch {
+            path,
+            expected,
+            actual,
+        } => {
+            format!(
+                "interpolated intent{}: expected {expected:?}, got {actual:?}",
+                at(path)
+            )
         }
         Failure::OwnerMismatch {
             path,

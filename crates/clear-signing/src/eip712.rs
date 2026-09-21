@@ -395,6 +395,25 @@ fn render_typed_fields<'a>(
                                 {
                                     continue;
                                 }
+                                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                                    entries.push(
+                                        render_typed_calldata_field(
+                                            descriptor,
+                                            message,
+                                            &val,
+                                            item_params.as_ref(),
+                                            label,
+                                            container,
+                                            data_provider,
+                                            descriptors,
+                                            depth,
+                                            warnings,
+                                            nested_fallback,
+                                        )
+                                        .await?,
+                                    );
+                                    continue;
+                                }
                                 let formatted = format_typed_value(
                                     descriptor,
                                     &val,
@@ -1043,6 +1062,7 @@ async fn render_typed_calldata_field(
     Ok(DisplayEntry::Nested {
         label: label.to_string(),
         intent: result.intent,
+        interpolated_intent: result.interpolated_intent,
         owner: result.owner,
         entries: result.entries,
     })

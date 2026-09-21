@@ -31,11 +31,11 @@ export function EntryRow({entry, depth = 0}: Props) {
     );
   }
 
-  const {label, intent, owner, entries} = entry.inner;
+  const {label, intent, interpolatedIntent, owner, entries} = entry.inner;
   return (
     <View style={[styles.nestedBlock, {marginLeft: indent}]}>
       <Text style={styles.nestedLabel}>{label}</Text>
-      <Text style={styles.nestedIntent}>{intent}</Text>
+      <Text style={styles.nestedIntent}>{interpolatedIntent ?? intent}</Text>
       {!!owner && <Text style={styles.nestedOwner}>by {owner}</Text>}
       {entries.map((child, i) => (
         <EntryRow key={`${label}:${i}`} entry={child} depth={depth + 1} />

@@ -54,6 +54,8 @@ pub enum DisplayEntry {
     Nested {
         label: String,
         intent: String,
+        /// Interpolated intent evaluated in the inner call's argument context.
+        interpolated_intent: Option<String>,
         /// Owner string for the inner call (the inner descriptor's `metadata.owner`),
         /// when a matching descriptor was found. `None` for raw/fallback frames where
         /// no inner descriptor matched.
@@ -150,21 +152,8 @@ pub(crate) async fn format_calldata(
     let entries =
         render_fields(&ctx, &expanded_fields, &mut warnings, &mut nested_fallback).await?;
 
-    let interpolated = match format.interpolated_intent.as_ref() {
-        Some(template) => {
-            match interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await {
-                Ok(rendered) => Some(rendered),
-                Err(err) => {
-                    warnings.push(render_warning(
-                        RenderDiagnosticKind::InterpolatedIntentSkipped,
-                        format!("interpolated intent skipped: {err}"),
-                    ));
-                    None
-                }
-            }
-        }
-        None => None,
-    };
+    let interpolated =
+        render_interpolated_intent(format, &ctx, &expanded_fields, &mut warnings).await;
 
     let model = DisplayModel {
         intent: format
@@ -184,6 +173,30 @@ pub(crate) async fn format_calldata(
     }
 
     Ok(model)
+}
+
+/// Apply the same interpolation and diagnostic behavior at every calldata depth.
+async fn render_interpolated_intent(
+    format: &DisplayFormat,
+    ctx: &RenderContext<'_>,
+    expanded_fields: &[DisplayField],
+    warnings: &mut RenderDiagnostics,
+) -> Option<String> {
+    match format.interpolated_intent.as_ref() {
+        Some(template) => {
+            match interpolate_intent(template, ctx, expanded_fields, &format.excluded).await {
+                Ok(rendered) => Some(rendered),
+                Err(err) => {
+                    warnings.push(render_warning(
+                        RenderDiagnosticKind::InterpolatedIntentSkipped,
+                        format!("interpolated intent skipped: {err}"),
+                    ));
+                    None
+                }
+            }
+        }
+        None => None,
+    }
 }
 
 /// Find the display format matching the decoded function.
@@ -320,6 +333,20 @@ fn render_fields<'a>(
                                 )
                                 .await?
                                 {
+                                    continue;
+                                }
+                                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                                    entries.push(
+                                        render_calldata_field(
+                                            ctx,
+                                            &val,
+                                            item_params.as_ref(),
+                                            label,
+                                            warnings,
+                                            nested_fallback,
+                                        )
+                                        .await?,
+                                    );
                                     continue;
                                 }
                                 let formatted = format_value(
@@ -1876,6 +1903,13 @@ async fn render_calldata_field(
     )
     .await?;
 
+    let interpolated_intent = render_interpolated_intent(
+        inner_format,
+        &inner_ctx,
+        &inner_expanded,
+        &mut inner_warnings,
+    )
+    .await;
     warnings.extend(inner_warnings);
 
     let intent = inner_format
@@ -1887,6 +1921,7 @@ async fn render_calldata_field(
     Ok(DisplayEntry::Nested {
         label: label.to_string(),
         intent,
+        interpolated_intent,
         owner: inner_descriptor.metadata.owner.clone(),
         entries: inner_entries,
     })

@@ -82,6 +82,8 @@ pub enum FieldValue {
 #[derive(Debug, Serialize)]
 pub struct NestedRendered {
     pub intent: String,
+    #[serde(rename = "interpolatedIntent", skip_serializing_if = "Option::is_none")]
+    pub interpolated_intent: Option<String>,
     /// Optional for the same reason as `Rendered::owner`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
@@ -154,6 +156,7 @@ fn render_entries(entries: &[DisplayEntry]) -> Vec<FieldEntry> {
             DisplayEntry::Nested {
                 label,
                 intent,
+                interpolated_intent,
                 owner,
                 entries,
             } => {
@@ -161,6 +164,7 @@ fn render_entries(entries: &[DisplayEntry]) -> Vec<FieldEntry> {
                     label: label.clone(),
                     value: FieldValue::Nested(NestedRendered {
                         intent: intent.clone(),
+                        interpolated_intent: interpolated_intent.clone(),
                         owner: owner.clone(),
                         fields: render_entries(entries),
                     }),
@@ -299,6 +303,7 @@ mod tests {
         let m = model_with(vec![DisplayEntry::Nested {
             label: "Inner call".into(),
             intent: "Transfer".into(),
+            interpolated_intent: None,
             owner: Some("Inner DAO".into()),
             entries: vec![DisplayEntry::Item(DisplayItem::new(
                 "To".into(),
@@ -319,5 +324,33 @@ mod tests {
         assert_eq!(nested.fields.len(), 1);
         assert_eq!(nested.fields[0].label, "To");
         assert!(matches!(&nested.fields[0].value, FieldValue::Value(v) if v == "0xabc"));
+    }
+
+    #[test]
+    fn nested_interpolated_intent_emitted_recursively_and_omitted_when_absent() {
+        let model = model_with(vec![DisplayEntry::Nested {
+            label: "Batch".into(),
+            intent: "Batch".into(),
+            interpolated_intent: None,
+            owner: None,
+            entries: vec![DisplayEntry::Nested {
+                label: "Call".into(),
+                intent: "Transfer".into(),
+                interpolated_intent: Some("Transfer 7 USDC".into()),
+                owner: None,
+                entries: vec![],
+            }],
+        }]);
+        let file = build_results_file(&[pass_result(model)]);
+        let json = serde_json::to_value(file).unwrap();
+        let batch = &json["cases"][0]["rendered"]["fields"][0]["value"];
+        assert!(batch.get("interpolatedIntent").is_none());
+        assert_eq!(
+            batch["fields"][0]["value"]["interpolatedIntent"],
+            "Transfer 7 USDC"
+        );
+        assert!(batch["fields"][0]["value"]
+            .get("interpolated_intent")
+            .is_none());
     }
 }

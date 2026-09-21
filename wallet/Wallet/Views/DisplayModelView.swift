@@ -88,11 +88,11 @@ struct DisplayModelView: View {
                         .padding(.leading, 12)
                 }
             }
-        case .nested(let label, let intent, let owner, let entries):
+        case .nested(let label, let intent, let interpolatedIntent, let owner, let entries):
             VStack(alignment: .leading, spacing: 6) {
                 Text(label)
                     .font(.subheadline.bold())
-                Text(intent)
+                Text(interpolatedIntent ?? intent)
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 if let owner, !owner.isEmpty {

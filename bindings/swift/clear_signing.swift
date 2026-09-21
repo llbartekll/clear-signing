@@ -1496,6 +1496,9 @@ public enum DisplayEntry: Equatable, Hashable {
     )
     case nested(label: String, intent: String, 
         /**
+         * Interpolated intent evaluated in the inner call's argument context.
+         */interpolatedIntent: String?,
+        /**
          * Owner string for the inner call (the inner descriptor's `metadata.owner`),
          * when a matching descriptor was found. `None` for raw/fallback frames where
          * no inner descriptor matched.
@@ -1528,7 +1531,7 @@ public struct FfiConverterTypeDisplayEntry: FfiConverterRustBuffer {
         case 2: return .group(label: try FfiConverterString.read(from: &buf), iteration: try FfiConverterTypeGroupIteration.read(from: &buf), items: try FfiConverterSequenceTypeDisplayItem.read(from: &buf)
         )
         
-        case 3: return .nested(label: try FfiConverterString.read(from: &buf), intent: try FfiConverterString.read(from: &buf), owner: try FfiConverterOptionString.read(from: &buf), entries: try FfiConverterSequenceTypeDisplayEntry.read(from: &buf)
+        case 3: return .nested(label: try FfiConverterString.read(from: &buf), intent: try FfiConverterString.read(from: &buf), interpolatedIntent: try FfiConverterOptionString.read(from: &buf), owner: try FfiConverterOptionString.read(from: &buf), entries: try FfiConverterSequenceTypeDisplayEntry.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -1551,10 +1554,11 @@ public struct FfiConverterTypeDisplayEntry: FfiConverterRustBuffer {
             FfiConverterSequenceTypeDisplayItem.write(items, into: &buf)
             
         
-        case let .nested(label,intent,owner,entries):
+        case let .nested(label,intent,interpolatedIntent,owner,entries):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(label, into: &buf)
             FfiConverterString.write(intent, into: &buf)
+            FfiConverterOptionString.write(interpolatedIntent, into: &buf)
             FfiConverterOptionString.write(owner, into: &buf)
             FfiConverterSequenceTypeDisplayEntry.write(entries, into: &buf)
             

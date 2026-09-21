@@ -41,6 +41,7 @@ pub enum Failure {
         actual: String,
     },
     InterpolatedIntentMismatch {
+        path: Vec<String>,
         expected: String,
         actual: Option<String>,
     },
@@ -92,6 +93,7 @@ pub fn compare(description: &str, expected: &Expected, outcome: &FormatOutcome) 
         let actual = model.interpolated_intent.as_deref();
         if actual != Some(exp_inter.as_str()) {
             failures.push(Failure::InterpolatedIntentMismatch {
+                path: Vec::new(),
                 expected: exp_inter.clone(),
                 actual: model.interpolated_intent.clone(),
             });
@@ -142,8 +144,13 @@ fn failure_short_message(f: &Failure) -> String {
             expected,
             actual,
         } => format!("intent{}: expected {expected:?}, got {actual:?}", at(path)),
-        Failure::InterpolatedIntentMismatch { expected, actual } => format!(
-            "interpolatedIntent: expected {expected:?}, got {}",
+        Failure::InterpolatedIntentMismatch {
+            path,
+            expected,
+            actual,
+        } => format!(
+            "interpolatedIntent{}: expected {expected:?}, got {}",
+            at(path),
             opt_str_debug(actual.as_deref())
         ),
         Failure::OwnerMismatch {
@@ -264,6 +271,7 @@ fn compare_level(
                 FieldValue::Nested(ne),
                 ActualField::Nested {
                     intent: actual_intent,
+                    interpolated_intent: actual_interpolated_intent,
                     owner: actual_owner,
                     entries: actual_inner,
                     ..
@@ -278,6 +286,15 @@ fn compare_level(
                         expected: ne.owner.clone(),
                         actual: actual_owner_owned,
                     });
+                }
+                if let Some(expected_interpolated_intent) = &ne.interpolated_intent {
+                    if *actual_interpolated_intent != Some(expected_interpolated_intent.as_str()) {
+                        failures.push(Failure::InterpolatedIntentMismatch {
+                            path: child_path.clone(),
+                            expected: expected_interpolated_intent.clone(),
+                            actual: actual_interpolated_intent.map(str::to_string),
+                        });
+                    }
                 }
                 compare_level(
                     &child_path,
@@ -318,6 +335,7 @@ enum ActualField<'a> {
     Nested {
         label: &'a str,
         intent: &'a str,
+        interpolated_intent: Option<&'a str>,
         owner: Option<&'a str>,
         entries: &'a [DisplayEntry],
     },
@@ -353,12 +371,14 @@ fn flatten_actual(entries: &[DisplayEntry]) -> Vec<ActualField<'_>> {
             DisplayEntry::Nested {
                 label,
                 intent,
+                interpolated_intent,
                 owner,
                 entries,
             } => {
                 out.push(ActualField::Nested {
                     label: label.as_str(),
                     intent: intent.as_str(),
+                    interpolated_intent: interpolated_intent.as_deref(),
                     owner: owner.as_deref(),
                     entries: entries.as_slice(),
                 });
@@ -416,6 +436,7 @@ mod tests {
         DisplayEntry::Nested {
             label: label.to_string(),
             intent: intent.to_string(),
+            interpolated_intent: None,
             owner: owner.map(str::to_string),
             entries,
         }
@@ -438,6 +459,7 @@ mod tests {
             label: label.to_string(),
             value: FieldValue::Nested(NestedExpected {
                 intent: intent.to_string(),
+                interpolated_intent: None,
                 owner: owner.map(str::to_string),
                 fields,
             }),
@@ -732,7 +754,7 @@ mod tests {
         let r = compare("t", &exp, &o);
         let hit = r.failures.iter().any(|f| matches!(
             f,
-            Failure::InterpolatedIntentMismatch { expected, actual } if expected == "Want this" && actual.as_deref() == Some("Got this")
+            Failure::InterpolatedIntentMismatch { expected, actual, .. } if expected == "Want this" && actual.as_deref() == Some("Got this")
         ));
         assert!(hit, "no InterpolatedIntentMismatch in {:?}", r.failures);
     }
@@ -774,5 +796,106 @@ mod tests {
             }
             other => panic!("expected nested field, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn nested_interpolated_intent_compares_recursively_with_positional_path() {
+        let expected: Expected = serde_json::from_value(serde_json::json!({
+            "intent": "Outer",
+            "fields": [{"label": "Call", "value": {
+                "intent": "Batch",
+                "fields": [
+                    {"label": "Call", "value": {"intent": "First", "fields": []}},
+                    {"label": "Call", "value": {
+                        "intent": "Transfer",
+                        "interpolatedIntent": "Transfer 7 USDC",
+                        "fields": []
+                    }}
+                ]
+            }}]
+        }))
+        .unwrap();
+
+        for (actual, should_pass) in [
+            (Some("Transfer 7 USDC"), true),
+            (Some("Transfer 8 USDC"), false),
+            (None, false),
+        ] {
+            let rendered = outcome(model(
+                "Outer",
+                None,
+                None,
+                vec![nested(
+                    "Call",
+                    "Batch",
+                    vec![
+                        nested("Call", "First", vec![]),
+                        DisplayEntry::Nested {
+                            label: "Call".into(),
+                            intent: "Transfer".into(),
+                            interpolated_intent: actual.map(str::to_string),
+                            owner: None,
+                            entries: vec![],
+                        },
+                    ],
+                )],
+            ));
+            let result = compare("nested interpolation", &expected, &rendered);
+            assert_eq!(
+                result.passed, should_pass,
+                "{actual:?}: {:?}",
+                result.failures
+            );
+            if !should_pass {
+                assert_eq!(result.failures.len(), 1);
+                match &result.failures[0] {
+                    Failure::InterpolatedIntentMismatch {
+                        path,
+                        expected,
+                        actual: got,
+                    } => {
+                        assert_eq!(path, &["[0] Call", "[1] Call"]);
+                        assert_eq!(expected, "Transfer 7 USDC");
+                        assert_eq!(got.as_deref(), actual);
+                    }
+                    other => panic!("expected nested interpolation mismatch, got {other:?}"),
+                }
+                assert!(first_failure_message(&result)
+                    .unwrap()
+                    .contains("interpolatedIntent at [0] Call > [1] Call"));
+                let json: serde_json::Value = serde_json::from_str(&crate::report::render_json(
+                    std::slice::from_ref(&result),
+                ))
+                .unwrap();
+                assert_eq!(
+                    json[0]["failures"][0]["path"],
+                    serde_json::json!(["[0] Call", "[1] Call"])
+                );
+                assert!(crate::report::render_markdown(&[result])
+                    .contains("interpolated intent at [0] Call > [1] Call"));
+            }
+        }
+    }
+
+    #[test]
+    fn nested_interpolated_intent_skipped_when_omitted() {
+        let rendered = outcome(model(
+            "Outer",
+            None,
+            None,
+            vec![DisplayEntry::Nested {
+                label: "Call".into(),
+                intent: "Transfer".into(),
+                interpolated_intent: Some("Transfer 7 USDC".into()),
+                owner: None,
+                entries: vec![],
+            }],
+        ));
+        let expected = expected_with(
+            "Outer",
+            vec![nested_field("Call", "Transfer", None, vec![])],
+        );
+        let result = compare("optional nested interpolation", &expected, &rendered);
+        assert!(result.passed, "{:?}", result.failures);
     }
 }

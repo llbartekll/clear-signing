@@ -6583,3 +6583,189 @@ async fn test_eip712_encryption_falls_back_like_calldata() {
         );
     }
 }
+
+// Regression: flat bytes-array fields must retain the complete nested display,
+// including interpolated intents evaluated against each call's own arguments.
+const NESTED_ARRAY_TARGET: &str = "0x1000000000000000000000000000000000000001";
+
+fn nested_array_descriptors() -> Vec<ResolvedDescriptor> {
+    let contract = serde_json::json!({
+        "context": { "contract": { "deployments": [{"chainId": 1, "address": NESTED_ARRAY_TARGET}] } },
+        "metadata": { "owner": "Nested test" },
+        "display": { "formats": {
+            "multicall(bytes[] data)": {
+                "intent": "Batch",
+                "fields": [{"path": "#.data.[]", "label": "Call", "format": "calldata", "params": {"calleePath": "@.to"}}]
+            },
+            "outer(bytes data)": {
+                "intent": "Outer",
+                "fields": [{"path": "#.data", "label": "Call", "format": "calldata", "params": {"calleePath": "@.to"}}]
+            },
+            "setAmount(uint256 amount)": {
+                "intent": "Set amount", "interpolatedIntent": "Set {amount}",
+                "fields": [{"path": "#.amount", "label": "Amount", "format": "number"}]
+            },
+            "invalid(uint256 amount)": {
+                "intent": "Invalid template", "interpolatedIntent": "Set {missing}",
+                "fields": [{"path": "#.amount", "label": "Amount", "format": "number"}]
+            }
+        } }
+    });
+    let typed = serde_json::json!({
+        "context": { "eip712": { "deployments": [{"chainId": 1, "address": NESTED_ARRAY_TARGET}] } },
+        "metadata": { "owner": "Nested test" },
+        "display": { "formats": {
+            "Batch(bytes[] data)": {
+                "intent": "Batch",
+                "fields": [{"path": "#.data.[]", "label": "Call", "format": "calldata", "params": {"callee": NESTED_ARRAY_TARGET}}]
+            }
+        } }
+    });
+    let mut descriptors = wrap_rd(
+        Descriptor::from_json(&contract.to_string()).unwrap(),
+        1,
+        NESTED_ARRAY_TARGET,
+    );
+    descriptors.extend(wrap_rd(
+        Descriptor::from_json(&typed.to_string()).unwrap(),
+        1,
+        NESTED_ARRAY_TARGET,
+    ));
+    descriptors
+}
+
+fn build_bytes_array_calldata(calls: &[Vec<u8>]) -> Vec<u8> {
+    let mut encoded = build_calldata(
+        "multicall(bytes[])",
+        &[uint_word(32), uint_word(calls.len() as u64)],
+    );
+    let mut tail = Vec::new();
+    for call in calls {
+        encoded.extend_from_slice(&uint_word((32 * calls.len() + tail.len()) as u64));
+        tail.extend_from_slice(&uint_word(call.len() as u64));
+        tail.extend_from_slice(call);
+        tail.extend(std::iter::repeat_n(0u8, (32 - call.len() % 32) % 32));
+    }
+    encoded.extend_from_slice(&tail);
+    encoded
+}
+
+async fn render_nested_array(calls: &[Vec<u8>], typed: bool) -> FormatOutcome {
+    let descriptors = nested_array_descriptors();
+    if typed {
+        let data: TypedData = serde_json::from_value(serde_json::json!({
+            "types": {"EIP712Domain": [], "Batch": [{"name": "data", "type": "bytes[]"}]},
+            "primaryType": "Batch",
+            "domain": {"chainId": 1, "verifyingContract": NESTED_ARRAY_TARGET},
+            "message": {"data": calls.iter().map(|call| format!("0x{}", hex::encode(call))).collect::<Vec<_>>()}
+        })).unwrap();
+        format_typed_data(&descriptors, &data, &EmptyDataProvider)
+            .await
+            .unwrap()
+    } else {
+        let calldata = build_bytes_array_calldata(calls);
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: NESTED_ARRAY_TARGET,
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: None,
+        };
+        format_calldata(&descriptors, &tx, &EmptyDataProvider)
+            .await
+            .unwrap()
+    }
+}
+
+fn assert_nested_amount(entry: &DisplayEntry, amount: u64) {
+    let json = serde_json::to_value(entry).unwrap();
+    let nested = &json["Nested"];
+    assert_eq!(nested["intent"], "Set amount", "{json:#}");
+    assert_eq!(nested["interpolated_intent"], format!("Set {amount}"));
+    assert_eq!(nested["owner"], "Nested test");
+    assert_eq!(nested["entries"][0]["Item"]["label"], "Amount");
+    assert_eq!(nested["entries"][0]["Item"]["value"], amount.to_string());
+}
+
+#[tokio::test]
+async fn nested_array_calldata_preserves_order_and_recursive_interpolation() {
+    let first = build_calldata("setAmount(uint256)", &[uint_word(7)]);
+    let second = build_calldata("setAmount(uint256)", &[uint_word(11)]);
+    let recursive = build_bytes_array_calldata(&[second.clone(), first.clone()]);
+    for typed in [false, true] {
+        let result =
+            render_nested_array(&[first.clone(), second.clone(), recursive.clone()], typed).await;
+        assert_eq!(result.entries.len(), 3);
+        assert_nested_amount(&result.entries[0], 7);
+        assert_nested_amount(&result.entries[1], 11);
+        match &result.entries[2] {
+            DisplayEntry::Nested {
+                intent, entries, ..
+            } => {
+                assert_eq!(intent, "Batch");
+                assert_eq!(entries.len(), 2);
+                assert_nested_amount(&entries[0], 11);
+                assert_nested_amount(&entries[1], 7);
+            }
+            entry => panic!("recursive batch lost nested display: {entry:?}"),
+        }
+        assert!(
+            result.diagnostics().is_empty(),
+            "{:?}",
+            result.diagnostics()
+        );
+    }
+}
+
+#[tokio::test]
+async fn nested_scalar_calldata_preserves_interpolated_intent() {
+    let inner = build_calldata("setAmount(uint256)", &[uint_word(19)]);
+    let calldata = build_single_bytes_calldata("outer(bytes)", &inner);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: NESTED_ARRAY_TARGET,
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let result = format_calldata(&nested_array_descriptors(), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_nested_amount(&result.entries[0], 19);
+}
+
+#[tokio::test]
+async fn nested_array_calldata_retains_unknown_calls_and_empty_arrays() {
+    let unknown = vec![0xde, 0xad, 0xbe, 0xef];
+    let known = build_calldata("setAmount(uint256)", &[uint_word(23)]);
+    for typed in [false, true] {
+        let result = render_nested_array(&[unknown.clone(), known.clone()], typed).await;
+        assert_eq!(result.entries.len(), 2);
+        assert!(
+            matches!(&result.entries[0], DisplayEntry::Item(item) if item.value == "0xdeadbeef")
+        );
+        assert_nested_amount(&result.entries[1], 23);
+        assert!(matches!(result, FormatOutcome::Fallback { .. }));
+        let empty = render_nested_array(&[], typed).await;
+        assert!(empty.entries.is_empty());
+        assert!(empty.diagnostics().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn nested_array_calldata_reports_interpolation_failure_without_losing_fields() {
+    let invalid = build_calldata("invalid(uint256)", &[uint_word(29)]);
+    for typed in [false, true] {
+        let result = render_nested_array(std::slice::from_ref(&invalid), typed).await;
+        let json = serde_json::to_value(&result.entries[0]).unwrap();
+        assert_eq!(json["Nested"]["intent"], "Invalid template");
+        assert!(json["Nested"]["interpolated_intent"].is_null());
+        assert_eq!(json["Nested"]["entries"][0]["Item"]["value"], "29");
+        assert!(result
+            .diagnostics()
+            .iter()
+            .any(|warning| warning.code == "interpolated_intent_skipped"));
+    }
+}

@@ -93,6 +93,12 @@ pub enum FieldValue {
 #[serde(deny_unknown_fields)]
 pub struct NestedExpected {
     pub intent: String,
+    #[serde(
+        default,
+        rename = "interpolatedIntent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub interpolated_intent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default)]
@@ -173,5 +179,39 @@ impl TestCase {
             TestCase::Calldata(c) => c.data_provider.as_ref(),
             TestCase::Eip712(c) => c.data_provider.as_ref(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_interpolated_intent_round_trips_recursively() {
+        let value = serde_json::json!({
+            "intent": "Batch",
+            "interpolatedIntent": "Batch two calls",
+            "fields": [{
+                "label": "Call",
+                "value": {
+                    "intent": "Transfer",
+                    "interpolatedIntent": "Transfer 7 USDC",
+                    "fields": []
+                }
+            }]
+        });
+        let nested: NestedExpected = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(nested).unwrap(), value);
+    }
+
+    #[test]
+    fn nested_interpolated_intent_is_optional_and_unknown_fields_still_fail() {
+        let value = serde_json::json!({"intent": "Transfer", "fields": []});
+        let nested: NestedExpected = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(nested).unwrap(), value);
+        assert!(serde_json::from_value::<NestedExpected>(serde_json::json!({
+            "intent": "Transfer", "interpolatedIntnet": "Typo", "fields": []
+        }))
+        .is_err());
     }
 }
