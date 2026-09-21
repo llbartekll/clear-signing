@@ -2328,28 +2328,44 @@ fn format_enum(
     let raw = unsigned_decimal_string_from_argument_value_including_int(val)
         .unwrap_or_else(|| format_raw(val));
 
-    if let Some(params) = params {
-        // Try direct enumPath first
-        if let Some(ref enum_path) = params.enum_path {
-            if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_path) {
-                if let Some(label) = enum_def.get(&raw) {
-                    return Ok(label.clone());
-                }
-            }
+    Ok(lookup_enum_label(&ctx.descriptor.metadata.enums, params, &raw).unwrap_or(raw))
+}
+
+/// Resolve the display label of an enum value from `metadata.enums`.
+///
+/// The enum is named either by `enumPath` (v1) or by a `$ref` of the form
+/// `$.metadata.enums.NAME` (v2). Within the enum, an exact key match wins.
+/// If no key matches exactly, the lookup falls back to an ASCII
+/// case-insensitive comparison, so a `bool` value rendered as `true` matches
+/// a descriptor that spells the key `True`. Returns `None` when neither the
+/// enum nor a matching key exists.
+pub(crate) fn lookup_enum_label(
+    enums: &std::collections::HashMap<String, std::collections::HashMap<String, String>>,
+    params: Option<&FormatParams>,
+    raw: &str,
+) -> Option<String> {
+    let params = params?;
+    let by_ref = params
+        .ref_path
+        .as_deref()
+        .and_then(|path| path.strip_prefix("$.metadata.enums."));
+    let names = params.enum_path.as_deref().into_iter().chain(by_ref);
+
+    for name in names {
+        let Some(enum_def) = enums.get(name) else {
+            continue;
+        };
+        if let Some(label) = enum_def.get(raw) {
+            return Some(label.clone());
         }
-        // Try $ref path (v2): "$.metadata.enums.interestRateMode"
-        if let Some(ref ref_path) = params.ref_path {
-            if let Some(enum_name) = ref_path.strip_prefix("$.metadata.enums.") {
-                if let Some(enum_def) = ctx.descriptor.metadata.enums.get(enum_name) {
-                    if let Some(label) = enum_def.get(&raw) {
-                        return Ok(label.clone());
-                    }
-                }
-            }
+        if let Some((_, label)) = enum_def
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(raw))
+        {
+            return Some(label.clone());
         }
     }
-
-    Ok(raw)
+    None
 }
 
 /// Resolve a map reference to a display value.
@@ -2590,6 +2606,83 @@ mod tests {
     use super::*;
     use crate::decoder::{DecodedArgument, ParamType};
     use crate::path::{parse_collection_access, CollectionAccess};
+
+    fn rights_enum() -> std::collections::HashMap<String, std::collections::HashMap<String, String>>
+    {
+        let mut rights = std::collections::HashMap::new();
+        rights.insert("True".to_string(), "Grant all".to_string());
+        rights.insert("False".to_string(), "Deny all".to_string());
+        let mut enums = std::collections::HashMap::new();
+        enums.insert("rights".to_string(), rights);
+        enums
+    }
+
+    #[test]
+    fn enum_lookup_matches_bool_keys_case_insensitively() {
+        let params = FormatParams {
+            ref_path: Some("$.metadata.enums.rights".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            lookup_enum_label(&rights_enum(), Some(&params), "true").as_deref(),
+            Some("Grant all")
+        );
+        assert_eq!(
+            lookup_enum_label(&rights_enum(), Some(&params), "false").as_deref(),
+            Some("Deny all")
+        );
+    }
+
+    #[test]
+    fn enum_lookup_prefers_exact_key_and_supports_enum_path() {
+        let mut enums = rights_enum();
+        enums
+            .get_mut("rights")
+            .unwrap()
+            .insert("true".to_string(), "Exact".to_string());
+        let params = FormatParams {
+            enum_path: Some("rights".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            lookup_enum_label(&enums, Some(&params), "true").as_deref(),
+            Some("Exact")
+        );
+    }
+
+    #[test]
+    fn enum_lookup_returns_none_for_unknown_enum_or_key() {
+        let params = FormatParams {
+            ref_path: Some("$.metadata.enums.rights".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(lookup_enum_label(&rights_enum(), Some(&params), "2"), None);
+        let missing = FormatParams {
+            ref_path: Some("$.metadata.enums.nope".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            lookup_enum_label(&rights_enum(), Some(&missing), "true"),
+            None
+        );
+        assert_eq!(lookup_enum_label(&rights_enum(), None, "true"), None);
+    }
+
+    #[test]
+    fn bool_argument_renders_as_lowercase_and_still_matches_capitalized_enum_key() {
+        let params = FormatParams {
+            ref_path: Some("$.metadata.enums.rights".to_string()),
+            ..Default::default()
+        };
+        for (value, expected) in [(true, "Grant all"), (false, "Deny all")] {
+            let raw = format_raw(&ArgumentValue::Bool(value));
+            assert_eq!(raw, value.to_string());
+            assert_eq!(
+                lookup_enum_label(&rights_enum(), Some(&params), &raw).as_deref(),
+                Some(expected)
+            );
+        }
+    }
 
     #[test]
     fn test_eip55_checksum() {
