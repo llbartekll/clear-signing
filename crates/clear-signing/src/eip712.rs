@@ -13,9 +13,10 @@ use crate::encryption::{
     fallback_text, validate_annotation, Decryption, DecryptionCache, PlainKind,
 };
 use crate::engine::{
-    ensure_single_nested_param_source, normalized_nested_calldata, parse_nested_address_param,
-    parse_nested_amount_literal, parse_nested_selector_param, uint_bytes_from_biguint,
-    with_field_encryption, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
+    ensure_single_nested_param_source, lookup_enum_label, normalized_nested_calldata,
+    parse_nested_address_param, parse_nested_amount_literal, parse_nested_selector_param,
+    uint_bytes_from_biguint, with_field_encryption, DisplayEntry, DisplayItem, DisplayModel,
+    GroupIteration,
 };
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
@@ -1983,26 +1984,7 @@ async fn format_typed_value(
         }
         FieldFormat::Enum => {
             let raw = coerce_typed_numeric_string(val).unwrap_or_else(|| json_value_to_string(val));
-            if let Some(params) = params {
-                if let Some(ref enum_path) = params.enum_path {
-                    if let Some(enum_def) = descriptor.metadata.enums.get(enum_path) {
-                        if let Some(label) = enum_def.get(&raw) {
-                            return Ok(label.clone());
-                        }
-                    }
-                }
-                // $ref path (v2): "$.metadata.enums.interestRateMode"
-                if let Some(ref ref_path) = params.ref_path {
-                    if let Some(enum_name) = ref_path.strip_prefix("$.metadata.enums.") {
-                        if let Some(enum_def) = descriptor.metadata.enums.get(enum_name) {
-                            if let Some(label) = enum_def.get(&raw) {
-                                return Ok(label.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(raw)
+            Ok(lookup_enum_label(&descriptor.metadata.enums, params, &raw).unwrap_or(raw))
         }
         FieldFormat::Number => Ok(coerce_unsigned_decimal_string_from_typed_value(val)
             .unwrap_or_else(|| json_value_to_string(val))),
