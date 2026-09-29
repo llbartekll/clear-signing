@@ -10,21 +10,25 @@ use crate::types::descriptor::Descriptor;
 use crate::types::display::{DisplayField, FieldFormat, FormatParams};
 
 /// Known chain IDs -> human-readable names.
+///
+/// The spec's `chainId` format converts the value "to a Blockchain name using
+/// EIP-155 reference values", so these are the `name` fields from the EIP-155
+/// chain list at <https://chainid.network/chains.json> (e.g. 1 -> "Ethereum Mainnet").
 pub(crate) fn chain_name(chain_id: u64) -> String {
     match chain_id {
-        1 => "Ethereum".to_string(),
-        10 => "Optimism".to_string(),
-        56 => "BNB Chain".to_string(),
+        1 => "Ethereum Mainnet".to_string(),
+        10 => "OP Mainnet".to_string(),
+        56 => "BNB Smart Chain Mainnet".to_string(),
         100 => "Gnosis".to_string(),
-        137 => "Polygon".to_string(),
-        250 => "Fantom".to_string(),
-        324 => "zkSync Era".to_string(),
+        137 => "Polygon Mainnet".to_string(),
+        250 => "Fantom Opera".to_string(),
+        324 => "zkSync Mainnet".to_string(),
         8453 => "Base".to_string(),
         42161 => "Arbitrum One".to_string(),
         42170 => "Arbitrum Nova".to_string(),
-        43114 => "Avalanche".to_string(),
-        14 => "Flare".to_string(),
-        19 => "Songbird".to_string(),
+        43114 => "Avalanche C-Chain".to_string(),
+        14 => "Flare Mainnet".to_string(),
+        19 => "Songbird Canary-Network".to_string(),
         59144 => "Linea".to_string(),
         534352 => "Scroll".to_string(),
         7777777 => "Zora".to_string(),
@@ -445,10 +449,11 @@ mod tests {
 
     #[test]
     fn test_chain_name() {
-        assert_eq!(chain_name(1), "Ethereum");
-        assert_eq!(chain_name(137), "Polygon");
-        assert_eq!(chain_name(14), "Flare");
-        assert_eq!(chain_name(19), "Songbird");
+        assert_eq!(chain_name(1), "Ethereum Mainnet");
+        assert_eq!(chain_name(137), "Polygon Mainnet");
+        assert_eq!(chain_name(42161), "Arbitrum One");
+        assert_eq!(chain_name(14), "Flare Mainnet");
+        assert_eq!(chain_name(19), "Songbird Canary-Network");
         assert_eq!(chain_name(99999), "Chain 99999");
     }
 

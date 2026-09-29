@@ -6961,3 +6961,106 @@ async fn test_eip712_bundled_group_keeps_hidden_array_elements_aligned() {
         _ => panic!("expected bundled group"),
     }
 }
+
+// ─── chainId format uses EIP-155 reference names ───
+
+/// The `chainId` format converts the value "to a Blockchain name using EIP-155
+/// reference values" (spec example: 1 -> "Ethereum Mainnet"). Those are the
+/// chainid.network `name` fields, so 137 is "Polygon Mainnet", not "Polygon".
+/// Calldata and EIP-712 must agree.
+#[tokio::test]
+async fn test_chain_id_format_uses_eip155_reference_names_calldata_eip712_parity() {
+    let fields = serde_json::json!([
+        { "path": "sourceChain", "label": "Source Chain", "format": "chainId" },
+        { "path": "destChain", "label": "Destination Chain", "format": "chainId" },
+        { "path": "otherChain", "label": "Other Chain", "format": "chainId" }
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "bridge(uint256 sourceChain,uint256 destChain,uint256 otherChain)": {
+                        "intent": "Bridge",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Bridge(uint256 sourceChain,uint256 destChain,uint256 otherChain)": {
+                        "intent": "Bridge",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "bridge(uint256 sourceChain,uint256 destChain,uint256 otherChain)",
+        &[uint_word(1), uint_word(137), uint_word(42161)],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Bridge": [
+                { "name": "sourceChain", "type": "uint256" },
+                { "name": "destChain", "type": "uint256" },
+                { "name": "otherChain", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Bridge",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "sourceChain": 1, "destChain": 137, "otherChain": 42161 }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        semantic_item_snapshot(&calldata_result.entries),
+        vec![
+            ("Source Chain".to_string(), "Ethereum Mainnet".to_string()),
+            ("Destination Chain".to_string(), "Polygon Mainnet".to_string()),
+            ("Other Chain".to_string(), "Arbitrum One".to_string()),
+        ]
+    );
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
