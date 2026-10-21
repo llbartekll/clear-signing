@@ -7164,3 +7164,94 @@ async fn test_resolver_finds_nested_descriptors_for_calldata_array_path() {
     let addresses: Vec<&str> = descriptors.iter().map(|d| d.address.as_str()).collect();
     assert_eq!(addresses, vec!["0xabc", BATCH_TARGET_A, BATCH_TARGET_B]);
 }
+
+// ─── interpolatedIntent placeholder for one element of an array field ───
+
+/// A placeholder that names one element (`amounts.[1]`) of an array field
+/// (`amounts.[]`) uses that field's format for that element. Calldata and
+/// EIP-712 must agree.
+#[tokio::test]
+async fn test_interpolated_intent_array_element_placeholder_calldata_eip712_parity() {
+    let fields = serde_json::json!([
+        { "path": "amounts.[]", "label": "Amount", "format": "unit", "params": { "base": "u" } }
+    ]);
+    let template = "First {amounts.[0]}, second {amounts.[1]}";
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "send(uint256[] amounts)": {
+                        "intent": "Send",
+                        "interpolatedIntent": template,
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // send([7, 9])
+    let calldata = hex::decode("43bb26340000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000009").unwrap();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_model = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Send(uint256[] amounts)": {
+                        "intent": "Send",
+                        "interpolatedIntent": template,
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {"EIP712Domain": [], "Send": [{"name": "amounts", "type": "uint256[]"}]},
+        "primaryType": "Send",
+        "domain": {"chainId": 1, "verifyingContract": "0xabc"},
+        "message": {"amounts": [7, 9]}
+    }))
+    .unwrap();
+    let typed_model = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        calldata_model.interpolated_intent.as_deref(),
+        Some("First 7u, second 9u")
+    );
+    assert_eq!(
+        typed_model.interpolated_intent,
+        calldata_model.interpolated_intent
+    );
+}

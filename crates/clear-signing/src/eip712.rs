@@ -2222,6 +2222,33 @@ async fn resolve_and_format_typed_interpolation(
 ) -> Result<String, Error> {
     let field = resolve_interpolation_field_spec(fields, excluded, path)?;
 
+    // One element of an array field (`x.[2].y` for `x.[].y`): format that
+    // element like field rendering does (parity with the calldata path).
+    if let Some(i) = field.element_index {
+        let element_path = field.path.replacen(".[]", &format!(".[{i}]"), 1);
+        let value =
+            resolve_typed_path_in_context(message, &element_path, container)?.ok_or_else(|| {
+                Error::Descriptor(format!(
+                    "interpolatedIntent path '{}' could not be resolved from typed data",
+                    path
+                ))
+            })?;
+        let item_params = crate::engine::index_array_params(field.params, i);
+        let mut warnings = Vec::new();
+        return format_typed_value(
+            descriptor,
+            &Some(value),
+            field.format,
+            item_params.as_ref(),
+            container,
+            message,
+            None,
+            data_provider,
+            &mut warnings,
+        )
+        .await;
+    }
+
     // Array-iteration paths (`.[]`) format each element like field rendering and
     // join with " and " (parity with the calldata path).
     if let Some((base, rest)) = crate::engine::split_array_iter_path(field.path) {
