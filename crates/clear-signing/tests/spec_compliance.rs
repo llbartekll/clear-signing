@@ -6961,3 +6961,94 @@ async fn test_eip712_bundled_group_keeps_hidden_array_elements_aligned() {
         _ => panic!("expected bundled group"),
     }
 }
+
+// ─── `$ref` label override and definitions without a label ───
+
+/// A definition may omit `label` (the schema does not require it), and a
+/// reference's `label` "overrides the label in the referenced definition if
+/// set". Calldata and EIP-712 must agree.
+#[tokio::test]
+async fn test_reference_label_overrides_definition_label_calldata_eip712_parity() {
+    let definitions = serde_json::json!({
+        "noLabel": { "format": "raw" },
+        "withLabel": { "label": "Definition label", "format": "raw" }
+    });
+    let fields = serde_json::json!([
+        { "path": "a", "label": "First", "$ref": "$.display.definitions.noLabel" },
+        { "path": "b", "label": "Second", "$ref": "$.display.definitions.withLabel" },
+        { "path": "c", "$ref": "$.display.definitions.withLabel" }
+    ]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": definitions.clone(),
+                "formats": { "f(uint256 a,uint256 b,uint256 c)": { "intent": "F", "fields": fields.clone() } }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let calldata = build_calldata(
+        "f(uint256 a,uint256 b,uint256 c)",
+        &[uint_word(1), uint_word(2), uint_word(3)],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_model = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": definitions,
+                "formats": { "F(uint256 a,uint256 b,uint256 c)": { "intent": "F", "fields": fields } }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {"EIP712Domain": [], "F": [
+            {"name": "a", "type": "uint256"},
+            {"name": "b", "type": "uint256"},
+            {"name": "c", "type": "uint256"}
+        ]},
+        "primaryType": "F",
+        "domain": {"chainId": 1, "verifyingContract": "0xabc"},
+        "message": {"a": 1, "b": 2, "c": 3}
+    }))
+    .unwrap();
+    let typed_model = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        semantic_item_snapshot(&calldata_model.entries),
+        vec![
+            ("First".to_string(), "1".to_string()),
+            ("Second".to_string(), "2".to_string()),
+            ("Definition label".to_string(), "3".to_string()),
+        ]
+    );
+    assert_semantic_parity(&calldata_model, &typed_model);
+}
