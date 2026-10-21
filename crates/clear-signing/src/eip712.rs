@@ -2091,7 +2091,8 @@ async fn format_typed_value(
                     return Ok(format!("{} #{}", name, token_id));
                 }
             }
-            Ok(format!("#{}", token_id))
+            // ERC-7730 `nftName` falls back to the raw token ID.
+            Ok(token_id)
         }
         FieldFormat::Calldata => {
             // Should not reach here — calldata is intercepted in render_typed_fields

@@ -2429,7 +2429,8 @@ fn resolve_map(ctx: &RenderContext<'_>, map_ref: &str, val: &ArgumentValue) -> O
     lookup_map_entry(ctx.descriptor, map_ref, &key)
 }
 
-/// Format an NFT name: "{collection_name} #{token_id}" or "#{token_id}" fallback.
+/// Format an NFT name: "{collection_name} #{token_id}", or the raw token ID
+/// when the collection is not found (ERC-7730 `nftName` fallback).
 async fn format_nft_name(
     ctx: &RenderContext<'_>,
     val: &ArgumentValue,
@@ -2485,7 +2486,7 @@ async fn format_nft_name(
                 label, collection_addr
             ),
         ));
-        Ok(format!("#{}", token_id))
+        Ok(token_id)
     }
 }
 
