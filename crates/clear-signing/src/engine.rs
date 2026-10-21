@@ -2554,6 +2554,31 @@ async fn resolve_and_format_for_interpolation(
 ) -> Result<String, Error> {
     let field = resolve_interpolation_field_spec(fields, excluded, path)?;
 
+    // One element of an array field (`x.[2].y` for `x.[].y`): format that
+    // element like field rendering does.
+    if let Some(i) = field.element_index {
+        let element_path = field.path.replacen(".[]", &format!(".[{i}]"), 1);
+        let value = resolve_path(ctx.decoded, &element_path).ok_or_else(|| {
+            Error::Descriptor(format!(
+                "interpolatedIntent path '{}' could not be resolved from calldata",
+                path
+            ))
+        })?;
+        let item_params = index_array_params(field.params, i);
+        let mut warnings = RenderDiagnostics::new();
+        return format_value(
+            ctx,
+            &Some(value),
+            field.format,
+            item_params.as_ref(),
+            field.path,
+            field.label,
+            field.separator,
+            &mut warnings,
+        )
+        .await;
+    }
+
     // Array-iteration paths (`.[]`) format each element like field rendering and
     // join with " and "; a scalar `resolve_path` returns None for `.[]`, which
     // would otherwise drop the whole interpolatedIntent.

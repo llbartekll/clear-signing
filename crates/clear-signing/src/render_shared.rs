@@ -273,6 +273,9 @@ pub(crate) struct InterpolationFieldSpec<'a> {
     pub format: Option<&'a FieldFormat>,
     pub params: Option<&'a FormatParams>,
     pub separator: Option<&'a str>,
+    /// Set when the placeholder names one element (`x.[2].y`) of an array
+    /// field (`x.[].y`): the element index.
+    pub element_index: Option<usize>,
 }
 
 /// Normalize a path for interpolation matching: a bare parameter name (`amount`)
@@ -281,9 +284,24 @@ fn normalize_interpolation_path(path: &str) -> &str {
     path.strip_prefix("#.").unwrap_or(path)
 }
 
-pub(crate) fn find_interpolation_field<'a>(
+/// If `placeholder` names one element of the array field path `field_path`
+/// (`x.[2].y` for `x.[].y`), return the element index.
+fn array_element_index(field_path: &str, placeholder: &str) -> Option<usize> {
+    let field_path = normalize_interpolation_path(field_path);
+    let placeholder = normalize_interpolation_path(placeholder);
+    let pos = field_path.find(".[]")?;
+    let (base, rest) = (&field_path[..pos], &field_path[pos + 3..]);
+    let after_base = placeholder.strip_prefix(base)?.strip_prefix(".[")?;
+    let (index, after_index) = after_base.split_once(']')?;
+    if after_index != rest || index.is_empty() || !index.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    index.parse().ok()
+}
+
+fn find_field_matching<'a>(
     fields: &'a [DisplayField],
-    path: &str,
+    matcher: &dyn Fn(&str) -> Option<Option<usize>>,
 ) -> Option<InterpolationFieldSpec<'a>> {
     for field in fields {
         match field {
@@ -295,17 +313,20 @@ pub(crate) fn find_interpolation_field<'a>(
                 params,
                 separator,
                 ..
-            } if normalize_interpolation_path(field_path) == normalize_interpolation_path(path) => {
-                return Some(InterpolationFieldSpec {
-                    label,
-                    path: field_path,
-                    format: format.as_ref(),
-                    params: params.as_ref(),
-                    separator: separator.as_deref(),
-                });
+            } => {
+                if let Some(element_index) = matcher(field_path) {
+                    return Some(InterpolationFieldSpec {
+                        label,
+                        path: field_path,
+                        format: format.as_ref(),
+                        params: params.as_ref(),
+                        separator: separator.as_deref(),
+                        element_index,
+                    });
+                }
             }
             DisplayField::Group { field_group } => {
-                if let Some(spec) = find_interpolation_field(&field_group.fields, path) {
+                if let Some(spec) = find_field_matching(&field_group.fields, matcher) {
                     return Some(spec);
                 }
             }
@@ -314,6 +335,24 @@ pub(crate) fn find_interpolation_field<'a>(
     }
 
     None
+}
+
+/// Find the display field for an interpolation placeholder. An exact path
+/// match wins. Otherwise a placeholder that names one element of an array
+/// field (`x.[2].y` for the field `x.[].y`) matches that field.
+pub(crate) fn find_interpolation_field<'a>(
+    fields: &'a [DisplayField],
+    path: &str,
+) -> Option<InterpolationFieldSpec<'a>> {
+    let wanted = normalize_interpolation_path(path);
+    find_field_matching(fields, &|field_path| {
+        (normalize_interpolation_path(field_path) == wanted).then_some(None)
+    })
+    .or_else(|| {
+        find_field_matching(fields, &|field_path| {
+            array_element_index(field_path, path).map(Some)
+        })
+    })
 }
 
 pub(crate) fn resolve_interpolation_field_spec<'a>(
@@ -431,6 +470,17 @@ mod tests {
             s.ends_with('Z') && !s.contains("UTC"),
             "expected RFC-3339 Z suffix, got {s:?}"
         );
+    }
+
+    #[test]
+    fn test_array_element_index() {
+        assert_eq!(array_element_index("x.[].y", "x.[2].y"), Some(2));
+        assert_eq!(array_element_index("#.x.[].y", "x.[0].y"), Some(0));
+        assert_eq!(array_element_index("x.[]", "x.[10]"), Some(10));
+        assert_eq!(array_element_index("x.[].y", "x.[2].z"), None);
+        assert_eq!(array_element_index("x.[].y", "x.[-1].y"), None);
+        assert_eq!(array_element_index("x.[].y", "x.[].y"), None);
+        assert_eq!(array_element_index("x.y", "x.y"), None);
     }
 
     #[test]
