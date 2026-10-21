@@ -750,18 +750,25 @@ pub(crate) fn expand_display_fields(
             DisplayField::Reference {
                 reference,
                 path,
+                label: ref_label,
                 params: ref_params,
                 encryption: ref_encryption,
                 visible,
             } => {
                 if let Some(resolved) = resolve_reference(descriptor, reference) {
-                    let merged = merge_ref_with_definition(
+                    let mut merged = merge_ref_with_definition(
                         resolved,
                         path,
                         ref_params,
                         ref_encryption,
                         visible,
                     );
+                    // The reference label overrides the definition label.
+                    if let (Some(ref_label), DisplayField::Simple { label, .. }) =
+                        (ref_label, &mut merged)
+                    {
+                        label.clone_from(ref_label);
+                    }
                     expanded.extend(expand_display_fields(descriptor, &[merged], warnings));
                 } else {
                     warnings.push(render_warning(
@@ -850,12 +857,14 @@ pub fn prepend_scope_path(field: &DisplayField, scope: &str) -> DisplayField {
         DisplayField::Reference {
             reference,
             path,
+            label,
             params,
             encryption,
             visible,
         } => DisplayField::Reference {
             reference: reference.clone(),
             path: Some(prepend_path(scope, path.as_deref())),
+            label: label.clone(),
             params: params.as_ref().map(|p| prepend_params(scope, p)),
             encryption: encryption.clone(),
             visible: visible.clone(),

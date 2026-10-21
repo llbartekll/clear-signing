@@ -96,7 +96,8 @@ pub enum DisplayField {
     /// A reference to a definition: `{ "$ref": "$.display.definitions.foo", "path": "...", ... }`.
     ///
     /// Per ERC-7730 spec, a reference object carries `$ref` plus the field's own
-    /// `path`, optional `params` (which override definition params), and `visible`.
+    /// `path`, optional `label` and `params` (which override the definition's),
+    /// and `visible`.
     Reference {
         #[serde(rename = "$ref")]
         reference: String,
@@ -104,6 +105,10 @@ pub enum DisplayField {
         /// Path to resolve in decoded arguments (from the referencing field).
         #[serde(skip_serializing_if = "Option::is_none")]
         path: Option<String>,
+
+        /// Label that overrides the definition's label, if set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
 
         /// Params that override/extend the definition's params.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -144,6 +149,9 @@ pub enum DisplayField {
         #[serde(skip_serializing_if = "Option::is_none")]
         path: Option<String>,
 
+        /// Optional in the schema: a definition can omit it, and the
+        /// referencing field then gives it. Empty when absent.
+        #[serde(default)]
         label: String,
 
         /// Literal constant value (alternative to `path`).
