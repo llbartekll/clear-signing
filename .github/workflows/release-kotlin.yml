@@ -50,7 +50,7 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK + NDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
       - run: sdkmanager "ndk;27.0.12077973"
 
       - name: Install cargo-ndk

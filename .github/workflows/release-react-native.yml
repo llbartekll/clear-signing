@@ -75,7 +75,7 @@ jobs:
           java-version: 17
 
       - name: Setup Android SDK + pinned NDK 27.0.12077973 (parity with release-kotlin.yml)
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
       - run: sdkmanager "ndk;$ANDROID_NDK_VERSION"
 
       - name: Wire ANDROID_NDK_HOME + install cargo-ndk
