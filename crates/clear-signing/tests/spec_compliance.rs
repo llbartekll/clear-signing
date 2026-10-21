@@ -491,8 +491,8 @@ async fn test_eip712_nft_name_format() {
         .await
         .unwrap();
     if let DisplayEntry::Item(ref item) = result.entries[0] {
-        // No collection resolver → fallback to "#42"
-        assert_eq!(item.value, "#42");
+        // No collection resolver → fallback to the raw token ID (ERC-7730 `nftName`)
+        assert_eq!(item.value, "42");
     } else {
         panic!("expected Item");
     }
@@ -6960,4 +6960,77 @@ async fn test_eip712_bundled_group_keeps_hidden_array_elements_aligned() {
         }
         _ => panic!("expected bundled group"),
     }
+}
+
+// ─── nftName falls back to the raw token ID ───
+
+/// ERC-7730 `nftName`: "Display value as a specific NFT in a collection, if
+/// found by wallet, or fallback to a raw int token ID if not". Calldata and
+/// EIP-712 must agree.
+#[tokio::test]
+async fn test_nft_name_unknown_collection_falls_back_to_raw_token_id_calldata_eip712_parity() {
+    let fields = serde_json::json!([
+        { "path": "tokenId", "label": "Token", "format": "nftName", "params": { "collection": "0xdef" } }
+    ]);
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": { "transfer(uint256 tokenId)": { "intent": "Transfer NFT", "fields": fields.clone() } }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let calldata = build_calldata("transfer(uint256 tokenId)", &[uint_word(42)]);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_model = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": { "Transfer(uint256 tokenId)": { "intent": "Transfer NFT", "fields": fields } }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {"EIP712Domain": [], "Transfer": [{"name": "tokenId", "type": "uint256"}]},
+        "primaryType": "Transfer",
+        "domain": {"chainId": 1, "verifyingContract": "0xabc"},
+        "message": {"tokenId": 42}
+    }))
+    .unwrap();
+    let typed_model = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        semantic_item_snapshot(&calldata_model.entries),
+        vec![("Token".to_string(), "42".to_string())]
+    );
+    assert_semantic_parity(&calldata_model, &typed_model);
 }
