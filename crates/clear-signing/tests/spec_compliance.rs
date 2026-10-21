@@ -7443,7 +7443,10 @@ async fn test_chain_id_format_uses_eip155_reference_names_calldata_eip712_parity
         semantic_item_snapshot(&calldata_result.entries),
         vec![
             ("Source Chain".to_string(), "Ethereum Mainnet".to_string()),
-            ("Destination Chain".to_string(), "Polygon Mainnet".to_string()),
+            (
+                "Destination Chain".to_string(),
+                "Polygon Mainnet".to_string()
+            ),
             ("Other Chain".to_string(), "Arbitrum One".to_string()),
         ]
     );
