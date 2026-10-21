@@ -224,7 +224,7 @@ async fn quickswap_swap_exact_tokens_for_tokens() {
 
 #[tokio::test]
 async fn quickswap_swap_exact_eth_for_tokens() {
-    // Native MATIC -> USDT swap with value
+    // Native POL -> USDT swap with value
     let result = run_quickswap_test(
         "0x7ff36ab5000000000000000000000000000000000000000000000000000000000749b4d10000000000000000000000000000000000000000000000000000000000000080000000000000000000000000fe3de3b49d1de7eb0cb28b57ac2abfdb3f1118dd00000000000000000000000000000000000000000000000000000000c809982100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000d500b1d8e8ef31e21c99d1db9a6444d3adf1270000000000000000000000000c2132d05d31c914a87c6611c10748aeb04b58e8f",
         "0x05dacd13ca9e300000",
@@ -232,7 +232,7 @@ async fn quickswap_swap_exact_eth_for_tokens() {
     ).await;
 
     assert_eq!(result.intent, "Swap");
-    assert_eq!(get_entry_value(&result, "Amount to Send"), "108 MATIC");
+    assert_eq!(get_entry_value(&result, "Amount to Send"), "108 POL");
     assert_eq!(
         get_entry_value(&result, "Minimum to Receive"),
         "122.270929 USDT"
@@ -342,7 +342,7 @@ async fn quickswap_remove_liquidity_eth_with_permit() {
 
 #[tokio::test]
 async fn quickswap_add_liquidity_eth() {
-    // Add PDDOLLAR + native MATIC liquidity with value
+    // Add PDDOLLAR + native POL liquidity with value
     let result = run_quickswap_test(
         "0xf305d719000000000000000000000000146e58d34eab0bff7e0a63cfe9332908d680c66700000000000000000000000000000000000001516b4d1f2b1d156a60b6f7412a000000000000000000000000000000000000014fbb679dbb89bcfd0bc04a7f8e0000000000000000000000000000000000000000000000001b9de674df0700000000000000000000000000008a2f7f99b3b20cbe8343ac9f4292c9a1b12a0131000000000000000000000000000000000000000000000000000000006404ce44",
         "0x1bc16d674ec80000",

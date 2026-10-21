@@ -4,6 +4,7 @@ use num_bigint::BigUint;
 
 use crate::decoder::ArgumentValue;
 use crate::error::Error;
+use crate::native_currencies::NATIVE_CURRENCIES;
 use crate::provider::DataProvider;
 use crate::token::TokenMeta;
 use crate::types::descriptor::Descriptor;
@@ -75,26 +76,19 @@ pub(crate) fn resolve_metadata_constant_biguint(
     }
 }
 
-/// Get native token metadata for a chain.
+/// Get native token metadata for a chain from the EIP-155 chain list
+/// (chainid.network). Unknown chains fall back to ETH with 18 decimals.
 pub(crate) fn native_token_meta(chain_id: u64) -> TokenMeta {
-    let (symbol, name) = match chain_id {
-        1 | 5 | 11155111 => ("ETH", "Ether"),
-        137 | 80001 => ("MATIC", "Polygon"),
-        56 | 97 => ("BNB", "BNB"),
-        43114 | 43113 => ("AVAX", "Avalanche"),
-        250 => ("FTM", "Fantom"),
-        14 => ("FLR", "Flare"),
-        19 => ("SGB", "Songbird"),
-        114 => ("C2FLR", "Coston2 Flare"),
-        16 => ("CFLR", "Coston Flare"),
-        42161 | 421613 => ("ETH", "Ether"),
-        10 | 420 => ("ETH", "Ether"),
-        8453 | 84531 => ("ETH", "Ether"),
-        _ => ("ETH", "Ether"),
-    };
+    let (symbol, name, decimals) = NATIVE_CURRENCIES
+        .binary_search_by_key(&chain_id, |&(id, ..)| id)
+        .map(|i| {
+            let (_, symbol, name, decimals) = NATIVE_CURRENCIES[i];
+            (symbol, name, decimals)
+        })
+        .unwrap_or(("ETH", "Ether", 18));
     TokenMeta {
         symbol: symbol.to_string(),
-        decimals: 18,
+        decimals,
         name: name.to_string(),
     }
 }
@@ -436,11 +430,19 @@ mod tests {
     #[test]
     fn test_native_token_meta() {
         assert_eq!(native_token_meta(1).symbol, "ETH");
-        assert_eq!(native_token_meta(137).symbol, "MATIC");
+        assert_eq!(native_token_meta(137).symbol, "POL");
+        assert_eq!(native_token_meta(80001).symbol, "MATIC");
+        assert_eq!(native_token_meta(42220).symbol, "CELO");
+        assert_eq!(native_token_meta(100).symbol, "XDAI");
         assert_eq!(native_token_meta(56).symbol, "BNB");
         assert_eq!(native_token_meta(14).symbol, "FLR");
         assert_eq!(native_token_meta(19).symbol, "SGB");
-        assert_eq!(native_token_meta(99999).symbol, "ETH");
+        assert_eq!(native_token_meta(u64::MAX).symbol, "ETH");
+    }
+
+    #[test]
+    fn test_native_currencies_sorted_by_chain_id() {
+        assert!(NATIVE_CURRENCIES.windows(2).all(|w| w[0].0 < w[1].0));
     }
 
     #[test]

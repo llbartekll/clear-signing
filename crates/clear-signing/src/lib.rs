@@ -13,6 +13,7 @@ mod encryption;
 pub mod engine;
 pub mod error;
 pub mod merge;
+mod native_currencies;
 pub mod outcome;
 mod path;
 pub mod provider;
