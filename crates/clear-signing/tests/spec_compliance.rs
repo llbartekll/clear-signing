@@ -6961,3 +6961,206 @@ async fn test_eip712_bundled_group_keeps_hidden_array_elements_aligned() {
         _ => panic!("expected bundled group"),
     }
 }
+
+// ─── calldata format on an array path (`calls.[].data`) ───
+
+const BATCH_TARGET_A: &str = "0x1000000000000000000000000000000000000001";
+const BATCH_TARGET_B: &str = "0x2000000000000000000000000000000000000002";
+
+/// `batch((address,bytes)[])` with two calls: `consume()` on target A and
+/// `burn()` on target B.
+const BATCH_CALLDATA: &str = "5773341e00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000001000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000041dedc6f70000000000000000000000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000444df8e7000000000000000000000000000000000000000000000000000000000";
+
+fn batch_inner_descriptors() -> (Descriptor, Descriptor) {
+    let inner = |address: &str, signature: &str, intent: &str| {
+        Descriptor::from_json(
+            &serde_json::json!({
+                "context": { "contract": { "deployments": [{"chainId": 1, "address": address}] } },
+                "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+                "display": {
+                    "definitions": {},
+                    "formats": { signature: { "intent": intent, "fields": [] } }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap()
+    };
+    (
+        inner(BATCH_TARGET_A, "consume()", "Consume"),
+        inner(BATCH_TARGET_B, "burn()", "Burn"),
+    )
+}
+
+fn batch_calldata_fields() -> serde_json::Value {
+    serde_json::json!([{
+        "path": "calls.[].data",
+        "label": "Call",
+        "format": "calldata",
+        "params": { "calleePath": "calls.[].target" }
+    }])
+}
+
+fn nested_intents(entries: &[DisplayEntry]) -> Vec<String> {
+    entries
+        .iter()
+        .map(|entry| match entry {
+            DisplayEntry::Nested { label, intent, .. } => {
+                assert_eq!(label, "Call");
+                intent.clone()
+            }
+            _ => panic!("expected Nested entry, got {entry:?}"),
+        })
+        .collect()
+}
+
+/// Each element of a calldata array renders as its own nested call, with
+/// `calleePath` scoped to the same element. Calldata and EIP-712 must agree.
+#[tokio::test]
+async fn test_calldata_array_path_renders_each_element_nested_calldata_eip712_parity() {
+    let (inner_a, inner_b) = batch_inner_descriptors();
+
+    let outer = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "batch((address target, bytes data)[] calls)": {
+                        "intent": "Batch",
+                        "fields": batch_calldata_fields()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let calldata = hex::decode(BATCH_CALLDATA).unwrap();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let descriptors = vec![
+        wrap_rd(outer, 1, "0xabc").into_iter().next().unwrap(),
+        wrap_rd(inner_a.clone(), 1, BATCH_TARGET_A)
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(inner_b.clone(), 1, BATCH_TARGET_B)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+    let calldata_model = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(
+        nested_intents(&calldata_model.entries),
+        vec!["Consume", "Burn"]
+    );
+
+    let typed_outer = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Batch(Call[] calls)Call(address target,bytes data)": {
+                        "intent": "Batch",
+                        "fields": batch_calldata_fields()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [{ "name": "calls", "type": "Call[]" }],
+            "Call": [
+                { "name": "target", "type": "address" },
+                { "name": "data", "type": "bytes" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "calls": [
+                { "target": BATCH_TARGET_A, "data": "0x1dedc6f7" },
+                { "target": BATCH_TARGET_B, "data": "0x44df8e70" }
+            ]
+        }
+    }))
+    .unwrap();
+    let typed_descriptors = vec![
+        wrap_rd(typed_outer, 1, "0xabc").into_iter().next().unwrap(),
+        wrap_rd(inner_a, 1, BATCH_TARGET_A)
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(inner_b, 1, BATCH_TARGET_B)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+    let typed_model = format_typed_data(&typed_descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(
+        nested_intents(&typed_model.entries),
+        vec!["Consume", "Burn"]
+    );
+}
+
+/// The resolver also expands `calls.[].data`, so it loads the descriptor of
+/// every element's callee.
+#[tokio::test]
+async fn test_resolver_finds_nested_descriptors_for_calldata_array_path() {
+    let (inner_a, inner_b) = batch_inner_descriptors();
+    let outer = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "batch((address target, bytes data)[] calls)": {
+                        "intent": "Batch",
+                        "fields": batch_calldata_fields()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let mut source = clear_signing::resolver::StaticSource::new();
+    source.add_calldata(1, "0xabc", outer);
+    source.add_calldata(1, BATCH_TARGET_A, inner_a);
+    source.add_calldata(1, BATCH_TARGET_B, inner_b);
+
+    let calldata = hex::decode(BATCH_CALLDATA).unwrap();
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let descriptors = clear_signing::resolve_descriptors_for_tx(&tx, &source, None)
+        .await
+        .unwrap();
+    let addresses: Vec<&str> = descriptors.iter().map(|d| d.address.as_str()).collect();
+    assert_eq!(addresses, vec!["0xabc", BATCH_TARGET_A, BATCH_TARGET_B]);
+}

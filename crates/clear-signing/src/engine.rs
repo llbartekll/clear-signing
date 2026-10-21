@@ -322,6 +322,20 @@ fn render_fields<'a>(
                                 {
                                     continue;
                                 }
+                                // Each element of a calldata array is its own nested call.
+                                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                                    let entry = render_calldata_field(
+                                        ctx,
+                                        &val,
+                                        item_params.as_ref(),
+                                        label,
+                                        warnings,
+                                        nested_fallback,
+                                    )
+                                    .await?;
+                                    entries.push(entry);
+                                    continue;
+                                }
                                 let formatted = format_value(
                                     ctx,
                                     &val,
@@ -1177,20 +1191,32 @@ pub(crate) fn split_array_iter_path(path: &str) -> Option<(&str, &str)> {
     Some((base, rest))
 }
 
-/// Scope the element-relative `tokenPath` to the array element being rendered
-/// by rewriting its first `.[]` to a concrete index, so `tokenPath`
+/// Scope the element-relative path params to the array element being
+/// rendered by rewriting their first `.[]` to a concrete index, so `tokenPath`
 /// `details.[].token` resolves to `details.[index].token` for element `index`.
-/// No-op when `tokenPath` is absent or has no `.[]`. Only `tokenPath` is
-/// rewritten; other element-relative path params (`calleePath`, `amountPath`,
-/// `spenderPath`) are not scoped here. Shared by the calldata and EIP-712 flat
-/// array-iteration paths (field rendering + interpolation).
+/// Applies to `tokenPath`, `chainIdPath`, `selectorPath`, `calleePath`,
+/// `amountPath`, `spenderPath` and `collectionPath`. A path without `.[]`
+/// stays unchanged. Shared by the calldata and EIP-712 flat array-iteration
+/// paths (field rendering + interpolation).
 pub(crate) fn index_array_params(
     params: Option<&FormatParams>,
     index: usize,
 ) -> Option<FormatParams> {
     let mut params = params.cloned()?;
-    if let Some(token_path) = params.token_path.as_ref() {
-        params.token_path = Some(token_path.replacen(".[]", &format!(".[{index}]"), 1));
+    let indexed = format!(".[{index}]");
+    for path in [
+        &mut params.token_path,
+        &mut params.chain_id_path,
+        &mut params.selector_path,
+        &mut params.callee_path,
+        &mut params.amount_path,
+        &mut params.spender_path,
+        &mut params.collection_path,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        *path = path.replacen(".[]", &indexed, 1);
     }
     Some(params)
 }
@@ -2629,6 +2655,28 @@ mod tests {
         let mut enums = std::collections::HashMap::new();
         enums.insert("rights".to_string(), rights);
         enums
+    }
+
+    #[test]
+    fn test_index_array_params_scopes_all_element_paths() {
+        let params: FormatParams = serde_json::from_value(serde_json::json!({
+            "tokenPath": "items.[].token",
+            "calleePath": "calls.[].target",
+            "amountPath": "calls.[].value",
+            "spenderPath": "calls.[].spender",
+            "selectorPath": "calls.[].selector",
+            "chainIdPath": "calls.[].chainId",
+            "collectionPath": "collections.[]"
+        }))
+        .unwrap();
+        let indexed = index_array_params(Some(&params), 2).unwrap();
+        assert_eq!(indexed.token_path.as_deref(), Some("items.[2].token"));
+        assert_eq!(indexed.callee_path.as_deref(), Some("calls.[2].target"));
+        assert_eq!(indexed.amount_path.as_deref(), Some("calls.[2].value"));
+        assert_eq!(indexed.spender_path.as_deref(), Some("calls.[2].spender"));
+        assert_eq!(indexed.selector_path.as_deref(), Some("calls.[2].selector"));
+        assert_eq!(indexed.chain_id_path.as_deref(), Some("calls.[2].chainId"));
+        assert_eq!(indexed.collection_path.as_deref(), Some("collections.[2]"));
     }
 
     #[test]

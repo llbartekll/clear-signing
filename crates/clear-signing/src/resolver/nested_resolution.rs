@@ -117,6 +117,16 @@ fn resolve_recursive<'a>(
 
         results.push(resolved);
 
+        let calldata_fields: Vec<CalldataFieldInfo> = calldata_fields
+            .iter()
+            .flat_map(|field| {
+                field.expand_array(|base| match crate::engine::resolve_path(&decoded, base) {
+                    Some(ArgumentValue::Array(items)) => items.len(),
+                    _ => 0,
+                })
+            })
+            .collect();
+
         for field in &calldata_fields {
             let data_path = match &field.data_path {
                 Some(p) => p,
@@ -213,6 +223,23 @@ pub async fn resolve_descriptors_for_typed_data(
 
     results.push(selected.outer.clone());
 
+    let calldata_fields: Vec<CalldataFieldInfo> = calldata_fields
+        .iter()
+        .flat_map(|field| {
+            field.expand_array(|base| {
+                match crate::eip712::resolve_typed_path(
+                    &typed_data.message,
+                    base,
+                    chain_id,
+                    Some(verifying_contract),
+                ) {
+                    Some(serde_json::Value::Array(items)) => items.len(),
+                    _ => 0,
+                }
+            })
+        })
+        .collect();
+
     for field in &calldata_fields {
         let callee_addr = match resolve_typed_nested_callee_for_resolver(
             field,
@@ -295,6 +322,7 @@ pub async fn resolve_descriptors_for_typed_data(
 }
 
 /// Info extracted from a `FieldFormat::Calldata` display field.
+#[derive(Clone)]
 struct CalldataFieldInfo {
     callee_path: Option<String>,
     callee: Option<String>,
@@ -303,6 +331,35 @@ struct CalldataFieldInfo {
     selector: Option<String>,
     chain_id: Option<u64>,
     chain_id_path: Option<String>,
+}
+
+impl CalldataFieldInfo {
+    /// Expand a field whose data path iterates an array (`calls.[].data`) into
+    /// one field per element. Each `.[]` path is rewritten to the element index,
+    /// as the renderer does. `array_len` gives the length of the array at a base
+    /// path. A field without `.[]` in its data path is returned unchanged.
+    fn expand_array(&self, array_len: impl Fn(&str) -> usize) -> Vec<CalldataFieldInfo> {
+        let Some((base, _)) = self
+            .data_path
+            .as_deref()
+            .and_then(crate::engine::split_array_iter_path)
+        else {
+            return vec![self.clone()];
+        };
+        (0..array_len(base))
+            .map(|i| {
+                let indexed = format!(".[{i}]");
+                let index = |p: &Option<String>| p.as_ref().map(|p| p.replacen(".[]", &indexed, 1));
+                CalldataFieldInfo {
+                    data_path: index(&self.data_path),
+                    callee_path: index(&self.callee_path),
+                    selector_path: index(&self.selector_path),
+                    chain_id_path: index(&self.chain_id_path),
+                    ..self.clone()
+                }
+            })
+            .collect()
+    }
 }
 
 /// Walk display fields (resolving `$ref` references) and collect calldata-format fields.

@@ -396,6 +396,25 @@ fn render_typed_fields<'a>(
                                 {
                                     continue;
                                 }
+                                // Each element of a calldata array is its own nested call.
+                                if matches!(format.as_ref(), Some(FieldFormat::Calldata)) {
+                                    let entry = render_typed_calldata_field(
+                                        descriptor,
+                                        message,
+                                        &val,
+                                        item_params.as_ref(),
+                                        label,
+                                        container,
+                                        data_provider,
+                                        descriptors,
+                                        depth,
+                                        warnings,
+                                        nested_fallback,
+                                    )
+                                    .await?;
+                                    entries.push(entry);
+                                    continue;
+                                }
                                 let formatted = format_typed_value(
                                     descriptor,
                                     &val,
