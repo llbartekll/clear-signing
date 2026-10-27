@@ -93,6 +93,14 @@ pub enum FieldValue {
 #[serde(deny_unknown_fields)]
 pub struct NestedExpected {
     pub intent: String,
+    /// Accepted, not compared: the registry's test schema lets a nested call carry its interpolated intent (the
+    /// Sourcify runner checks it), but the library's nested display has none to compare against.
+    #[serde(
+        default,
+        rename = "interpolatedIntent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub interpolated_intent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default)]

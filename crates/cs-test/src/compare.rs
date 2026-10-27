@@ -438,6 +438,7 @@ mod tests {
             label: label.to_string(),
             value: FieldValue::Nested(NestedExpected {
                 intent: intent.to_string(),
+                interpolated_intent: None,
                 owner: owner.map(str::to_string),
                 fields,
             }),
@@ -751,6 +752,25 @@ mod tests {
             "should not check interpolated_intent when expected is None; got {:?}",
             r.failures
         );
+    }
+
+    #[test]
+    fn nested_field_deserializes_with_interpolated_intent() {
+        let parsed: FieldEntry = serde_json::from_str(
+            r#"{"label":"Action","value":{"intent":"Remove liquidity","interpolatedIntent":"Remove liquidity from #1","owner":"Uniswap Labs","fields":[]}}"#,
+        )
+        .unwrap();
+
+        match parsed.value {
+            FieldValue::Nested(nested) => {
+                assert_eq!(nested.intent, "Remove liquidity");
+                assert_eq!(
+                    nested.interpolated_intent.as_deref(),
+                    Some("Remove liquidity from #1")
+                );
+            }
+            other => panic!("expected nested field, got {other:?}"),
+        }
     }
 
     #[test]
