@@ -1,0 +1,61 @@
+{
+  "$schema": "../../../specs/erc7730-tests-v2.schema.json",
+  "descriptor": "./calldata-L2ToL1MessagePasser.json",
+  "dataProvider": {
+    "tokens": {},
+    "addressNames": {
+      "0x5d4472f31bd9385709ec61305afc749f0fa8e9d0": "Blast L1CrossDomainMessenger",
+      "0x697402166fbf2f22e970df8a6486ef171dbfc524": "Blast L1StandardBridge",
+      "0x3a05e5d33d7ab3864d53aaec93c8301c1fa49115": "L1BlastBridge",
+      "0x0ec68c5b10f21effb74f2a5c61dfe6b08c0db6cb": "Blast OptimismPortal",
+      "0x4200000000000000000000000000000000000007": "L2CrossDomainMessenger",
+      "0x4200000000000000000000000000000000000010": "L2StandardBridge",
+      "0x4300000000000000000000000000000000000005": "L2BlastBridge"
+    }
+  },
+  "tests": [
+    {
+      "description": "initiateWithdrawal-call - chain 81457",
+      "rawTx": "0x02f902a983013e31808080830f424094420000000000000000000000000000000000001680b90284c2b3e5ac0000000000000000000000005d4472f31bd9385709ec61305afc749f0fa8e9d000000000000000000000000000000000000000000000000000000000000927c0000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000001e4d764ad0b000100000000000000000000000000000000000000000000000000000001001b00000000000000000000000043000000000000000000000000000000000000050000000000000000000000003a05e5d33d7ab3864d53aaec93c8301c1fa4911500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000061a8000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000e40166a07a0000000000000000000000006b175474e89094c44da98b954eedeac495271d0f0000000000000000000000004300000000000000000000000000000000000003000000000000000000000000ecfd8c0ec309922f9dc5214f7a2d92ba0588a19a000000000000000000000000ecfd8c0ec309922f9dc5214f7a2d92ba0588a19a00000000000000000000000000000000000000000000a859094ea57a5ae0000000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0",
+      "from": "0xeCfD8c0eC309922f9DC5214f7A2D92BA0588A19a",
+      "txHash": "0xd7deb3dd292f10679dc352cceef723322c102474e20215177c6bf7f49da03649",
+      "expected": {
+        "intent": "Withdraw ETH to Ethereum",
+        "interpolatedIntent": "Withdraw 0 ETH to Blast L1CrossDomainMessenger on Ethereum; the L1 payout can be lower",
+        "owner": "Blast",
+        "fields": [
+          { "label": "ETH to Withdraw", "value": "0 ETH" },
+          { "label": "L1 Recipient", "value": "Blast L1CrossDomainMessenger" },
+          { "label": "Min L1 Gas", "value": "600000gas" },
+          {
+            "label": "L1 Call",
+            "value": {
+              "intent": "Relay Blast message to L1",
+              "fields": [
+                { "label": "Maximum Amount", "value": "0 ETH" },
+                { "label": "L1 Target", "value": "L1BlastBridge" },
+                { "label": "Blast Sender", "value": "L2BlastBridge" },
+                {
+                  "label": "L1 Call",
+                  "value": {
+                    "intent": "Queue DAI claim for Blast USDB",
+                    "fields": [
+                      { "label": "Maximum Amount", "value": "795000000000000000000000" },
+                      { "label": "Claimable By", "value": "0xeCfD8c0eC309922f9DC5214f7A2D92BA0588A19a" },
+                      { "label": "Withdrawn By", "value": "0xeCfD8c0eC309922f9DC5214f7A2D92BA0588A19a" }
+                    ],
+                    "interpolatedIntent": "Queue a claim of up to 795000000000000000000000 for 0xeCfD8c0eC309922f9DC5214f7A2D92BA0588A19a, withdrawn by 0xeCfD8c0eC309922f9DC5214f7A2D92BA0588A19a",
+                    "owner": "Blast"
+                  }
+                },
+                { "label": "Max ETH Attached", "value": "0 ETH" }
+              ],
+              "interpolatedIntent": "Relay up to 0 ETH from L2BlastBridge on Blast to L1BlastBridge",
+              "owner": "Blast"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

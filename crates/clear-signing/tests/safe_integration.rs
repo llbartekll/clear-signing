@@ -182,6 +182,7 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
             intent,
             owner,
             entries,
+            ..
         } => {
             assert_eq!(label, "Transaction");
             assert_eq!(intent, "Transfer tokens");
@@ -415,10 +416,8 @@ async fn safe_exec_transaction_depth_limit() {
         for entry in entries {
             match entry {
                 DisplayEntry::Item(item) if item.value == target => return true,
-                DisplayEntry::Nested { entries, .. } => {
-                    if find_scalar_item_value(entries, target) {
-                        return true;
-                    }
+                DisplayEntry::Nested { entries, .. } if find_scalar_item_value(entries, target) => {
+                    return true;
                 }
                 DisplayEntry::Group { items, .. }
                     if items.iter().any(|item| item.value == target) =>

@@ -1,8 +1,8 @@
 //! Display configuration types: field formats, visibility rules, and layout groups.
 
 use num_bigint::{BigInt, BigUint, Sign};
-use serde::{de, Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
+use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::{BTreeMap, HashMap};
 
 /// Top-level display section of a descriptor.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,7 +375,11 @@ pub enum FieldFormat {
 }
 
 /// Format parameters — varies by format type.
+///
+/// Serde goes through the manual impls below (`remote = "Self"`), which move
+/// spec map references out of the constant fields into [`Self::map_refs`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(remote = "Self")]
 pub struct FormatParams {
     /// Token address path for tokenAmount/tokenTicker (resolved from calldata).
     #[serde(rename = "tokenPath")]
@@ -503,6 +507,88 @@ pub struct FormatParams {
     /// Constant collection address for nftName format.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collection: Option<String>,
+
+    /// Spec map references (`metadata.maps`) given in place of a constant
+    /// parameter, keyed by the parameter name (e.g. `"token"`). Rendering
+    /// replaces each one with the map value for the transaction.
+    #[serde(skip)]
+    pub map_refs: BTreeMap<String, MapReference>,
+}
+
+/// Parameters that take a constant, so they also accept a map reference.
+pub(crate) const MAP_REFERENCE_PARAMS: [&str; 7] = [
+    "token",
+    "chainId",
+    "callee",
+    "selector",
+    "amount",
+    "spender",
+    "collection",
+];
+
+/// Path prefix of a map in the descriptor.
+pub(crate) const MAP_PATH_PREFIX: &str = "$.metadata.maps.";
+
+/// Spec map reference: `{"map": "$.metadata.maps.<name>", "keyPath": "<path>"}`.
+///
+/// The ERC's example files write `key` in place of `keyPath`; both are accepted.
+/// Without a key path, the map's own `keyPath` applies.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MapReference {
+    pub map: String,
+    #[serde(rename = "keyPath", alias = "key")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for FormatParams {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut object = serde_json::Map::<String, serde_json::Value>::deserialize(deserializer)?;
+        let mut map_refs = BTreeMap::new();
+        for name in MAP_REFERENCE_PARAMS {
+            let reference = match object.get(name) {
+                Some(serde_json::Value::Object(_)) => object
+                    .remove(name)
+                    .map(serde_json::from_value::<MapReference>)
+                    .transpose()
+                    .map_err(de::Error::custom)?,
+                // The ERC's inline example writes the map path as a plain string.
+                Some(serde_json::Value::String(path)) if path.starts_with(MAP_PATH_PREFIX) => {
+                    let map = path.clone();
+                    object.remove(name);
+                    Some(MapReference {
+                        map,
+                        key_path: None,
+                    })
+                }
+                _ => None,
+            };
+            if let Some(reference) = reference {
+                map_refs.insert(name.to_string(), reference);
+            }
+        }
+        let mut params = FormatParams::deserialize(serde_json::Value::Object(object))
+            .map_err(de::Error::custom)?;
+        params.map_refs = map_refs;
+        Ok(params)
+    }
+}
+
+impl Serialize for FormatParams {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.map_refs.is_empty() {
+            return FormatParams::serialize(self, serializer);
+        }
+        let mut value = FormatParams::serialize(self, serde_json::value::Serializer)
+            .map_err(ser::Error::custom)?;
+        if let serde_json::Value::Object(object) = &mut value {
+            for (name, reference) in &self.map_refs {
+                let reference = serde_json::to_value(reference).map_err(ser::Error::custom)?;
+                object.insert(name.clone(), reference);
+            }
+        }
+        value.serialize(serializer)
+    }
 }
 
 /// Native currency address — single address or array of addresses/constant refs.
@@ -584,4 +670,61 @@ pub struct EncryptionParams {
     #[serde(rename = "fallbackLabel")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_label: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn format_params_parse_and_write_map_references() {
+        let raw = json!({
+            "tokenPath": "token",
+            "token": { "map": "$.metadata.maps.underlying", "key": "@.chainId" },
+            "chainId": { "map": "$.metadata.maps.chains", "keyPath": "pool" },
+            "callee": "$.metadata.maps.router",
+            "collection": "0x0000000000000000000000000000000000000001"
+        });
+        let params: FormatParams = serde_json::from_value(raw).unwrap();
+
+        assert_eq!(params.token, None);
+        assert_eq!(params.chain_id, None);
+        assert_eq!(params.callee, None);
+        assert_eq!(params.token_path.as_deref(), Some("token"));
+        assert_eq!(
+            params.collection.as_deref(),
+            Some("0x0000000000000000000000000000000000000001")
+        );
+        assert_eq!(
+            params.map_refs["token"],
+            MapReference {
+                map: "$.metadata.maps.underlying".to_string(),
+                key_path: Some("@.chainId".to_string()),
+            }
+        );
+        assert_eq!(params.map_refs["chainId"].key_path.as_deref(), Some("pool"));
+        assert_eq!(params.map_refs["callee"].key_path, None);
+
+        let written = serde_json::to_value(&params).unwrap();
+        assert_eq!(
+            written["token"],
+            json!({ "map": "$.metadata.maps.underlying", "keyPath": "@.chainId" })
+        );
+        assert_eq!(
+            written["callee"],
+            json!({ "map": "$.metadata.maps.router" })
+        );
+        assert_eq!(written["tokenPath"], json!("token"));
+    }
+
+    #[test]
+    fn format_params_without_map_references_are_unchanged() {
+        let raw = json!({ "token": "0xabc", "chainId": 10 });
+        let params: FormatParams = serde_json::from_value(raw.clone()).unwrap();
+        assert!(params.map_refs.is_empty());
+        assert_eq!(params.token.as_deref(), Some("0xabc"));
+        assert_eq!(params.chain_id, Some(10));
+        assert_eq!(serde_json::to_value(&params).unwrap(), raw);
+    }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::future::Future;
 use std::pin::Pin;
 
@@ -6,7 +6,8 @@ use crate::decoder::ArgumentValue;
 use crate::error::{Error, ResolveError};
 use crate::outcome::ResolvedDescriptorResolution;
 use crate::provider::DataProvider;
-use crate::types::display::{DisplayField, FieldFormat};
+use crate::types::descriptor::Descriptor;
+use crate::types::display::{DisplayField, FieldFormat, FormatParams, MapReference};
 
 use super::source::{DescriptorSource, ResolvedDescriptor, TypedDescriptorLookup};
 use super::standard_token;
@@ -115,6 +116,7 @@ fn resolve_recursive<'a>(
             })
             .unwrap_or_default();
 
+        let outer_index = results.len();
         results.push(resolved);
 
         let calldata_fields: Vec<CalldataFieldInfo> = calldata_fields
@@ -127,7 +129,26 @@ fn resolve_recursive<'a>(
             })
             .collect();
 
+        // Map keys may read container values (`@.chainId`, `@.to`), as in rendering.
+        let mut key_args: Option<crate::decoder::DecodedArguments> = None;
         for field in &calldata_fields {
+            let field = &field
+                .resolve_maps(&results[outer_index].descriptor, &mut |key_path| {
+                    let key_args = key_args.get_or_insert_with(|| {
+                        let mut args = decoded.clone();
+                        crate::inject_container_values(
+                            &mut args,
+                            chain_id,
+                            token_lookup_address,
+                            None,
+                            None,
+                        );
+                        args
+                    });
+                    Ok(crate::engine::resolve_path(key_args, key_path)
+                        .map(|key| crate::engine::format_raw(&key)))
+                })
+                .map_err(|e| ResolveError::Parse(e.to_string()))?;
             let data_path = match &field.data_path {
                 Some(p) => p,
                 None => continue,
@@ -241,6 +262,17 @@ pub async fn resolve_descriptors_for_typed_data(
         .collect();
 
     for field in &calldata_fields {
+        let field = &field
+            .resolve_maps(&selected.outer.descriptor, &mut |key_path| {
+                Ok(crate::eip712::resolve_typed_path(
+                    &typed_data.message,
+                    key_path,
+                    chain_id,
+                    Some(verifying_contract),
+                )
+                .map(|key| crate::eip712::json_value_to_string(&key)))
+            })
+            .map_err(|e| ResolveError::Parse(e.to_string()))?;
         let callee_addr = match resolve_typed_nested_callee_for_resolver(
             field,
             &typed_data.message,
@@ -331,6 +363,8 @@ struct CalldataFieldInfo {
     selector: Option<String>,
     chain_id: Option<u64>,
     chain_id_path: Option<String>,
+    /// Map references for `callee`, `selector` and `chainId`.
+    map_refs: BTreeMap<String, MapReference>,
 }
 
 impl CalldataFieldInfo {
@@ -350,16 +384,57 @@ impl CalldataFieldInfo {
             .map(|i| {
                 let indexed = format!(".[{i}]");
                 let index = |p: &Option<String>| p.as_ref().map(|p| p.replacen(".[]", &indexed, 1));
+                let mut map_refs = self.map_refs.clone();
+                for reference in map_refs.values_mut() {
+                    reference.key_path = index(&reference.key_path);
+                }
                 CalldataFieldInfo {
                     data_path: index(&self.data_path),
                     callee_path: index(&self.callee_path),
                     selector_path: index(&self.selector_path),
                     chain_id_path: index(&self.chain_id_path),
+                    map_refs,
                     ..self.clone()
                 }
             })
             .collect()
     }
+
+    /// Replace the map references with their constants, as the renderer does.
+    fn resolve_maps(
+        &self,
+        descriptor: &Descriptor,
+        resolve_key: &mut dyn FnMut(&str) -> Result<Option<String>, Error>,
+    ) -> Result<CalldataFieldInfo, Error> {
+        let mut field = self.clone();
+        for (param, reference) in std::mem::take(&mut field.map_refs) {
+            let value = crate::render_shared::resolve_map_reference(
+                descriptor,
+                &param,
+                &reference,
+                resolve_key,
+            )?;
+            let mut constant = FormatParams::default();
+            crate::render_shared::set_constant_param(&mut constant, &param, &value)?;
+            field.callee = constant.callee.or(field.callee);
+            field.selector = constant.selector.or(field.selector);
+            field.chain_id = constant.chain_id.or(field.chain_id);
+        }
+        Ok(field)
+    }
+}
+
+/// Map references of a calldata field that the resolver needs.
+fn nested_map_refs(params: Option<&FormatParams>) -> BTreeMap<String, MapReference> {
+    params
+        .map(|p| {
+            p.map_refs
+                .iter()
+                .filter(|(param, _)| matches!(param.as_str(), "callee" | "selector" | "chainId"))
+                .map(|(param, reference)| (param.clone(), reference.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Walk display fields (resolving `$ref` references) and collect calldata-format fields.
@@ -395,6 +470,7 @@ fn collect_calldata_fields_recursive(
                         selector: fp.and_then(|p| p.selector.clone()),
                         chain_id: fp.and_then(|p| p.chain_id),
                         chain_id_path: fp.and_then(|p| p.chain_id_path.clone()),
+                        map_refs: nested_map_refs(fp),
                     });
                 }
             }
@@ -438,6 +514,21 @@ fn collect_calldata_fields_recursive(
                             .as_ref()
                             .and_then(|p| p.chain_id_path.clone())
                             .or_else(|| def_params.as_ref().and_then(|p| p.chain_id_path.clone()));
+                        // A constant on the reference overrides a map reference
+                        // on the definition, and the other way round.
+                        let mut map_refs = nested_map_refs(def_params.as_ref());
+                        if let Some(rp) = ref_params.as_ref() {
+                            for (param, set) in [
+                                ("callee", rp.callee.is_some()),
+                                ("selector", rp.selector.is_some()),
+                                ("chainId", rp.chain_id.is_some()),
+                            ] {
+                                if set {
+                                    map_refs.remove(param);
+                                }
+                            }
+                        }
+                        map_refs.extend(nested_map_refs(ref_params.as_ref()));
                         result.push(CalldataFieldInfo {
                             callee_path,
                             callee,
@@ -446,6 +537,7 @@ fn collect_calldata_fields_recursive(
                             selector,
                             chain_id,
                             chain_id_path,
+                            map_refs,
                         });
                     }
                 }
@@ -759,6 +851,66 @@ mod tests {
         assert_eq!(descriptors.len(), 2, "should resolve outer + inner");
         assert_eq!(descriptors[0].address, safe_addr.to_lowercase());
         assert_eq!(descriptors[1].address, usdc_addr.to_lowercase());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_descriptors_map_reference_callee() {
+        let outer_addr = "0x0000000000000000000000000000000000000abc";
+        let usdc_addr = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+        let outer = Descriptor::from_json(
+            &serde_json::json!({
+                "context": { "contract": { "deployments": [
+                    { "chainId": 1, "address": outer_addr }
+                ] } },
+                "metadata": {
+                    "owner": "Router",
+                    "maps": { "target": { "values": { "1": usdc_addr } } }
+                },
+                "display": { "formats": { "relay(bytes data)": {
+                    "intent": "Relay",
+                    "fields": [{
+                        "path": "data",
+                        "label": "Inner",
+                        "format": "calldata",
+                        "params": {
+                            "callee": { "map": "$.metadata.maps.target", "keyPath": "@.chainId" }
+                        }
+                    }]
+                } } }
+            })
+            .to_string(),
+        )
+        .expect("outer descriptor");
+
+        let mut source = StaticSource::new();
+        source.add_calldata(1, outer_addr, outer);
+        source.add_calldata(1, usdc_addr, erc20_descriptor());
+
+        let inner = build_erc20_transfer_calldata(outer_addr, 1);
+        let sig = crate::decoder::parse_signature("relay(bytes)").expect("signature");
+        let mut calldata = sig.selector.to_vec();
+        let mut word = [0u8; 32];
+        word[31] = 0x20;
+        calldata.extend_from_slice(&word);
+        word[31] = inner.len() as u8;
+        calldata.extend_from_slice(&word);
+        calldata.extend_from_slice(&inner);
+        calldata.resize(calldata.len() + (32 - inner.len() % 32) % 32, 0);
+
+        let tx = crate::TransactionContext {
+            chain_id: 1,
+            to: outer_addr,
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: None,
+        };
+        let descriptors = resolve_descriptors_for_tx(&tx, &source, None)
+            .await
+            .unwrap();
+
+        assert_eq!(descriptors.len(), 2, "should resolve outer + mapped inner");
+        assert_eq!(descriptors[1].address, usdc_addr);
     }
 
     #[tokio::test]

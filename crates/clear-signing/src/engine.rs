@@ -10,14 +10,15 @@ use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::encryption::{validate_annotation, Decryption, DecryptionCache, PlainKind};
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
-use crate::path::{apply_collection_access, CollectionSelection};
+use crate::path::{apply_byte_access, apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
-    chain_name, coerce_unsigned_biguint_from_argument_value,
+    chain_name_from_biguint, coerce_unsigned_biguint_from_argument_value,
     coerce_unsigned_decimal_string_from_argument_value, format_blockheight_timestamp,
     format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
     format_with_decimals, is_excluded_path, lookup_map_entry, native_token_meta,
-    resolve_interpolation_field_spec, resolve_metadata_constant_str,
+    resolve_interpolation_field_spec, resolve_metadata_constant_str, resolve_param_maps,
+    unknown_token_chain_warning,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -58,6 +59,9 @@ pub enum DisplayEntry {
         /// when a matching descriptor was found. `None` for raw/fallback frames where
         /// no inner descriptor matched.
         owner: Option<String>,
+        /// The inner call's rendered `interpolatedIntent`, when its format has one
+        /// and every placeholder resolved.
+        interpolated_intent: Option<String>,
         entries: Vec<DisplayEntry>,
     },
 }
@@ -150,21 +154,8 @@ pub(crate) async fn format_calldata(
     let entries =
         render_fields(&ctx, &expanded_fields, &mut warnings, &mut nested_fallback).await?;
 
-    let interpolated = match format.interpolated_intent.as_ref() {
-        Some(template) => {
-            match interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await {
-                Ok(rendered) => Some(rendered),
-                Err(err) => {
-                    warnings.push(render_warning(
-                        RenderDiagnosticKind::InterpolatedIntentSkipped,
-                        format!("interpolated intent skipped: {err}"),
-                    ));
-                    None
-                }
-            }
-        }
-        None => None,
-    };
+    let interpolated =
+        render_interpolated_intent(&ctx, format, &expanded_fields, &mut warnings).await;
 
     let model = DisplayModel {
         intent: format
@@ -190,6 +181,27 @@ pub(crate) async fn format_calldata(
 ///
 /// Per spec: wallets MUST reject if multiple keys share the same type-only signature
 /// (duplicate selectors).
+/// Render the format's `interpolatedIntent`. A placeholder that cannot be
+/// resolved skips the whole string with a diagnostic.
+async fn render_interpolated_intent(
+    ctx: &RenderContext<'_>,
+    format: &DisplayFormat,
+    expanded_fields: &[DisplayField],
+    warnings: &mut RenderDiagnostics,
+) -> Option<String> {
+    let template = format.interpolated_intent.as_ref()?;
+    match interpolate_intent(template, ctx, expanded_fields, &format.excluded).await {
+        Ok(rendered) => Some(rendered),
+        Err(err) => {
+            warnings.push(render_warning(
+                RenderDiagnosticKind::InterpolatedIntentSkipped,
+                format!("interpolated intent skipped: {err}"),
+            ));
+            None
+        }
+    }
+}
+
 fn find_format<'a>(
     descriptor: &'a Descriptor,
     function_name: &str,
@@ -1037,6 +1049,9 @@ pub fn merge_ref_with_definition(
                     if let Some(v) = &rp.encryption {
                         dp.encryption = Some(v.clone());
                     }
+                    for (name, reference) in &rp.map_refs {
+                        dp.map_refs.insert(name.clone(), reference.clone());
+                    }
                     Some(dp)
                 }
             };
@@ -1171,7 +1186,7 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
         | ArgumentValue::Uint(bytes)
         | ArgumentValue::Int(bytes) => {
             let seg = segments[0];
-            match apply_collection_access(bytes, seg)? {
+            match apply_byte_access(bytes, seg)? {
                 CollectionSelection::Item(byte) => {
                     navigate_value(&ArgumentValue::Bytes(vec![byte]), &segments[1..])
                 }
@@ -1224,6 +1239,13 @@ pub(crate) fn index_array_params(
     ]
     .into_iter()
     .flatten()
+    {
+        *path = path.replacen(".[]", &indexed, 1);
+    }
+    for path in params
+        .map_refs
+        .values_mut()
+        .filter_map(|reference| reference.key_path.as_mut())
     {
         *path = path.replacen(".[]", &indexed, 1);
     }
@@ -1693,6 +1715,9 @@ async fn format_value(
         return Ok("<unresolved>".to_string());
     };
 
+    let resolved_params = resolve_calldata_param_maps(ctx, params)?;
+    let params = resolved_params.as_deref();
+
     // Encryption (ERC-7730 `encryption`): decrypt via the wallet, then render the
     // plaintext with the field's regular format (e.g. tokenAmount → "1 cUSDC").
     // When decryption is unavailable the field renders its `fallbackLabel`; a
@@ -1763,6 +1788,17 @@ async fn format_value(
 }
 
 /// Render a nested calldata field by decoding the inner call and recursively formatting it.
+/// Replace the map references in `params` with their constants. The map key is
+/// read from this frame's calldata.
+fn resolve_calldata_param_maps<'p>(
+    ctx: &RenderContext<'_>,
+    params: Option<&'p FormatParams>,
+) -> Result<Option<std::borrow::Cow<'p, FormatParams>>, Error> {
+    resolve_param_maps(ctx.descriptor, params, &mut |key_path| {
+        Ok(resolve_path(ctx.decoded, key_path).map(|value| format_raw(&value)))
+    })
+}
+
 async fn render_calldata_field(
     ctx: &RenderContext<'_>,
     val: &Option<ArgumentValue>,
@@ -1771,6 +1807,9 @@ async fn render_calldata_field(
     warnings: &mut RenderDiagnostics,
     nested_fallback: &mut bool,
 ) -> Result<DisplayEntry, Error> {
+    let resolved_params = resolve_calldata_param_maps(ctx, params)?;
+    let params = resolved_params.as_deref();
+
     // Extract bytes from value
     let inner_calldata = match val {
         Some(ArgumentValue::Bytes(bytes)) => bytes,
@@ -1922,6 +1961,14 @@ async fn render_calldata_field(
     )
     .await?;
 
+    let interpolated_intent = render_interpolated_intent(
+        &inner_ctx,
+        inner_format,
+        &inner_expanded,
+        &mut inner_warnings,
+    )
+    .await;
+
     warnings.extend(inner_warnings);
 
     let intent = inner_format
@@ -1934,6 +1981,7 @@ async fn render_calldata_field(
         label: label.to_string(),
         intent,
         owner: inner_descriptor.metadata.owner.clone(),
+        interpolated_intent,
         entries: inner_entries,
     })
 }
@@ -1983,7 +2031,7 @@ fn format_raw_with_separator(val: &ArgumentValue, separator: Option<&str>) -> St
     }
 }
 
-fn format_raw(val: &ArgumentValue) -> String {
+pub(crate) fn format_raw(val: &ArgumentValue) -> String {
     match val {
         ArgumentValue::Address(addr) => eip55_checksum(addr),
         ArgumentValue::Uint(bytes) => BigUint::from_bytes_be(bytes).to_string(),
@@ -2210,7 +2258,17 @@ async fn format_token_amount(
     };
 
     // Determine chain ID for token lookup (cross-chain support)
-    let lookup_chain_id = resolve_chain_id(ctx, params);
+    let Some(lookup_chain_id) = resolve_chain_id(ctx, params) else {
+        warnings.push(unknown_token_chain_warning(
+            RenderDiagnosticKind::TokenMetadataNotFound,
+        ));
+        return Ok(format_token_amount_output(
+            ctx.descriptor,
+            &raw_amount,
+            params,
+            None,
+        ));
+    };
 
     // Try to resolve token metadata
     let token_meta = if let Some(params) = params {
@@ -2285,7 +2343,12 @@ async fn format_token_ticker(
     params: Option<&FormatParams>,
     warnings: &mut RenderDiagnostics,
 ) -> Result<String, Error> {
-    let lookup_chain_id = resolve_chain_id(ctx, params);
+    let Some(lookup_chain_id) = resolve_chain_id(ctx, params) else {
+        warnings.push(unknown_token_chain_warning(
+            RenderDiagnosticKind::TokenTickerNotFound,
+        ));
+        return Ok(format_raw(val));
+    };
 
     if let Some(addr_hex) = address_string_from_argument_value(val) {
         if let Some(meta) = ctx
@@ -2306,32 +2369,30 @@ async fn format_token_ticker(
 
 fn format_chain_id(val: &ArgumentValue) -> Result<String, Error> {
     if let ArgumentValue::Uint(bytes) = val {
-        let n = BigUint::from_bytes_be(bytes);
-        let chain_id: u64 = n.try_into().unwrap_or(0);
-        Ok(chain_name(chain_id))
+        Ok(chain_name_from_biguint(&BigUint::from_bytes_be(bytes)))
     } else {
         Ok(format_raw(val))
     }
 }
 
 /// Resolve the chain ID for cross-chain token lookups.
-fn resolve_chain_id(ctx: &RenderContext<'_>, params: Option<&FormatParams>) -> u64 {
+///
+/// `None` when `chainIdPath` holds a chain ID that does not fit in `u64`. No
+/// token can be looked up on such a chain, and the signing chain is wrong.
+fn resolve_chain_id(ctx: &RenderContext<'_>, params: Option<&FormatParams>) -> Option<u64> {
     if let Some(params) = params {
         // Static chain ID takes precedence
         if let Some(cid) = params.chain_id {
-            return cid;
+            return Some(cid);
         }
         // Dynamic chain ID from calldata path
         if let Some(ref path) = params.chain_id_path {
             if let Some(ArgumentValue::Uint(bytes)) = resolve_path(ctx.decoded, path) {
-                let n = BigUint::from_bytes_be(&bytes);
-                if let Ok(cid) = u64::try_from(n) {
-                    return cid;
-                }
+                return u64::try_from(BigUint::from_bytes_be(&bytes)).ok();
             }
         }
     }
-    ctx.chain_id
+    Some(ctx.chain_id)
 }
 
 fn format_amount(ctx: &RenderContext<'_>, val: &ArgumentValue) -> Result<String, Error> {

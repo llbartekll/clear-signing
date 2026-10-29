@@ -93,6 +93,12 @@ pub enum FieldValue {
 #[serde(deny_unknown_fields)]
 pub struct NestedExpected {
     pub intent: String,
+    #[serde(
+        default,
+        rename = "interpolatedIntent",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub interpolated_intent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default)]

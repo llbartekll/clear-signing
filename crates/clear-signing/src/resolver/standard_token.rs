@@ -247,6 +247,7 @@ fn empty_format_params() -> FormatParams {
         sender_address: None,
         collection_path: None,
         collection: None,
+        map_refs: Default::default(),
     }
 }
 

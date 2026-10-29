@@ -8,8 +8,8 @@ use clear_signing::provider::{DataProvider, EmptyDataProvider};
 use clear_signing::token::{StaticTokenSource, TokenMeta};
 use clear_signing::types::descriptor::Descriptor;
 use clear_signing::{
-    format_calldata, format_typed_data, merge_descriptors, FallbackReason, FormatOutcome,
-    ResolvedDescriptor, TransactionContext,
+    format_calldata, format_typed_data, merge_descriptors, FallbackReason, FormatFailure,
+    FormatOutcome, ResolvedDescriptor, TransactionContext,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -7524,4 +7524,499 @@ async fn test_nft_name_unknown_collection_falls_back_to_raw_token_id_calldata_ei
         vec![("Token".to_string(), "42".to_string())]
     );
     assert_semantic_parity(&calldata_model, &typed_model);
+}
+
+/// A nested call renders its own `interpolatedIntent` (the test schema allows it
+/// in a nested rendered output), for calldata and EIP-712 containers alike.
+#[tokio::test]
+async fn test_nested_calldata_renders_inner_interpolated_intent_parity() {
+    let inner_addr = "0x1000000000000000000000000000000000000001";
+    let inner_json = r#"{
+        "context": { "contract": { "deployments": [{"chainId": 1, "address": "0x1000000000000000000000000000000000000001"}] } },
+        "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+        "display": {
+            "definitions": {},
+            "formats": {
+                "consume(uint256 amount)": {
+                    "intent": "Consume",
+                    "interpolatedIntent": "Consume {amount} units",
+                    "fields": [{ "path": "amount", "label": "Amount", "format": "number" }]
+                }
+            }
+        }
+    }"#;
+    let inner_calldata = build_calldata("consume(uint256)", &[uint_word(5)]);
+
+    let outer_calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "outer(bytes data)": {{
+                        "intent": "Outer",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{ "callee": "{inner_addr}" }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let calldata = build_single_bytes_calldata("outer(bytes)", &inner_calldata);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let descriptors = vec![
+        wrap_rd(outer_calldata_descriptor, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(Descriptor::from_json(inner_json).unwrap(), 1, inner_addr)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+    let calldata_result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    let outer_typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "Relay(bytes data)": {{
+                        "intent": "Relay",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{ "callee": "{inner_addr}" }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Relay": [{ "name": "data", "type": "bytes" }]
+        },
+        "primaryType": "Relay",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "data": format!("0x{}", hex::encode(&inner_calldata)) }
+    }))
+    .unwrap();
+    let descriptors = vec![
+        wrap_rd(outer_typed_descriptor, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(Descriptor::from_json(inner_json).unwrap(), 1, inner_addr)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+    let typed_result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    for result in [&calldata_result, &typed_result] {
+        match &result.entries[0] {
+            DisplayEntry::Nested {
+                intent,
+                interpolated_intent,
+                ..
+            } => {
+                assert_eq!(intent, "Consume");
+                assert_eq!(interpolated_intent.as_deref(), Some("Consume 5 units"));
+            }
+            other => panic!("expected Nested entry, got {other:?}"),
+        }
+    }
+}
+
+/// A chain ID above `u64` renders as "Chain <decimal>" for the `chainId` format.
+/// A `tokenAmount` / `tokenTicker` whose `chainIdPath` holds such an ID does not
+/// look up the token on the signing chain: the token is unknown and the value
+/// renders raw. Calldata and EIP-712 agree.
+#[tokio::test]
+async fn test_chain_id_above_u64_parity() {
+    let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    let above_u64 = "18446744073709551616";
+    let fields = r#"[
+        { "path": "amount", "label": "Amount", "format": "tokenAmount",
+          "params": { "tokenPath": "token", "chainIdPath": "dstChainId" } },
+        { "path": "token", "label": "Token", "format": "tokenTicker",
+          "params": { "chainIdPath": "dstChainId" } },
+        { "path": "dstChainId", "label": "Destination", "format": "chainId" }
+    ]"#;
+
+    let calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "bridge(uint256 amount,address token,uint256 dstChainId)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let mut chain_word = [0u8; 32];
+    chain_word[23] = 1;
+    let calldata = build_calldata(
+        "bridge(uint256,address,uint256)",
+        &[uint_word(5_000_000), addr_word(usdc), chain_word],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "Bridge(uint256 amount,address token,uint256 dstChainId)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Bridge": [
+                { "name": "amount", "type": "uint256" },
+                { "name": "token", "type": "address" },
+                { "name": "dstChainId", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Bridge",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "amount": "5000000", "token": usdc, "dstChainId": above_u64 }
+    }))
+    .unwrap();
+
+    // USDC is known on the signing chain only.
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        usdc,
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
+        .await
+        .unwrap();
+    let typed_result =
+        format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+            .await
+            .unwrap();
+
+    for result in [&calldata_result, &typed_result] {
+        let items = semantic_item_snapshot(&result.entries);
+        assert_eq!(items[0], ("Amount".to_string(), "5000000".to_string()));
+        assert_eq!(items[1].0, "Token");
+        assert!(
+            items[1].1.eq_ignore_ascii_case(usdc),
+            "ticker must not resolve on the signing chain: {:?}",
+            items[1]
+        );
+        assert_eq!(
+            items[2],
+            ("Destination".to_string(), format!("Chain {above_u64}"))
+        );
+        let codes: Vec<&str> = result
+            .diagnostics()
+            .iter()
+            .map(|d| d.code.as_str())
+            .collect();
+        assert!(codes.contains(&"token_metadata_not_found"), "{codes:?}");
+        assert!(codes.contains(&"token_ticker_not_found"), "{codes:?}");
+    }
+}
+
+/// A byte slice past the end of the data clamps to the available bytes, and
+/// empty bytes decode as 0 for an integer format (Sourcify runner behavior; the
+/// spec does not define this case). Calldata and EIP-712 agree.
+#[tokio::test]
+async fn test_byte_slice_past_end_clamps_parity() {
+    let dai = "0x6b175474e89094c44da98b954eedeac495271d0f";
+    let fields = format!(
+        r#"[
+            {{ "path": "data.[0:32]", "label": "Min", "format": "tokenAmount", "params": {{ "token": "{dai}" }} }},
+            {{ "path": "data.[1:32]", "label": "Tail", "format": "number" }}
+        ]"#
+    );
+    let calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "bridge(bytes data)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "Bridge(bytes data)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        dai,
+        TokenMeta {
+            symbol: "DAI".to_string(),
+            decimals: 18,
+            name: "Dai".to_string(),
+        },
+    );
+
+    // (data, expected Min, expected Tail)
+    let cases: [(&[u8], &str, &str); 2] = [
+        (&[], "0 DAI", "0"),
+        (&[0x01, 0x02], "0.000000000000000258 DAI", "2"),
+    ];
+    for (data, min, tail) in cases {
+        let calldata = build_single_bytes_calldata("bridge(bytes)", data);
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xabc",
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: None,
+        };
+        let calldata_result = format_calldata(
+            &wrap_rd(calldata_descriptor.clone(), 1, "0xabc"),
+            &tx,
+            &tokens,
+        )
+        .await
+        .unwrap();
+
+        let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+            "types": { "EIP712Domain": [], "Bridge": [{ "name": "data", "type": "bytes" }] },
+            "primaryType": "Bridge",
+            "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+            "message": { "data": format!("0x{}", hex::encode(data)) }
+        }))
+        .unwrap();
+        let typed_result = format_typed_data(
+            &wrap_rd(typed_descriptor.clone(), 1, "0xabc"),
+            &typed_data,
+            &tokens,
+        )
+        .await
+        .unwrap();
+
+        for result in [&calldata_result, &typed_result] {
+            assert_eq!(
+                semantic_item_snapshot(&result.entries),
+                vec![
+                    ("Min".to_string(), min.to_string()),
+                    ("Tail".to_string(), tail.to_string()),
+                ]
+            );
+        }
+    }
+}
+
+/// Spec map references (`metadata.maps`) work for every parameter that takes a
+/// constant: here `token` and `chainId` of a tokenAmount (key read from a
+/// parameter, hex key matched case-insensitively) and `callee` of a nested call
+/// (key `@.chainId`). A key that is not in the map makes the descriptor invalid.
+/// Calldata and EIP-712 agree.
+#[tokio::test]
+async fn test_map_references_resolve_constant_params_parity() {
+    let pool = "0x5555555555555555555555555555555555555555";
+    let usdc = "0x0b2c639c533813f4aa9d7837caf62653d097ff85";
+    let inner_addr = "0x1000000000000000000000000000000000000001";
+    let metadata = format!(
+        r#"{{
+            "owner": "test", "enums": {{}}, "constants": {{}},
+            "maps": {{
+                "poolToken": {{ "$keyType": "address", "values": {{ "{pool_upper}": "{usdc}" }} }},
+                "poolChain": {{ "$keyType": "address", "values": {{ "{pool}": 10 }} }},
+                "router": {{ "$keyType": "Chain ID", "values": {{ "1": "{inner_addr}" }} }}
+            }}
+        }}"#,
+        pool_upper = pool.to_uppercase().replacen("0X", "0x", 1)
+    );
+    let fields = r#"[
+        { "path": "amount", "label": "Amount", "format": "tokenAmount", "params": {
+            "token": { "map": "$.metadata.maps.poolToken", "keyPath": "pool" },
+            "chainId": { "map": "$.metadata.maps.poolChain", "keyPath": "pool" }
+        } },
+        { "path": "data", "label": "Inner", "format": "calldata", "params": {
+            "callee": { "map": "$.metadata.maps.router", "keyPath": "@.chainId" }
+        } }
+    ]"#;
+    let inner = Descriptor::from_json(
+        r#"{
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0x1000000000000000000000000000000000000001"}] } },
+            "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+            "display": { "definitions": {}, "formats": { "consume()": { "intent": "Consume", "fields": [] } } }
+        }"#,
+    )
+    .unwrap();
+    let inner_calldata = build_calldata("consume()", &[]);
+
+    let calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}, {{"chainId": 5, "address": "0xabc"}}] }} }},
+            "metadata": {metadata},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "swap(address pool,uint256 amount,bytes data)": {{ "intent": "Swap", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}, {{"chainId": 5, "address": "0xabc"}}] }} }},
+            "metadata": {metadata},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "Swap(address pool,uint256 amount,bytes data)": {{ "intent": "Swap", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    // USDC is known on chain 10 only, so the token resolves only through the map.
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        10,
+        usdc,
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let render = |chain_id: u64| {
+        let calldata_descriptor = calldata_descriptor.clone();
+        let typed_descriptor = typed_descriptor.clone();
+        let inner = inner.clone();
+        let tokens = &tokens;
+        let inner_calldata = inner_calldata.clone();
+        async move {
+            let mut calldata = build_calldata(
+                "swap(address,uint256,bytes)",
+                &[
+                    addr_word(pool),
+                    uint_word(2_500_000),
+                    dynamic_offset_word(96),
+                    uint_word(inner_calldata.len() as u64),
+                ],
+            );
+            calldata.extend_from_slice(&inner_calldata);
+            calldata.extend(std::iter::repeat_n(
+                0u8,
+                (32 - inner_calldata.len() % 32) % 32,
+            ));
+            let tx = TransactionContext {
+                chain_id,
+                to: "0xabc",
+                calldata: &calldata,
+                value: None,
+                from: None,
+                implementation_address: None,
+            };
+            let descriptors = vec![
+                wrap_rd(calldata_descriptor, chain_id, "0xabc")
+                    .into_iter()
+                    .next()
+                    .unwrap(),
+                wrap_rd(inner.clone(), 1, inner_addr)
+                    .into_iter()
+                    .next()
+                    .unwrap(),
+            ];
+            let calldata_result = format_calldata(&descriptors, &tx, tokens).await;
+
+            let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+                "types": {
+                    "EIP712Domain": [],
+                    "Swap": [
+                        { "name": "pool", "type": "address" },
+                        { "name": "amount", "type": "uint256" },
+                        { "name": "data", "type": "bytes" }
+                    ]
+                },
+                "primaryType": "Swap",
+                "domain": { "chainId": chain_id, "verifyingContract": "0xabc" },
+                "message": {
+                    "pool": pool,
+                    "amount": "2500000",
+                    "data": format!("0x{}", hex::encode(&inner_calldata))
+                }
+            }))
+            .unwrap();
+            let descriptors = vec![
+                wrap_rd(typed_descriptor, chain_id, "0xabc")
+                    .into_iter()
+                    .next()
+                    .unwrap(),
+                wrap_rd(inner, 1, inner_addr).into_iter().next().unwrap(),
+            ];
+            let typed_result = format_typed_data(&descriptors, &typed_data, tokens).await;
+            (calldata_result, typed_result)
+        }
+    };
+
+    let (calldata_result, typed_result) = render(1).await;
+    for result in [calldata_result.unwrap(), typed_result.unwrap()] {
+        match &result.entries[..] {
+            [DisplayEntry::Item(amount), DisplayEntry::Nested { intent, .. }] => {
+                assert_eq!(amount.value, "2.5 USDC");
+                assert_eq!(intent, "Consume");
+            }
+            other => panic!("unexpected entries: {other:?}"),
+        }
+    }
+
+    // The router map has no value for chain 5.
+    let (calldata_result, typed_result) = render(5).await;
+    for result in [calldata_result, typed_result] {
+        match result {
+            Err(FormatFailure::InvalidDescriptor { detail, .. }) => {
+                assert!(detail.contains("no value for key '5'"), "{detail}")
+            }
+            other => panic!("expected an invalid descriptor, got {other:?}"),
+        }
+    }
 }

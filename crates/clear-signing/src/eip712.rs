@@ -20,15 +20,15 @@ use crate::engine::{
 };
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
-use crate::path::{apply_collection_access, CollectionSelection};
+use crate::path::{apply_byte_access, apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
-    chain_name, coerce_unsigned_biguint_from_typed_value,
+    chain_name_from_biguint, coerce_unsigned_biguint_from_typed_value,
     coerce_unsigned_decimal_string_from_typed_value, format_blockheight_timestamp,
     format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
     format_with_decimals, is_excluded_path, lookup_map_entry, native_token_meta,
     parse_unsigned_biguint_from_typed_value, resolve_interpolation_field_spec,
-    resolve_metadata_constant_str,
+    resolve_metadata_constant_str, resolve_param_maps, unknown_token_chain_warning,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -899,7 +899,7 @@ async fn render_typed_field_group_entries<'a>(
 /// The `#.` path prefix resolves from message fields (EIP-712 specific).
 #[allow(clippy::too_many_arguments)]
 async fn render_typed_calldata_field(
-    _descriptor: &Descriptor,
+    descriptor: &Descriptor,
     message: &serde_json::Value,
     val: &Option<serde_json::Value>,
     params: Option<&FormatParams>,
@@ -911,6 +911,12 @@ async fn render_typed_calldata_field(
     warnings: &mut RenderDiagnostics,
     nested_fallback: &mut bool,
 ) -> Result<DisplayEntry, Error> {
+    let resolved_params = resolve_param_maps(descriptor, params, &mut |key_path| {
+        Ok(resolve_typed_path_in_context(message, key_path, container)?
+            .map(|key| json_value_to_string(&key)))
+    })?;
+    let params = resolved_params.as_deref();
+
     // Extract hex bytes from JSON value
     let inner_calldata = match val {
         Some(serde_json::Value::String(s)) => {
@@ -1066,6 +1072,7 @@ async fn render_typed_calldata_field(
         label: label.to_string(),
         intent: result.intent,
         owner: result.owner,
+        interpolated_intent: result.interpolated_intent,
         entries: result.entries,
     })
 }
@@ -1339,7 +1346,7 @@ fn apply_typed_access(current: &serde_json::Value, segment: &str) -> Option<serd
         serde_json::Value::String(s) => {
             let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
             let bytes = hex::decode(hex_str).ok()?;
-            match apply_collection_access(&bytes, segment)? {
+            match apply_byte_access(&bytes, segment)? {
                 CollectionSelection::Item(byte) => {
                     Some(serde_json::Value::String(format!("0x{:02x}", byte)))
                 }
@@ -1839,6 +1846,14 @@ async fn format_typed_value(
         return Ok("<unresolved>".to_string());
     };
 
+    let resolved_params = resolve_param_maps(descriptor, params, &mut |key_path| {
+        Ok(
+            resolve_typed_param_path_in_context(message, key_path, container, item_scope)?
+                .map(|key| json_value_to_string(&key)),
+        )
+    })?;
+    let params = resolved_params.as_deref();
+
     // Encryption (ERC-7730 `encryption`): decrypt via the wallet, then render the
     // plaintext with the field's regular format — the same path calldata takes,
     // using the typed container's chainId and verifyingContract. When decryption
@@ -1940,7 +1955,14 @@ async fn format_typed_value(
         FieldFormat::TokenAmount => {
             let amount = parse_typed_biguint_value(val, "tokenAmount")?;
 
-            let lookup_chain = resolve_typed_chain_id(params, container, message)?;
+            let Some(lookup_chain) = resolve_typed_chain_id(params, container, message)? else {
+                warnings.push(unknown_token_chain_warning(
+                    RenderDiagnosticKind::TokenMetadataNotFound,
+                ));
+                return Ok(format_token_amount_output(
+                    descriptor, &amount, params, None,
+                ));
+            };
 
             let token_meta = if let Some(params) = params {
                 if let Some(ref token_path) = params.token_path {
@@ -2008,9 +2030,14 @@ async fn format_typed_value(
         FieldFormat::Number => Ok(coerce_unsigned_decimal_string_from_typed_value(val)
             .unwrap_or_else(|| json_value_to_string(val))),
         FieldFormat::TokenTicker => {
-            let lookup_chain = resolve_typed_chain_id(params, container, message)?;
             let addr =
                 coerce_typed_address_string(val).unwrap_or_else(|| json_value_to_string(val));
+            let Some(lookup_chain) = resolve_typed_chain_id(params, container, message)? else {
+                warnings.push(unknown_token_chain_warning(
+                    RenderDiagnosticKind::TokenTickerNotFound,
+                ));
+                return Ok(addr);
+            };
             if let Some(meta) = data_provider.resolve_token(lookup_chain, &addr).await {
                 Ok(meta.symbol)
             } else {
@@ -2022,8 +2049,8 @@ async fn format_typed_value(
             }
         }
         FieldFormat::ChainId => {
-            let cid = parse_typed_u64_value(val, "chainId")?;
-            Ok(chain_name(cid))
+            let cid = parse_typed_biguint_value(val, "chainId")?;
+            Ok(chain_name_from_biguint(&cid))
         }
         // No EIP-712 type is known here, so a 20-byte hex value under `raw` is
         // treated as an address and checksummed (parity with the calldata Address
@@ -2041,7 +2068,9 @@ async fn format_typed_value(
         FieldFormat::Amount => match coerce_unsigned_biguint_from_typed_value(val) {
             Some(n) => {
                 // Per ERC-7730 the `amount` format is a native-currency amount.
-                let chain_id = resolve_typed_chain_id(params, container, message)?;
+                let Some(chain_id) = resolve_typed_chain_id(params, container, message)? else {
+                    return Ok(n.to_string());
+                };
                 let meta = native_token_meta(chain_id);
                 Ok(format!(
                     "{} {}",
@@ -2105,29 +2134,34 @@ async fn format_typed_value(
     }
 }
 
+/// Resolve the chain ID for cross-chain token lookups.
+///
+/// `Ok(None)` when `chainIdPath` holds a chain ID that does not fit in `u64`
+/// (parity with calldata `resolve_chain_id`).
 fn resolve_typed_chain_id(
     params: Option<&FormatParams>,
     container: TypedContainerContext<'_>,
     message: &serde_json::Value,
-) -> Result<u64, Error> {
+) -> Result<Option<u64>, Error> {
     if let Some(params) = params {
         if let Some(cid) = params.chain_id {
-            return Ok(cid);
+            return Ok(Some(cid));
         }
         if let Some(ref path) = params.chain_id_path {
             if let Some(val) = resolve_typed_path_in_context(message, path, container)? {
-                return parse_typed_u64_value(&val, "chainId");
+                let cid = parse_typed_biguint_value(&val, "chainId")?;
+                return Ok(u64::try_from(&cid).ok());
             }
         }
     }
-    container.chain_id.ok_or_else(|| {
+    container.chain_id.map(Some).ok_or_else(|| {
         Error::Descriptor(
             "EIP-712 container value @.chainId is required but unavailable".to_string(),
         )
     })
 }
 
-fn json_value_to_string(val: &serde_json::Value) -> String {
+pub(crate) fn json_value_to_string(val: &serde_json::Value) -> String {
     match val {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Number(n) => n.to_string(),

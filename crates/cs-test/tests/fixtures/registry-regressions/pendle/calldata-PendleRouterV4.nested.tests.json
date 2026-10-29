@@ -1,0 +1,274 @@
+{
+  "$schema": "../../../specs/erc7730-tests-v2.schema.json",
+  "descriptor": "./calldata-PendleRouterV4.json",
+  "dataProvider": {
+    "tokens": {
+      "0x66d89028528462bb6fac3a1b289063a235074396": { "name": "PLP risexUSDC 27DEC2026", "symbol": "PLP-risexUSDC-27DEC2026", "decimals": 18 },
+      "0xeb892628d1e58bc475a6dcb7f5dbc4f591632aa4": { "name": "Staked USDx", "symbol": "sUSDx", "decimals": 18 },
+      "0x5e572498e9f83650f0ff24194999bddb4b390928": { "name": "PLP Staked USDx 3DEC2026", "symbol": "PLP-sUSDx-3DEC2026", "decimals": 18 },
+      "0x687dedecd5d2899ef497b3ff13af066ac3d152b0": { "name": "PLP Staked Forest Road Dollar 28JAN2027", "symbol": "PLP-sUSDfr-28JAN2027", "decimals": 18 },
+      "0xd44f2630260ff3805d7cb317d4f6740b0044c408": { "name": "PLP Staked infiniFi USD 7JAN2027", "symbol": "PLP-siUSD-7JAN2027", "decimals": 18 },
+      "0x13285bcbc27f92b47b4edb99d744c07b48c977c0": { "name": "PLP reUSD 10DEC2026", "symbol": "PLP-reUSD-10DEC2026", "decimals": 18 },
+      "0x9df10b8c99dc1a48dd7048a9a524bff9b54a0a30": { "name": "PLP f(x) USD Saving 29APR2027", "symbol": "PLP-fxSAVE-29APR2027", "decimals": 18 },
+      "0x085780639cc2cacd35e474e71f4d000e2405d8f6": { "name": "f(x) USD", "symbol": "fxUSD", "decimals": 18 },
+      "0x5086bf358635b81d8c47c66d1c8b9e567db70c72": { "name": "Re Protocol Deposit Token", "symbol": "reUSD", "decimals": 18 },
+      "0x90b70c407f1077f8eb92bf423b44cd92329b737a": { "name": "PLP reUSDe 10DEC2026", "symbol": "PLP-reUSDe-10DEC2026", "decimals": 18 },
+      "0xfabeefc5369aa5270b401f4ee062d17fb5f1ec2a": { "name": "PLP Strata Junior USDe 2APR2026", "symbol": "PLP-jrUSDe-2APR2026", "decimals": 18 },
+      "0xf32e58f92e60f4b0a37a69b95d642a471365eae8": { "name": "Pendle Market", "symbol": "PENDLE-LPT", "decimals": 18 },
+      "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee": { "name": "Wrapped eETH", "symbol": "weETH", "decimals": 18 },
+      "0xbeab098b510f758cd35122ee345957b8eccbb322": { "name": "PLP Savings Usdd 26NOV2026", "symbol": "PLP-sUSDD-26NOV2026", "decimals": 18 },
+      "0x4f8e5de400de08b164e7421b3ee387f461becd1a": { "name": "Usdd Stablecoin", "symbol": "USDD", "decimals": 18 },
+      "0x96dcb9501bcc8128b7683980a63250448ea5334b": { "name": "YT Staked USDx 3DEC2026", "symbol": "YT-sUSDx-3DEC2026", "decimals": 18 },
+      "0x38eeb52f0771140d10c4e9a9a72349a329fe8a6a": { "name": "apyUSD", "symbol": "apyUSD", "decimals": 18 },
+      "0x85cc1b74fc95abb6b9b6060c56334ba3e4b88ed4": { "name": "YT apyUSD 5NOV2026", "symbol": "YT-apyUSD-5NOV2026", "decimals": 18 },
+      "0x48f9e38f3070ad8945dfeae3fa70987722e3d89c": { "name": "infiniFi USD", "symbol": "iUSD", "decimals": 18 },
+      "0x9f30507c264cc6eb5be35b18ff9ad7b4539aa920": { "name": "SY Staked infiniFi USD", "symbol": "SY-siUSD", "decimals": 18 },
+      "0xc38901aa77112efc519a1f8bd501eb2f68055689": { "name": "YT Staked USDat 14JAN2027", "symbol": "YT-sUSDat-14JAN2027", "decimals": 6 },
+      "0x4829d6c7f40eac2642e269d4198321891ee4449f": { "name": "YT apyUSD 11FEB2027", "symbol": "YT-apyUSD-11FEB2027", "decimals": 18 },
+      "0xbe3d4ec488a0a042bb86f9176c24f8cd54018ba7": { "name": "SY Savings USDS", "symbol": "SY-sUSDS", "decimals": 18 },
+      "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd": { "name": "Savings USDS", "symbol": "sUSDS", "decimals": 18 },
+      "0xaf0349fb9b1ba07d34381870c59b560b31412660": { "name": "PLP apxUSD 5NOV2026", "symbol": "PLP-apxUSD-5NOV2026", "decimals": 18 },
+      "0x4a5067c3ff1abb7449244025b0e37feaf77d8e3e": { "name": "PLP USD3 17DEC2026", "symbol": "PLP-USD3-17DEC2026", "decimals": 18 },
+      "0x056b269eb1f75477a8666ae8c7fe01b64dd55ecc": { "name": "USD3", "symbol": "USD3", "decimals": 6 },
+      "0x7972de1c2f9f11f622a188fbae8c0a943880424f": { "name": "PLP sUSD3 17DEC2026", "symbol": "PLP-sUSD3-17DEC2026", "decimals": 18 },
+      "0x384509537ce5daa5740baeb6d1ee0eb2847ea8a8": { "name": "PLP Flagship WETH SuperVault 26NOV2026", "symbol": "PLP-superWETH-26NOV2026", "decimals": 18 },
+      "0xa036823b9a24f63c32553367bf181ee04229c3ac": { "name": "Flagship WETH SuperVault", "symbol": "superWETH", "decimals": 18 },
+      "0x4c9edd5852cd905f086c759e8383e09bff1e68b3": { "name": "USDe", "symbol": "USDe", "decimals": 18 },
+      "0x98a878b1cd98131b271883b390f68d2c90674665": { "name": "apxUSD", "symbol": "apxUSD", "decimals": 18 },
+      "0xa1fa7777974312f7d801a8880714a218f76233f8": { "name": "USDx", "symbol": "USDx", "decimals": 18 },
+      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": { "name": "USD Coin", "symbol": "USDC", "decimals": 6 },
+      "0xc58d044404d8b14e953c115e67823784dea53d8f": { "name": "Strata Junior USDe", "symbol": "jrUSDe", "decimals": 18 },
+      "0x04f8dca7bccd8997ac57ca6fef7c705e17d6bcb6": { "name": "SY apyUSD", "symbol": "SY-apyUSD", "decimals": 18 },
+      "0x06ebad062fd573ca31a72d6dfb0f425da2153985": { "name": "PT Staked USDx 3DEC2026", "symbol": "PT-sUSDx-3DEC2026", "decimals": 18 },
+      "0x35fa164735182de50811e8e2e824cfb9b6118ac2": { "name": "ether.fi ETH", "symbol": "eETH", "decimals": 18 },
+      "0x391b570e81e354a85a496952b66adc831715f54f": { "name": "YT Puffer ETH 27JUN2024", "symbol": "YT-pufETH-27JUN2024", "decimals": 18 },
+      "0x3aecaedfb92efbbac95e5c458c56e94070cb9179": { "name": "SY Flagship WETH SuperVault", "symbol": "SY-superWETH", "decimals": 18 },
+      "0x3b184870f40ca026341593cedb37ab09e611e928": { "name": "SY Staked USDx", "symbol": "SY-sUSDx", "decimals": 18 },
+      "0x3d7d6fdf07ee548b939a80edbc9b2256d0cdc003": { "name": "Strata Senior USDe", "symbol": "srUSDe", "decimals": 18 },
+      "0x41f45d21502bde8211e94d94ef2eeebcfc48a6ac": { "name": "PT sUSD3 17DEC2026", "symbol": "PT-sUSD3-17DEC2026", "decimals": 6 },
+      "0x459bcab2490843ad1fe1e4feff7f7ea16a14408b": { "name": "PT Savings Usdd 26NOV2026", "symbol": "PT-sUSDD-26NOV2026", "decimals": 18 },
+      "0x4f116ee5bcd227d1a1c4f57918d694a4abe7b3fc": { "name": "SY apxUSD", "symbol": "SY-apxUSD", "decimals": 18 },
+      "0x4f6673346ab4813f1665327ab39087008cc7d76f": { "name": "SY Strata Junior USDe", "symbol": "SY-jrUSDe", "decimals": 18 },
+      "0x59bc9fae5d62b19d4f8d07d758047acb9ee19d34": { "name": "PT Strata Senior USDe 22OCT2026", "symbol": "PT-srUSDe-22OCT2026", "decimals": 18 },
+      "0x5a62d8cd0ded562816cd68d96316a0cfffc9e5d6": { "name": "SY risexUSDC", "symbol": "SY-risexUSDC", "decimals": 18 },
+      "0x66ec657c59cdcaf171ab43b83da3942758bf8a97": { "name": "PLP Strata Senior USDe 22OCT2026", "symbol": "PLP-srUSDe-22OCT2026", "decimals": 18 },
+      "0x70a3b0fd5d7781b759a60398a1e9edb465aa420e": { "name": "PT apxUSD 11FEB2027", "symbol": "PT-apxUSD-11FEB2027", "decimals": 18 },
+      "0x775f0f7690c2ceed13d20f9a302d1e8069d56b3b": { "name": "YT Flagship WETH SuperVault 26NOV2026", "symbol": "YT-superWETH-26NOV2026", "decimals": 18 },
+      "0x77d2bc95ab51b75960ec3a01e112460ea7bafb20": { "name": "SY sUSD3", "symbol": "SY-sUSD3", "decimals": 6 },
+      "0x7a7de491e1be5287874904e2b7c8488249a4d0a9": { "name": "SY USDat", "symbol": "SY-USDat", "decimals": 6 },
+      "0x7f47c3e6b2c00fc4eb4d5ae50d0ab0ab6888eb4d": { "name": "PT USD3 17DEC2026", "symbol": "PT-USD3-17DEC2026", "decimals": 6 },
+      "0x8917f8c7feb840b5837edc7e128123baa2f289f9": { "name": "SY Staked USDat", "symbol": "SY-sUSDat", "decimals": 18 },
+      "0x9487bd5a3b16ecb5f3184453e3ee75b800141648": { "name": "SY reUSD", "symbol": "SY-reUSD", "decimals": 18 },
+      "0xa8bd3b21291ace53927b35563fc80615919e63d7": { "name": "YT reUSD 10DEC2026", "symbol": "YT-reUSD-10DEC2026", "decimals": 6 },
+      "0xa91277e31f6be8c33850dde8dfacb27bad1be6fb": { "name": "YT USDx 3DEC2026", "symbol": "YT-USDx-3DEC2026", "decimals": 18 },
+      "0xaf687b5ecb525ccea96115088999b4ed80c388b6": { "name": "PT apxUSD 5NOV2026", "symbol": "PT-apxUSD-5NOV2026", "decimals": 18 },
+      "0xb71fdc5c39e32f3b600a000245f1b523b6be8af9": { "name": "PT risexUSDC 27DEC2026", "symbol": "PT-risexUSDC-27DEC2026", "decimals": 18 },
+      "0xba96292ee7673e3b546cc90db6d97111cd9a314f": { "name": "PT USDat 14JAN2027", "symbol": "PT-USDat-14JAN2027", "decimals": 6 },
+      "0xc08aaed663c1c257f677f9d4b92a7a265967e54f": { "name": "YT Savings Usdd 26NOV2026", "symbol": "YT-sUSDD-26NOV2026", "decimals": 18 },
+      "0xc69ad9bab1dee23f4605a82b3354f8e40d1e5966": { "name": "PT ether.fi weETH 27JUN2024", "symbol": "PT-weETH-27JUN2024", "decimals": 18 },
+      "0xd0609ac13000d88b0bebf5bb21074916edd92bb1": { "name": "PT Strata Junior USDe 2APR2026", "symbol": "PT-jrUSDe-2APR2026", "decimals": 18 },
+      "0xd9a442856c234a39a81a089c06451ebaa4306a72": { "name": "pufETH", "symbol": "pufETH", "decimals": 18 },
+      "0xdbd5fb715b833fbea448ab756f02c7617ecb97be": { "name": "PT Staked Forest Road Dollar 28JAN2027", "symbol": "PT-sUSDfr-28JAN2027", "decimals": 18 },
+      "0xdd0c9da25f8eb47116f3bed8a311899a5eb449b4": { "name": "SY Savings Usdd", "symbol": "SY-sUSDD", "decimals": 18 },
+      "0xfd9aa51f530369ff5024bc3f6d6f3a00a789f94a": { "name": "YT reUSDe 10DEC2026", "symbol": "YT-reUSDe-10DEC2026", "decimals": 18 },
+      "0x1964590af52cd77c2f30970bdbcb4d6e3dbdc615": { "name": "YT f(x) USD Saving 29OCT2026", "symbol": "YT-fxSAVE-29OCT2026", "decimals": 18 },
+      "0x1aad217b8f78dba5e6693460e8470f8b1a3977f3": { "name": "Strategy PP Variable xStock", "symbol": "STRCx", "decimals": 18 },
+      "0x280839980a7ed0d7717f64125fe241012e5f5815": { "name": "Staked trUSD", "symbol": "strUSD", "decimals": 18 },
+      "0x5cffcc9ddef0fdcf395e2ea24ca5ed5a12032706": { "name": "YT USD3 17DEC2026", "symbol": "YT-USD3-17DEC2026", "decimals": 6 },
+      "0x6316ebb9ef25bd9bb0432b291ee737066560138b": { "name": "YT Flagship USDC SuperVault 26NOV2026", "symbol": "YT-superUSDC-26NOV2026", "decimals": 6 },
+      "0x7743e50f534a7f9f1791dde7dcd89f7783eefc39": { "name": "f(x) USD Saving", "symbol": "fxSAVE", "decimals": 18 },
+      "0x7cf9ea7bc05c6b3f8517b71f8d87feecb006def4": {
+        "name": "YT Royco Senior Tranche apyUSD 5NOV2026",
+        "symbol": "YT-ROY-ST-apyUSD-5NOV2026",
+        "decimals": 18
+      },
+      "0x89cedb3c823315c9922d8eb841c114782d5a4de2": { "name": "YT Savings USG 26NOV2026", "symbol": "YT-sUSG-26NOV2026", "decimals": 18 },
+      "0x8ce3a13852d13e0e991c677a8c6137584e2b7635": { "name": "PLP Strategy PP Variable xStock 26NOV2026", "symbol": "PLP-STRCx-26NOV2026", "decimals": 18 },
+      "0xae7ab96520de3a18e5e111b5eaab095312d7fe84": { "name": "Liquid staked Ether 2.0", "symbol": "stETH", "decimals": 18 },
+      "0xb1c2db5d6ca03fce73dbd304d320bf76c55ae1b1": { "name": "Tangent USD", "symbol": "USG", "decimals": 18 },
+      "0xbceb5f6877d979ec621ae694da1102cb95691ad3": { "name": "Sierra", "symbol": "SIERRA", "decimals": 6 },
+      "0xbd373c9d3d8976a4fecc504a93c768bbe8c3227c": { "name": "Royco Senior Tranche apyUSD", "symbol": "ROY-ST-apyUSD", "decimals": 18 },
+      "0xe556aba6fe6036275ec1f87eda296be72c811bce": { "name": "Neutrl USD", "symbol": "NUSD", "decimals": 18 },
+      "0xf6ebea08a0dfd44825f67fa9963911c81be2a947": { "name": "Flagship USDC SuperVault", "symbol": "superUSDC", "decimals": 6 },
+      "0x2a7743e25180886caf5e7df76d07766cc357ab65": { "name": "YT risexUSDC 27DEC2026", "symbol": "YT-risexUSDC-27DEC2026", "decimals": 18 },
+      "0x808507121b80c02388fad14726482e061b8da827": { "name": "Pendle", "symbol": "PENDLE", "decimals": 18 },
+      "0xdbe599c184cc13d82f956fa5adaa1b18c0ff67d3": { "name": "Shift RiseX USD Vault", "symbol": "risexUSDC", "decimals": 18 }
+    },
+    "addressNames": {}
+  },
+  "tests": [
+    {
+      "description": "multicall (redeemDueInterestAndRewardsV2) - chain 1",
+      "rawTx": "0x02f902c601808080830f424094888888888889758f76e7103c6cbf23abbf58f94680b902a460fc84660000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001c40741a80300000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000180000000000000000000000000d4f480965d2347d421f1bec7f545682e5ec2151d00000000000000000000000000000000000000000000000000000000000001a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000391b570e81e354a85a496952b66adc831715f54f00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000d9a442856c234a39a81a089c06451ebaa4306a720000000000000000000000000000000000000000000000000002d75cda7f2a0c0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0",
+      "from": "0x10f42599d99ce85f7605fe1e4359e0f6d1ae4fa7",
+      "txHash": "0x93dd22f2af45c7b331387b6292d869565934d1160013619c0ac89b133edd3fc0",
+      "expected": {
+        "intent": "Batch router actions",
+        "interpolatedIntent": "Run a batch of Pendle router actions",
+        "owner": "Pendle",
+        "fields": [
+          {
+            "label": "Action",
+            "value": {
+              "intent": "Claim interest and rewards",
+              "interpolatedIntent": "Claim interest and rewards for 0x10f42599D99cE85f7605Fe1e4359e0F6D1ae4fa7",
+              "owner": "Pendle",
+              "fields": [
+                { "label": "Beneficiary", "value": "0x10f42599D99cE85f7605Fe1e4359e0F6D1ae4fa7" },
+                { "label": "YT", "value": "YT-pufETH-27JUN2024" },
+                { "label": "Claim Interest", "value": "true" },
+                { "label": "Claim Rewards", "value": "false" },
+                { "label": "Minimum Interest", "value": "0.000799743756151308 pufETH" }
+              ]
+            }
+          },
+          { "label": "Native Value Sent", "value": "0 ETH" }
+        ]
+      }
+    },
+    {
+      "description": "multicall (redeemDueInterestAndRewards) - chain 1",
+      "rawTx": "0x02f9020601808080830f424094888888888889758f76e7103c6cbf23abbf58f94680b901e460fc8466000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000104f7e375e80000000000000000000000003e5b8037be871e1cd8e0735298f42cfa3c66716f000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000005cffcc9ddef0fdcf395e2ea24ca5ed5a12032706000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0",
+      "from": "0x3E5B8037BE871E1Cd8e0735298f42cFa3c66716f",
+      "txHash": "0x6fdfc8cbfc2b6b025ddf5f3035fd55a9a5e4e120c9a717d2b4931be401f0e274",
+      "expected": {
+        "intent": "Batch router actions",
+        "interpolatedIntent": "Run a batch of Pendle router actions",
+        "owner": "Pendle",
+        "fields": [
+          {
+            "label": "Action",
+            "value": {
+              "intent": "Claim interest and rewards",
+              "interpolatedIntent": "Claim interest and rewards for 0x3E5B8037BE871E1Cd8e0735298f42cFa3c66716f",
+              "owner": "Pendle",
+              "fields": [{ "label": "Beneficiary", "value": "0x3E5B8037BE871E1Cd8e0735298f42cFa3c66716f" }]
+            }
+          },
+          { "label": "Native Value Sent", "value": "0 ETH" }
+        ]
+      }
+    },
+    {
+      "description": "multicall (removeLiquidityDualTokenAndPt, redeemDueInterestAndRewards) - chain 1",
+      "rawTx": "0x02f9048601808080830f424094888888888889758f76e7103c6cbf23abbf58f94680b9046460fc846600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000002a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001e4b00f09d7000000000000000000000000f7ae4ec5f1f5813fba503dd98fc42633faff6c2e0000000000000000000000005e572498e9f83650f0ff24194999bddb4b3909280000000000000000000000000000000000000000000000000b6cbafc440fb54300000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000aa2b0661fc40f3e000000000000000000000000eb892628d1e58bc475a6dcb7f5dbc4f591632aa40000000000000000000000000000000000000000000000000d9a03c1d85c3fff000000000000000000000000eb892628d1e58bc475a6dcb7f5dbc4f591632aa4000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000104f7e375e8000000000000000000000000f7ae4ec5f1f5813fba503dd98fc42633faff6c2e000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000005e572498e9f83650f0ff24194999bddb4b39092800000000000000000000000000000000000000000000000000000000c0",
+      "from": "0xf7Ae4ec5f1f5813fBA503Dd98fc42633fAff6c2e",
+      "txHash": "0x4b678dff86d212d5c5d8e6a9b2e7afbe3b8bd198d9436db3cf014a5f2eaec65c",
+      "expected": {
+        "intent": "Batch router actions",
+        "interpolatedIntent": "Run a batch of Pendle router actions",
+        "owner": "Pendle",
+        "fields": [
+          {
+            "label": "Action",
+            "value": {
+              "intent": "Remove liquidity",
+              "fields": [
+                { "label": "LP to Remove", "value": "0.823238424538363203 PLP-sUSDx-3DEC2026" },
+                { "label": "Minimum to Receive", "value": "0.980099999999999999 sUSDx" },
+                { "label": "Minimum PT Out (raw)", "value": "766368839272501054" },
+                { "label": "Market", "value": "0x5e572498E9f83650F0fF24194999BdDB4B390928" },
+                { "label": "Recipient", "value": "0xf7Ae4ec5f1f5813fBA503Dd98fc42633fAff6c2e" }
+              ],
+              "interpolatedIntent": "Remove 0.823238424538363203 PLP-sUSDx-3DEC2026 for at least 0.980099999999999999 sUSDx and 766368839272501054 PT (raw) to 0xf7Ae4ec5f1f5813fBA503Dd98fc42633fAff6c2e",
+              "owner": "Pendle"
+            }
+          },
+          {
+            "label": "Action",
+            "value": {
+              "intent": "Claim interest and rewards",
+              "fields": [{ "label": "Beneficiary", "value": "0xf7Ae4ec5f1f5813fBA503Dd98fc42633fAff6c2e" }],
+              "interpolatedIntent": "Claim interest and rewards for 0xf7Ae4ec5f1f5813fBA503Dd98fc42633fAff6c2e",
+              "owner": "Pendle"
+            }
+          },
+          { "label": "Native Value Sent", "value": "0 ETH" }
+        ]
+      }
+    },
+    {
+      "description": "multicall (exitPostExpToToken, redeemDueInterestAndRewardsV2) - chain 1",
+      "rawTx": "0x02f904c601808080830f424094888888888889758f76e7103c6cbf23abbf58f94680b904a460fc846600000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000002a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001e4f06a07a00000000000000000000000003462e50cf7e5d8c5fae4570cd3891f032b48bde800000000000000000000000066ec657c59cdcaf171ab43b83da3942758bf8a97000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001cad382a378d298a7100000000000000000000000000000000000000000000000000000000000000a00000000000000000000000003d7d6fdf07ee548b939a80edbc9b2256d0cdc00300000000000000000000000000000000000000000000003ad5466e80247915a00000000000000000000000003d7d6fdf07ee548b939a80edbc9b2256d0cdc003000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001440741a80300000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000000e0000000000000000000000000d4f480965d2347d421f1bec7f545682e5ec2151d000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000100000000000000000000000066ec657c59cdcaf171ab43b83da3942758bf8a97000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0",
+      "from": "0x3462e50CF7E5d8C5FAe4570cd3891F032b48bde8",
+      "txHash": "0xbd63b85e79c8a3ca9ddd613a94a79643a6d119c1dc6d1e5765b891480db18d90",
+      "expected": {
+        "intent": "Batch router actions",
+        "interpolatedIntent": "Run a batch of Pendle router actions",
+        "owner": "Pendle",
+        "fields": [
+          {
+            "label": "Action",
+            "value": {
+              "intent": "Exit expired position",
+              "fields": [
+                { "label": "PT to Exit (raw)", "value": "0" },
+                { "label": "LP to Exit", "value": "528.990606849204652657 PLP-srUSDe-22OCT2026" },
+                { "label": "Minimum to Receive", "value": "1085.279248550249174432 srUSDe" },
+                { "label": "Market", "value": "0x66Ec657C59cdcaf171aB43B83da3942758bF8a97" },
+                { "label": "Recipient", "value": "0x3462e50CF7E5d8C5FAe4570cd3891F032b48bde8" }
+              ],
+              "interpolatedIntent": "Exit 0 PT (raw) and 528.990606849204652657 PLP-srUSDe-22OCT2026 of 0x66Ec657C59cdcaf171aB43B83da3942758bF8a97 for at least 1085.279248550249174432 srUSDe to 0x3462e50CF7E5d8C5FAe4570cd3891F032b48bde8",
+              "owner": "Pendle"
+            }
+          },
+          {
+            "label": "Action",
+            "value": {
+              "intent": "Claim interest and rewards",
+              "fields": [
+                { "label": "Beneficiary", "value": "0x3462e50CF7E5d8C5FAe4570cd3891F032b48bde8" },
+                { "label": "LP Rewards", "value": "PLP-srUSDe-22OCT2026" }
+              ],
+              "interpolatedIntent": "Claim interest and rewards for 0x3462e50CF7E5d8C5FAe4570cd3891F032b48bde8",
+              "owner": "Pendle"
+            }
+          },
+          { "label": "Native Value Sent", "value": "0 ETH" }
+        ]
+      }
+    },
+    {
+      "description": "multicall (redeemDueInterestAndRewardsV2 with 4 YTs and 1 market) - chain 1",
+      "rawTx": "0x02f904c601808080830f424094888888888889758f76e7103c6cbf23abbf58f94680b904a460fc84660000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000003c40741a80300000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000360000000000000000000000000d4f480965d2347d421f1bec7f545682e5ec2151d00000000000000000000000000000000000000000000000000000000000003a0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000001964590af52cd77c2f30970bdbcb4d6e3dbdc615000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000000000000000000000000007743e50f534a7f9f1791dde7dcd89f7783eefc390000000000000000000000000000000000000000000000029256929806585a300000000000000000000000006316ebb9ef25bd9bb0432b291ee737066560138b00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000f6ebea08a0dfd44825f67fa9963911c81be2a9470000000000000000000000000000000000000000000000000000000001bc5d0d0000000000000000000000007cf9ea7bc05c6b3f8517b71f8d87feecb006def400000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000bd373c9d3d8976a4fecc504a93c768bbe8c3227c000000000000000000000000000000000000000000000000a1f02786bda98b5500000000000000000000000089cedb3c823315c9922d8eb841c114782d5a4de200000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b1c2db5d6ca03fce73dbd304d320bf76c55ae1b100000000000000000000000000000000000000000000000085a8dc500209de9000000000000000000000000000000000000000000000000000000000000000010000000000000000000000008ce3a13852d13e0e991c677a8c6137584e2b7635000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c0",
+      "from": "0x7A73a3612E003e2CB9f0f02B1e021bb4a352437a",
+      "txHash": "0xc7960e20aade8bcdadf8926cea1442456cd71ad1f0231ba6d9db56c8ad427d9d",
+      "expected": {
+        "intent": "Batch router actions",
+        "interpolatedIntent": "Run a batch of Pendle router actions",
+        "owner": "Pendle",
+        "fields": [
+          {
+            "label": "Action",
+            "value": {
+              "intent": "Claim interest and rewards",
+              "interpolatedIntent": "Claim interest and rewards for 0x7A73a3612E003e2CB9f0f02B1e021bb4a352437a",
+              "owner": "Pendle",
+              "fields": [
+                { "label": "Beneficiary", "value": "0x7A73a3612E003e2CB9f0f02B1e021bb4a352437a" },
+                { "label": "YT", "value": "YT-fxSAVE-29OCT2026" },
+                { "label": "Claim Interest", "value": "true" },
+                { "label": "Claim Rewards", "value": "false" },
+                { "label": "Minimum Interest", "value": "47.438264906592836144 fxSAVE" },
+                { "label": "YT", "value": "YT-superUSDC-26NOV2026" },
+                { "label": "Claim Interest", "value": "true" },
+                { "label": "Claim Rewards", "value": "false" },
+                { "label": "Minimum Interest", "value": "29.121805 superUSDC" },
+                { "label": "YT", "value": "YT-ROY-ST-apyUSD-5NOV2026" },
+                { "label": "Claim Interest", "value": "true" },
+                { "label": "Claim Rewards", "value": "false" },
+                { "label": "Minimum Interest", "value": "11.668870094178061141 ROY-ST-apyUSD" },
+                { "label": "YT", "value": "YT-sUSG-26NOV2026" },
+                { "label": "Claim Interest", "value": "true" },
+                { "label": "Claim Rewards", "value": "false" },
+                { "label": "Minimum Interest", "value": "9.631190039321501328 USG" },
+                { "label": "LP Rewards", "value": "PLP-STRCx-26NOV2026" }
+              ]
+            }
+          },
+          { "label": "Native Value Sent", "value": "0 ETH" }
+        ]
+      }
+    }
+  ]
+}

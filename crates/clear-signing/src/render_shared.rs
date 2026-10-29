@@ -1,40 +1,51 @@
 //! Shared render helpers used by both calldata and EIP-712 formatting.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+
 use num_bigint::BigUint;
 
+use crate::chain_names::CHAIN_NAMES;
 use crate::decoder::ArgumentValue;
 use crate::error::Error;
 use crate::native_currencies::NATIVE_CURRENCIES;
+use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind};
 use crate::provider::DataProvider;
 use crate::token::TokenMeta;
 use crate::types::descriptor::Descriptor;
-use crate::types::display::{DisplayField, FieldFormat, FormatParams};
+use crate::types::display::{
+    DisplayField, FieldFormat, FormatParams, MapReference, UintLiteral, MAP_PATH_PREFIX,
+};
 
-/// Known chain IDs -> human-readable names.
+/// Human-readable name for a chain ID.
 ///
 /// The spec's `chainId` format converts the value "to a Blockchain name using
-/// EIP-155 reference values", so these are the `name` fields from the EIP-155
+/// EIP-155 reference values", so the names are the `name` fields of the EIP-155
 /// chain list at <https://chainid.network/chains.json> (e.g. 1 -> "Ethereum Mainnet").
+/// An unknown chain ID renders as "Chain <id>".
 pub(crate) fn chain_name(chain_id: u64) -> String {
-    match chain_id {
-        1 => "Ethereum Mainnet".to_string(),
-        10 => "OP Mainnet".to_string(),
-        56 => "BNB Smart Chain Mainnet".to_string(),
-        100 => "Gnosis".to_string(),
-        137 => "Polygon Mainnet".to_string(),
-        250 => "Fantom Opera".to_string(),
-        324 => "zkSync Mainnet".to_string(),
-        8453 => "Base".to_string(),
-        42161 => "Arbitrum One".to_string(),
-        42170 => "Arbitrum Nova".to_string(),
-        43114 => "Avalanche C-Chain".to_string(),
-        14 => "Flare Mainnet".to_string(),
-        19 => "Songbird Canary-Network".to_string(),
-        59144 => "Linea".to_string(),
-        534352 => "Scroll".to_string(),
-        7777777 => "Zora".to_string(),
-        _ => format!("Chain {chain_id}"),
+    CHAIN_NAMES
+        .binary_search_by_key(&chain_id, |&(id, _)| id)
+        .map(|i| CHAIN_NAMES[i].1.to_string())
+        .unwrap_or_else(|_| format!("Chain {chain_id}"))
+}
+
+/// [`chain_name`] for a chain ID of any width. A chain ID that does not fit in
+/// `u64` is not in the EIP-155 list and renders as "Chain <decimal id>".
+pub(crate) fn chain_name_from_biguint(chain_id: &BigUint) -> String {
+    match u64::try_from(chain_id) {
+        Ok(id) => chain_name(id),
+        Err(_) => format!("Chain {chain_id}"),
     }
+}
+
+/// Diagnostic for a token whose `chainIdPath` chain ID does not fit in `u64`:
+/// the token is unknown and its value renders raw.
+pub(crate) fn unknown_token_chain_warning(kind: RenderDiagnosticKind) -> FormatDiagnostic {
+    render_warning(
+        kind,
+        "token chain ID from chainIdPath does not fit in 64 bits; token is unknown",
+    )
 }
 
 /// Resolve a `$.metadata.constants.xxx` reference to its string value, or return the input as-is.
@@ -388,7 +399,122 @@ pub(crate) fn lookup_map_entry(
     key: &str,
 ) -> Option<String> {
     let map_def = descriptor.metadata.maps.get(map_ref)?;
-    map_def.entries.get(key).cloned()
+    map_def.values.get(key).and_then(map_value_string)
+}
+
+/// Value for `key` in a map: exact key first, then a case-insensitive key (hex
+/// addresses), then a key with the same integer value (`"1"` and `"0x01"`).
+fn lookup_map_value<'a>(
+    values: &'a HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    if let Some(value) = values.get(key) {
+        return Some(value);
+    }
+    if let Some((_, value)) = values.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)) {
+        return Some(value);
+    }
+    let key_int = UintLiteral::String(key.to_string()).to_biguint()?;
+    values
+        .iter()
+        .find(|(k, _)| UintLiteral::String((*k).clone()).to_biguint().as_ref() == Some(&key_int))
+        .map(|(_, value)| value)
+}
+
+fn map_value_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// Resolve one map reference to its constant.
+///
+/// `resolve_key` reads the value at the key path as a string. Per the spec, a
+/// key with no value in the map makes the descriptor invalid for the
+/// transaction, so that case is an error.
+pub(crate) fn resolve_map_reference(
+    descriptor: &Descriptor,
+    param: &str,
+    reference: &MapReference,
+    resolve_key: &mut dyn FnMut(&str) -> Result<Option<String>, Error>,
+) -> Result<serde_json::Value, Error> {
+    let invalid = |detail: String| {
+        Error::Descriptor(format!(
+            "map reference for parameter '{param}' ({}): {detail}",
+            reference.map
+        ))
+    };
+    let map_def = reference
+        .map
+        .strip_prefix(MAP_PATH_PREFIX)
+        .and_then(|name| descriptor.metadata.maps.get(name))
+        .ok_or_else(|| invalid("no such map in metadata.maps".to_string()))?;
+    let key_path = reference
+        .key_path
+        .as_deref()
+        .or(map_def.key_path.as_deref())
+        .ok_or_else(|| invalid("no keyPath".to_string()))?;
+    let key = resolve_key(key_path)?
+        .ok_or_else(|| invalid(format!("keyPath '{key_path}' does not resolve")))?;
+    lookup_map_value(&map_def.values, &key)
+        .filter(|value| !value.is_null())
+        .cloned()
+        .ok_or_else(|| invalid(format!("no value for key '{key}'")))
+}
+
+/// Replace every map reference in `params` with its constant for this
+/// transaction. Borrows `params` unchanged when it has no map reference.
+pub(crate) fn resolve_param_maps<'p>(
+    descriptor: &Descriptor,
+    params: Option<&'p FormatParams>,
+    resolve_key: &mut dyn FnMut(&str) -> Result<Option<String>, Error>,
+) -> Result<Option<Cow<'p, FormatParams>>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    if params.map_refs.is_empty() {
+        return Ok(Some(Cow::Borrowed(params)));
+    }
+    let mut resolved = params.clone();
+    for (param, reference) in std::mem::take(&mut resolved.map_refs) {
+        let value = resolve_map_reference(descriptor, &param, &reference, resolve_key)?;
+        set_constant_param(&mut resolved, &param, &value)?;
+    }
+    Ok(Some(Cow::Owned(resolved)))
+}
+
+/// Store a map value in the constant parameter `param`.
+pub(crate) fn set_constant_param(
+    params: &mut FormatParams,
+    param: &str,
+    value: &serde_json::Value,
+) -> Result<(), Error> {
+    let invalid = || {
+        Error::Descriptor(format!(
+            "map value {value} is not valid for parameter '{param}'"
+        ))
+    };
+    let text = || map_value_string(value).ok_or_else(invalid);
+    match param {
+        "token" => params.token = Some(text()?),
+        "callee" => params.callee = Some(text()?),
+        "selector" => params.selector = Some(text()?),
+        "spender" => params.spender = Some(text()?),
+        "collection" => params.collection = Some(text()?),
+        "chainId" => {
+            let chain_id = UintLiteral::String(text()?)
+                .to_biguint()
+                .and_then(|n| u64::try_from(n).ok())
+                .ok_or_else(invalid)?;
+            params.chain_id = Some(chain_id);
+        }
+        "amount" => params.amount = Some(UintLiteral::String(text()?)),
+        _ => return Err(invalid()),
+    }
+    Ok(())
 }
 
 pub(crate) fn format_token_amount_output(
@@ -506,7 +632,28 @@ mod tests {
         assert_eq!(chain_name(42161), "Arbitrum One");
         assert_eq!(chain_name(14), "Flare Mainnet");
         assert_eq!(chain_name(19), "Songbird Canary-Network");
-        assert_eq!(chain_name(99999), "Chain 99999");
+        assert_eq!(chain_name(999), "Wanchain Testnet");
+        assert_eq!(chain_name(81457), "Blast");
+        assert_eq!(chain_name(59144), "Linea");
+        assert_eq!(chain_name(u64::MAX), format!("Chain {}", u64::MAX));
+    }
+
+    #[test]
+    fn test_chain_name_from_biguint() {
+        assert_eq!(
+            chain_name_from_biguint(&BigUint::from(1u8)),
+            "Ethereum Mainnet"
+        );
+        let above_u64 = BigUint::from(u64::MAX) + 1u8;
+        assert_eq!(
+            chain_name_from_biguint(&above_u64),
+            "Chain 18446744073709551616"
+        );
+    }
+
+    #[test]
+    fn test_chain_names_sorted_by_chain_id() {
+        assert!(CHAIN_NAMES.windows(2).all(|w| w[0].0 < w[1].0));
     }
 
     #[test]

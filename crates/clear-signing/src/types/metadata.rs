@@ -62,15 +62,23 @@ pub struct TokenInfo {
     pub decimals: Option<u8>,
 }
 
-/// A named map definition for value lookup/substitution (v2).
+/// A named map definition (`metadata.maps`).
+///
+/// Spec form: `{"$keyType": "...", "values": {key: constant}}`. A map reference
+/// in a format parameter selects the value for the key read at its `keyPath`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MapDefinition {
-    /// Path to the key in calldata (cross-field key resolution).
+    /// Informational key type.
+    #[serde(rename = "$keyType", alias = "keyType")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_type: Option<String>,
+
+    /// Default key path, for a reference without its own `keyPath`.
     #[serde(rename = "keyPath")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_path: Option<String>,
 
-    /// The lookup entries: key → display value.
-    #[serde(default)]
-    pub entries: HashMap<String, String>,
+    /// Key → value. `entries` is the name used before the spec form.
+    #[serde(default, alias = "entries")]
+    pub values: HashMap<String, serde_json::Value>,
 }

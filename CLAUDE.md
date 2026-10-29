@@ -155,9 +155,9 @@ The library supports v2 registry descriptor features:
 - **Factory context**: `factory` object with `deployEvent` and `deployments`
 - **EIP-712 shared-format parity**: Shared formatting behavior is expected to match calldata semantics for all supported EIP-712 format types, and spec-compliance tests are the guardrail for that parity
 - **EIP-712 AddressName**: Full senderAddress, sources, local/ENS resolution (parity with calldata)
-- **Array slice syntax**: `[start:end]` in both calldata paths and EIP-712 paths
+- **Array slice syntax**: `[start:end]` in both calldata paths and EIP-712 paths; a byte slice clamps to the available bytes (empty bytes decode as 0 for integer formats)
 - **Unit SI prefix**: `prefix: true` enables k/M/G/T notation
-- **Maps `keyPath`**: Cross-field key resolution for map lookups
+- **Spec map references**: `{"map": "$.metadata.maps.<name>", "keyPath": "<path>"}` (or `key`) in place of any constant param (`token`, `chainId`, `callee`, `selector`, `amount`, `spender`, `collection`); map is `{"$keyType", "values"}`; a key not in the map is an invalid-descriptor error
 - **`excluded` paths**: Deprecated v1 field now functional in rendering
 - **`mustMatch`/`ifNotIn` value comparison**: Decimal strings and JSON numbers compare numerically against decoded words (signed ints as two's complement); hex literals compare case-insensitively so checksummed addresses match
 - **Hidden fields in `bundled` groups**: A hidden array element keeps an empty slot, so `mustMatch`/`never` fields inside a bundled group do not break bundle alignment

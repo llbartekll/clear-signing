@@ -6,6 +6,7 @@
 #[cfg(feature = "uniffi")]
 uniffi::setup_scaffolding!();
 
+mod chain_names;
 pub mod decoder;
 pub mod eip712;
 mod eip712_domain;

@@ -211,3 +211,47 @@ async fn registry_flag_resolves_nested_across_subdirs() {
         failed_inner.first().and_then(|r| first_failure_message(r))
     );
 }
+
+/// Nested `interpolatedIntent`. The test schema allows `interpolatedIntent` in a
+/// nested rendered output. These real mainnet cases (from
+/// `docs/top-contracts/nested-tests/` of the registry branch) embed a call whose
+/// descriptor has one. The runner rejected the test files at parse time; now the
+/// engine renders the nested string and the runner compares it.
+#[tokio::test]
+async fn base_l1_cross_domain_messenger_nested_matches_registry() {
+    assert_matches_registry("base/calldata-L1CrossDomainMessenger.nested.tests.json").await;
+}
+
+#[tokio::test]
+async fn base_optimism_portal2_nested_matches_registry() {
+    assert_matches_registry("base/calldata-OptimismPortal2.nested.tests.json").await;
+}
+
+#[tokio::test]
+async fn blast_l1_cross_domain_messenger_nested_matches_registry() {
+    assert_matches_registry("blast/calldata-L1CrossDomainMessenger.nested.tests.json").await;
+}
+
+#[tokio::test]
+async fn blast_l2_to_l1_message_passer_nested_matches_registry() {
+    assert_matches_registry("blast/calldata-L2ToL1MessagePasser.nested.tests.json").await;
+}
+
+#[tokio::test]
+async fn blast_optimism_portal_nested_matches_registry() {
+    assert_matches_registry("blast/calldata-OptimismPortal.nested.tests.json").await;
+}
+
+#[tokio::test]
+async fn pendle_router_v4_nested_matches_registry() {
+    assert_matches_registry("pendle/calldata-PendleRouterV4.nested.tests.json").await;
+}
+
+/// Byte slice past the end of the data. `_extraData.[0:32]` with empty
+/// `_extraData` rendered `<unresolved>`. A slice now clamps to the available
+/// bytes and empty bytes decode as 0, so the field renders "0 DAI" (as in the
+/// Sourcify runner) for "bridgeERC20 - chain 1" and "bridgeERC20-steth - chain 1".
+#[tokio::test]
+async fn blast_l1_blast_bridge_matches_registry() {
+    assert_matches_registry("blast/calldata-L1BlastBridge.tests.json").await;
+}
