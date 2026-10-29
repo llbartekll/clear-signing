@@ -246,3 +246,12 @@ async fn blast_optimism_portal_nested_matches_registry() {
 async fn pendle_router_v4_nested_matches_registry() {
     assert_matches_registry("pendle/calldata-PendleRouterV4.nested.tests.json").await;
 }
+
+/// Byte slice past the end of the data. `_extraData.[0:32]` with empty
+/// `_extraData` rendered `<unresolved>`. A slice now clamps to the available
+/// bytes and empty bytes decode as 0, so the field renders "0 DAI" (as in the
+/// Sourcify runner) for "bridgeERC20 - chain 1" and "bridgeERC20-steth - chain 1".
+#[tokio::test]
+async fn blast_l1_blast_bridge_matches_registry() {
+    assert_matches_registry("blast/calldata-L1BlastBridge.tests.json").await;
+}

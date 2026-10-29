@@ -7759,3 +7759,97 @@ async fn test_chain_id_above_u64_parity() {
         assert!(codes.contains(&"token_ticker_not_found"), "{codes:?}");
     }
 }
+
+/// A byte slice past the end of the data clamps to the available bytes, and
+/// empty bytes decode as 0 for an integer format (Sourcify runner behavior; the
+/// spec does not define this case). Calldata and EIP-712 agree.
+#[tokio::test]
+async fn test_byte_slice_past_end_clamps_parity() {
+    let dai = "0x6b175474e89094c44da98b954eedeac495271d0f";
+    let fields = format!(
+        r#"[
+            {{ "path": "data.[0:32]", "label": "Min", "format": "tokenAmount", "params": {{ "token": "{dai}" }} }},
+            {{ "path": "data.[1:32]", "label": "Tail", "format": "number" }}
+        ]"#
+    );
+    let calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "bridge(bytes data)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "Bridge(bytes data)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        dai,
+        TokenMeta {
+            symbol: "DAI".to_string(),
+            decimals: 18,
+            name: "Dai".to_string(),
+        },
+    );
+
+    // (data, expected Min, expected Tail)
+    let cases: [(&[u8], &str, &str); 2] = [
+        (&[], "0 DAI", "0"),
+        (&[0x01, 0x02], "0.000000000000000258 DAI", "2"),
+    ];
+    for (data, min, tail) in cases {
+        let calldata = build_single_bytes_calldata("bridge(bytes)", data);
+        let tx = TransactionContext {
+            chain_id: 1,
+            to: "0xabc",
+            calldata: &calldata,
+            value: None,
+            from: None,
+            implementation_address: None,
+        };
+        let calldata_result = format_calldata(
+            &wrap_rd(calldata_descriptor.clone(), 1, "0xabc"),
+            &tx,
+            &tokens,
+        )
+        .await
+        .unwrap();
+
+        let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+            "types": { "EIP712Domain": [], "Bridge": [{ "name": "data", "type": "bytes" }] },
+            "primaryType": "Bridge",
+            "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+            "message": { "data": format!("0x{}", hex::encode(data)) }
+        }))
+        .unwrap();
+        let typed_result = format_typed_data(
+            &wrap_rd(typed_descriptor.clone(), 1, "0xabc"),
+            &typed_data,
+            &tokens,
+        )
+        .await
+        .unwrap();
+
+        for result in [&calldata_result, &typed_result] {
+            assert_eq!(
+                semantic_item_snapshot(&result.entries),
+                vec![
+                    ("Min".to_string(), min.to_string()),
+                    ("Tail".to_string(), tail.to_string()),
+                ]
+            );
+        }
+    }
+}

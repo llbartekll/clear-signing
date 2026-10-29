@@ -22,6 +22,41 @@ pub(crate) fn apply_collection_access<T: Clone>(
     }
 }
 
+/// Apply a path segment to a bytes-like value.
+///
+/// The spec does not define a byte slice past the end of the data. Like the
+/// Sourcify runner, a slice `[start:end]` clamps to the available bytes: a
+/// negative bound counts from the end, each bound is limited to `0..=len`, and
+/// `start >= end` gives empty bytes. Empty bytes decode as 0 for integer
+/// formats. An index out of range still resolves to nothing.
+pub(crate) fn apply_byte_access(bytes: &[u8], segment: &str) -> Option<CollectionSelection<u8>> {
+    let expr = normalize_access_expr(segment)?;
+    let Some(colon) = expr.find(':') else {
+        return apply_collection_access(bytes, segment);
+    };
+    let len = bytes.len();
+    let start = clamp_slice_bound(&expr[..colon], len, 0)?;
+    let end = clamp_slice_bound(&expr[colon + 1..], len, len)?;
+    Some(CollectionSelection::Slice(
+        bytes
+            .get(start..end.max(start))
+            .unwrap_or_default()
+            .to_vec(),
+    ))
+}
+
+fn clamp_slice_bound(expr: &str, len: usize, default: usize) -> Option<usize> {
+    if expr.is_empty() {
+        return Some(default);
+    }
+    let raw: isize = expr.parse().ok()?;
+    Some(if raw >= 0 {
+        raw.unsigned_abs().min(len)
+    } else {
+        len.saturating_sub(raw.unsigned_abs())
+    })
+}
+
 pub(crate) fn parse_collection_access(segment: &str, len: usize) -> Option<CollectionAccess> {
     let expr = normalize_access_expr(segment)?;
 
@@ -98,7 +133,8 @@ fn parse_slice_bound(expr: &str, len: usize, is_start: bool) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_collection_access, parse_collection_access, CollectionAccess, CollectionSelection,
+        apply_byte_access, apply_collection_access, parse_collection_access, CollectionAccess,
+        CollectionSelection,
     };
 
     #[test]
@@ -153,5 +189,30 @@ mod tests {
             apply_collection_access(&items, "[:2]"),
             Some(CollectionSelection::Slice(vec![10, 20]))
         );
+    }
+
+    #[test]
+    fn byte_slices_clamp_to_available_bytes() {
+        let bytes = [1u8, 2, 3];
+        let slice = |segment| match apply_byte_access(&bytes, segment) {
+            Some(CollectionSelection::Slice(slice)) => slice,
+            other => panic!("expected slice for {segment}, got {other:?}"),
+        };
+        assert_eq!(slice("[0:32]"), vec![1, 2, 3]);
+        assert_eq!(slice("[1:32]"), vec![2, 3]);
+        assert_eq!(slice("[5:32]"), Vec::<u8>::new());
+        assert_eq!(slice("[-20:]"), vec![1, 2, 3]);
+        assert_eq!(slice("[:-5]"), Vec::<u8>::new());
+        assert_eq!(slice("[2:1]"), Vec::<u8>::new());
+        assert_eq!(slice("[0:2]"), vec![1, 2]);
+        assert_eq!(
+            apply_byte_access(&[], "[0:32]"),
+            Some(CollectionSelection::Slice(vec![]))
+        );
+        assert_eq!(
+            apply_byte_access(&bytes, "[-1]"),
+            Some(CollectionSelection::Item(3))
+        );
+        assert_eq!(apply_byte_access(&bytes, "[3]"), None);
     }
 }

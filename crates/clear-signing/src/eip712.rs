@@ -20,7 +20,7 @@ use crate::engine::{
 };
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
-use crate::path::{apply_collection_access, CollectionSelection};
+use crate::path::{apply_byte_access, apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
     chain_name_from_biguint, coerce_unsigned_biguint_from_typed_value,
@@ -1340,7 +1340,7 @@ fn apply_typed_access(current: &serde_json::Value, segment: &str) -> Option<serd
         serde_json::Value::String(s) => {
             let hex_str = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X"))?;
             let bytes = hex::decode(hex_str).ok()?;
-            match apply_collection_access(&bytes, segment)? {
+            match apply_byte_access(&bytes, segment)? {
                 CollectionSelection::Item(byte) => {
                     Some(serde_json::Value::String(format!("0x{:02x}", byte)))
                 }

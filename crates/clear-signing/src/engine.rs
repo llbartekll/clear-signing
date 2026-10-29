@@ -10,7 +10,7 @@ use crate::decoder::{ArgumentValue, DecodedArguments};
 use crate::encryption::{validate_annotation, Decryption, DecryptionCache, PlainKind};
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
-use crate::path::{apply_collection_access, CollectionSelection};
+use crate::path::{apply_byte_access, apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
     chain_name_from_biguint, coerce_unsigned_biguint_from_argument_value,
@@ -1182,7 +1182,7 @@ fn navigate_value(value: &ArgumentValue, segments: &[&str]) -> Option<ArgumentVa
         | ArgumentValue::Uint(bytes)
         | ArgumentValue::Int(bytes) => {
             let seg = segments[0];
-            match apply_collection_access(bytes, seg)? {
+            match apply_byte_access(bytes, seg)? {
                 CollectionSelection::Item(byte) => {
                     navigate_value(&ArgumentValue::Bytes(vec![byte]), &segments[1..])
                 }
