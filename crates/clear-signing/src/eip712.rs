@@ -1066,6 +1066,7 @@ async fn render_typed_calldata_field(
         label: label.to_string(),
         intent: result.intent,
         owner: result.owner,
+        interpolated_intent: result.interpolated_intent,
         entries: result.entries,
     })
 }

@@ -800,7 +800,7 @@ export const DisplayEntry = (() => {
 
     type Nested__interface = {
         tag: DisplayEntry_Tags.Nested;
-        inner: Readonly<{label: string; intent: string; owner: string | undefined; entries: Array<DisplayEntry>}>
+        inner: Readonly<{label: string; intent: string; owner: string | undefined; interpolatedIntent: string | undefined; entries: Array<DisplayEntry>}>
     };
 
     
@@ -811,13 +811,17 @@ export const DisplayEntry = (() => {
          */
         readonly [uniffiTypeNameSymbol] = "DisplayEntry";
         readonly tag = DisplayEntry_Tags.Nested;
-        readonly inner: Readonly<{label: string; intent: string; owner: string | undefined; entries: Array<DisplayEntry>}>;
+        readonly inner: Readonly<{label: string; intent: string; owner: string | undefined; interpolatedIntent: string | undefined; entries: Array<DisplayEntry>}>;
         constructor(inner: { label: string, intent: string, 
         /**
          * Owner string for the inner call (the inner descriptor's `metadata.owner`),
          * when a matching descriptor was found. `None` for raw/fallback frames where
          * no inner descriptor matched.
-         */owner: string | undefined, entries: Array<DisplayEntry> }) {
+         */owner: string | undefined, 
+        /**
+         * The inner call's rendered `interpolatedIntent`, when its format has one
+         * and every placeholder resolved.
+         */interpolatedIntent: string | undefined, entries: Array<DisplayEntry> }) {
             super("DisplayEntry", "Nested");
             this.inner = Object.freeze(inner);
         }
@@ -827,7 +831,11 @@ export const DisplayEntry = (() => {
          * Owner string for the inner call (the inner descriptor's `metadata.owner`),
          * when a matching descriptor was found. `None` for raw/fallback frames where
          * no inner descriptor matched.
-         */owner: string | undefined, entries: Array<DisplayEntry> }): Nested_ {
+         */owner: string | undefined, 
+        /**
+         * The inner call's rendered `interpolatedIntent`, when its format has one
+         * and every placeholder resolved.
+         */interpolatedIntent: string | undefined, entries: Array<DisplayEntry> }): Nested_ {
             return new Nested_(inner);
         }
 
@@ -871,7 +879,7 @@ const FfiConverterTypeDisplayEntry = (() => {
             switch (ordinalConverter.read(from)) {
                 case 1: return new DisplayEntry.Item(FfiConverterTypeDisplayItem.read(from));
                 case 2: return new DisplayEntry.Group({label: FfiConverterString.read(from), iteration: FfiConverterTypeGroupIteration.read(from), items: FfiConverterArrayTypeDisplayItem.read(from) });
-                case 3: return new DisplayEntry.Nested({label: FfiConverterString.read(from), intent: FfiConverterString.read(from), owner: FfiConverterOptionalString.read(from), entries: FfiConverterArrayTypeDisplayEntry.read(from) });
+                case 3: return new DisplayEntry.Nested({label: FfiConverterString.read(from), intent: FfiConverterString.read(from), owner: FfiConverterOptionalString.read(from), interpolatedIntent: FfiConverterOptionalString.read(from), entries: FfiConverterArrayTypeDisplayEntry.read(from) });
                 default: throw new UniffiInternalError.UnexpectedEnumCase();
             }
         }
@@ -897,6 +905,7 @@ const FfiConverterTypeDisplayEntry = (() => {
                     FfiConverterString.write(inner.label, into);
                     FfiConverterString.write(inner.intent, into);
                     FfiConverterOptionalString.write(inner.owner, into);
+                    FfiConverterOptionalString.write(inner.interpolatedIntent, into);
                     FfiConverterArrayTypeDisplayEntry.write(inner.entries, into);
                     return;
                 }
@@ -927,6 +936,7 @@ const FfiConverterTypeDisplayEntry = (() => {
                     size += FfiConverterString.allocationSize(inner.label);
                     size += FfiConverterString.allocationSize(inner.intent);
                     size += FfiConverterOptionalString.allocationSize(inner.owner);
+                    size += FfiConverterOptionalString.allocationSize(inner.interpolatedIntent);
                     size += FfiConverterArrayTypeDisplayEntry.allocationSize(inner.entries);
                     return size;
                 }

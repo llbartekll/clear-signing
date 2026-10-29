@@ -58,6 +58,9 @@ pub enum DisplayEntry {
         /// when a matching descriptor was found. `None` for raw/fallback frames where
         /// no inner descriptor matched.
         owner: Option<String>,
+        /// The inner call's rendered `interpolatedIntent`, when its format has one
+        /// and every placeholder resolved.
+        interpolated_intent: Option<String>,
         entries: Vec<DisplayEntry>,
     },
 }
@@ -150,21 +153,8 @@ pub(crate) async fn format_calldata(
     let entries =
         render_fields(&ctx, &expanded_fields, &mut warnings, &mut nested_fallback).await?;
 
-    let interpolated = match format.interpolated_intent.as_ref() {
-        Some(template) => {
-            match interpolate_intent(template, &ctx, &expanded_fields, &format.excluded).await {
-                Ok(rendered) => Some(rendered),
-                Err(err) => {
-                    warnings.push(render_warning(
-                        RenderDiagnosticKind::InterpolatedIntentSkipped,
-                        format!("interpolated intent skipped: {err}"),
-                    ));
-                    None
-                }
-            }
-        }
-        None => None,
-    };
+    let interpolated =
+        render_interpolated_intent(&ctx, format, &expanded_fields, &mut warnings).await;
 
     let model = DisplayModel {
         intent: format
@@ -190,6 +180,27 @@ pub(crate) async fn format_calldata(
 ///
 /// Per spec: wallets MUST reject if multiple keys share the same type-only signature
 /// (duplicate selectors).
+/// Render the format's `interpolatedIntent`. A placeholder that cannot be
+/// resolved skips the whole string with a diagnostic.
+async fn render_interpolated_intent(
+    ctx: &RenderContext<'_>,
+    format: &DisplayFormat,
+    expanded_fields: &[DisplayField],
+    warnings: &mut RenderDiagnostics,
+) -> Option<String> {
+    let template = format.interpolated_intent.as_ref()?;
+    match interpolate_intent(template, ctx, expanded_fields, &format.excluded).await {
+        Ok(rendered) => Some(rendered),
+        Err(err) => {
+            warnings.push(render_warning(
+                RenderDiagnosticKind::InterpolatedIntentSkipped,
+                format!("interpolated intent skipped: {err}"),
+            ));
+            None
+        }
+    }
+}
+
 fn find_format<'a>(
     descriptor: &'a Descriptor,
     function_name: &str,
@@ -1922,6 +1933,14 @@ async fn render_calldata_field(
     )
     .await?;
 
+    let interpolated_intent = render_interpolated_intent(
+        &inner_ctx,
+        inner_format,
+        &inner_expanded,
+        &mut inner_warnings,
+    )
+    .await;
+
     warnings.extend(inner_warnings);
 
     let intent = inner_format
@@ -1934,6 +1953,7 @@ async fn render_calldata_field(
         label: label.to_string(),
         intent,
         owner: inner_descriptor.metadata.owner.clone(),
+        interpolated_intent,
         entries: inner_entries,
     })
 }

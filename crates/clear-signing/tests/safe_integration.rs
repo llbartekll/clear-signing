@@ -182,6 +182,7 @@ async fn safe_exec_transaction_wrapping_erc20_transfer() {
             intent,
             owner,
             entries,
+            ..
         } => {
             assert_eq!(label, "Transaction");
             assert_eq!(intent, "Transfer tokens");

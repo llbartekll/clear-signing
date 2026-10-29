@@ -7525,3 +7525,128 @@ async fn test_nft_name_unknown_collection_falls_back_to_raw_token_id_calldata_ei
     );
     assert_semantic_parity(&calldata_model, &typed_model);
 }
+
+/// A nested call renders its own `interpolatedIntent` (the test schema allows it
+/// in a nested rendered output), for calldata and EIP-712 containers alike.
+#[tokio::test]
+async fn test_nested_calldata_renders_inner_interpolated_intent_parity() {
+    let inner_addr = "0x1000000000000000000000000000000000000001";
+    let inner_json = r#"{
+        "context": { "contract": { "deployments": [{"chainId": 1, "address": "0x1000000000000000000000000000000000000001"}] } },
+        "metadata": { "owner": "inner", "enums": {}, "constants": {}, "maps": {} },
+        "display": {
+            "definitions": {},
+            "formats": {
+                "consume(uint256 amount)": {
+                    "intent": "Consume",
+                    "interpolatedIntent": "Consume {amount} units",
+                    "fields": [{ "path": "amount", "label": "Amount", "format": "number" }]
+                }
+            }
+        }
+    }"#;
+    let inner_calldata = build_calldata("consume(uint256)", &[uint_word(5)]);
+
+    let outer_calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "outer(bytes data)": {{
+                        "intent": "Outer",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{ "callee": "{inner_addr}" }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let calldata = build_single_bytes_calldata("outer(bytes)", &inner_calldata);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let descriptors = vec![
+        wrap_rd(outer_calldata_descriptor, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(Descriptor::from_json(inner_json).unwrap(), 1, inner_addr)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+    let calldata_result = format_calldata(&descriptors, &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    let outer_typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "Relay(bytes data)": {{
+                        "intent": "Relay",
+                        "fields": [{{
+                            "path": "data",
+                            "label": "Inner",
+                            "format": "calldata",
+                            "params": {{ "callee": "{inner_addr}" }}
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Relay": [{ "name": "data", "type": "bytes" }]
+        },
+        "primaryType": "Relay",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "data": format!("0x{}", hex::encode(&inner_calldata)) }
+    }))
+    .unwrap();
+    let descriptors = vec![
+        wrap_rd(outer_typed_descriptor, 1, "0xabc")
+            .into_iter()
+            .next()
+            .unwrap(),
+        wrap_rd(Descriptor::from_json(inner_json).unwrap(), 1, inner_addr)
+            .into_iter()
+            .next()
+            .unwrap(),
+    ];
+    let typed_result = format_typed_data(&descriptors, &typed_data, &EmptyDataProvider)
+        .await
+        .unwrap();
+
+    for result in [&calldata_result, &typed_result] {
+        match &result.entries[0] {
+            DisplayEntry::Nested {
+                intent,
+                interpolated_intent,
+                ..
+            } => {
+                assert_eq!(intent, "Consume");
+                assert_eq!(interpolated_intent.as_deref(), Some("Consume 5 units"));
+            }
+            other => panic!("expected Nested entry, got {other:?}"),
+        }
+    }
+}

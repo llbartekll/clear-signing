@@ -195,6 +195,7 @@ async fn userop_with_erc20_transfer_via_execute() {
             intent,
             owner,
             entries,
+            ..
         } => {
             assert_eq!(label, "Embedded Call");
             assert_eq!(intent, "Execute call");
@@ -233,6 +234,7 @@ async fn userop_with_erc20_transfer_via_execute() {
                     intent,
                     owner: inner_owner,
                     entries: inner_entries,
+                    ..
                 } => {
                     assert_eq!(label, "Inner Call");
                     assert_eq!(intent, "Transfer tokens");

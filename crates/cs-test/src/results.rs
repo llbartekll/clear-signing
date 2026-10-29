@@ -82,6 +82,8 @@ pub enum FieldValue {
 #[derive(Debug, Serialize)]
 pub struct NestedRendered {
     pub intent: String,
+    #[serde(rename = "interpolatedIntent", skip_serializing_if = "Option::is_none")]
+    pub interpolated_intent: Option<String>,
     /// Optional for the same reason as `Rendered::owner`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
@@ -155,12 +157,14 @@ fn render_entries(entries: &[DisplayEntry]) -> Vec<FieldEntry> {
                 label,
                 intent,
                 owner,
+                interpolated_intent,
                 entries,
             } => {
                 out.push(FieldEntry {
                     label: label.clone(),
                     value: FieldValue::Nested(NestedRendered {
                         intent: intent.clone(),
+                        interpolated_intent: interpolated_intent.clone(),
                         owner: owner.clone(),
                         fields: render_entries(entries),
                     }),
@@ -300,6 +304,7 @@ mod tests {
             label: "Inner call".into(),
             intent: "Transfer".into(),
             owner: Some("Inner DAO".into()),
+            interpolated_intent: None,
             entries: vec![DisplayEntry::Item(DisplayItem::new(
                 "To".into(),
                 "0xabc".into(),
