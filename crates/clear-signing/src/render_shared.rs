@@ -2,6 +2,7 @@
 
 use num_bigint::BigUint;
 
+use crate::chain_names::CHAIN_NAMES;
 use crate::decoder::ArgumentValue;
 use crate::error::Error;
 use crate::native_currencies::NATIVE_CURRENCIES;
@@ -10,31 +11,17 @@ use crate::token::TokenMeta;
 use crate::types::descriptor::Descriptor;
 use crate::types::display::{DisplayField, FieldFormat, FormatParams};
 
-/// Known chain IDs -> human-readable names.
+/// Human-readable name for a chain ID.
 ///
 /// The spec's `chainId` format converts the value "to a Blockchain name using
-/// EIP-155 reference values", so these are the `name` fields from the EIP-155
+/// EIP-155 reference values", so the names are the `name` fields of the EIP-155
 /// chain list at <https://chainid.network/chains.json> (e.g. 1 -> "Ethereum Mainnet").
+/// An unknown chain ID renders as "Chain <id>".
 pub(crate) fn chain_name(chain_id: u64) -> String {
-    match chain_id {
-        1 => "Ethereum Mainnet".to_string(),
-        10 => "OP Mainnet".to_string(),
-        56 => "BNB Smart Chain Mainnet".to_string(),
-        100 => "Gnosis".to_string(),
-        137 => "Polygon Mainnet".to_string(),
-        250 => "Fantom Opera".to_string(),
-        324 => "zkSync Mainnet".to_string(),
-        8453 => "Base".to_string(),
-        42161 => "Arbitrum One".to_string(),
-        42170 => "Arbitrum Nova".to_string(),
-        43114 => "Avalanche C-Chain".to_string(),
-        14 => "Flare Mainnet".to_string(),
-        19 => "Songbird Canary-Network".to_string(),
-        59144 => "Linea".to_string(),
-        534352 => "Scroll".to_string(),
-        7777777 => "Zora".to_string(),
-        _ => format!("Chain {chain_id}"),
-    }
+    CHAIN_NAMES
+        .binary_search_by_key(&chain_id, |&(id, _)| id)
+        .map(|i| CHAIN_NAMES[i].1.to_string())
+        .unwrap_or_else(|_| format!("Chain {chain_id}"))
 }
 
 /// Resolve a `$.metadata.constants.xxx` reference to its string value, or return the input as-is.
@@ -506,7 +493,15 @@ mod tests {
         assert_eq!(chain_name(42161), "Arbitrum One");
         assert_eq!(chain_name(14), "Flare Mainnet");
         assert_eq!(chain_name(19), "Songbird Canary-Network");
-        assert_eq!(chain_name(99999), "Chain 99999");
+        assert_eq!(chain_name(999), "Wanchain Testnet");
+        assert_eq!(chain_name(81457), "Blast");
+        assert_eq!(chain_name(59144), "Linea");
+        assert_eq!(chain_name(u64::MAX), format!("Chain {}", u64::MAX));
+    }
+
+    #[test]
+    fn test_chain_names_sorted_by_chain_id() {
+        assert!(CHAIN_NAMES.windows(2).all(|w| w[0].0 < w[1].0));
     }
 
     #[test]
