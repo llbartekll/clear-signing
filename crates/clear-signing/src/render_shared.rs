@@ -1,5 +1,8 @@
 //! Shared render helpers used by both calldata and EIP-712 formatting.
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+
 use num_bigint::BigUint;
 
 use crate::chain_names::CHAIN_NAMES;
@@ -10,7 +13,9 @@ use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind};
 use crate::provider::DataProvider;
 use crate::token::TokenMeta;
 use crate::types::descriptor::Descriptor;
-use crate::types::display::{DisplayField, FieldFormat, FormatParams};
+use crate::types::display::{
+    DisplayField, FieldFormat, FormatParams, MapReference, UintLiteral, MAP_PATH_PREFIX,
+};
 
 /// Human-readable name for a chain ID.
 ///
@@ -394,7 +399,122 @@ pub(crate) fn lookup_map_entry(
     key: &str,
 ) -> Option<String> {
     let map_def = descriptor.metadata.maps.get(map_ref)?;
-    map_def.entries.get(key).cloned()
+    map_def.values.get(key).and_then(map_value_string)
+}
+
+/// Value for `key` in a map: exact key first, then a case-insensitive key (hex
+/// addresses), then a key with the same integer value (`"1"` and `"0x01"`).
+fn lookup_map_value<'a>(
+    values: &'a HashMap<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    if let Some(value) = values.get(key) {
+        return Some(value);
+    }
+    if let Some((_, value)) = values.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)) {
+        return Some(value);
+    }
+    let key_int = UintLiteral::String(key.to_string()).to_biguint()?;
+    values
+        .iter()
+        .find(|(k, _)| UintLiteral::String((*k).clone()).to_biguint().as_ref() == Some(&key_int))
+        .map(|(_, value)| value)
+}
+
+fn map_value_string(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// Resolve one map reference to its constant.
+///
+/// `resolve_key` reads the value at the key path as a string. Per the spec, a
+/// key with no value in the map makes the descriptor invalid for the
+/// transaction, so that case is an error.
+pub(crate) fn resolve_map_reference(
+    descriptor: &Descriptor,
+    param: &str,
+    reference: &MapReference,
+    resolve_key: &mut dyn FnMut(&str) -> Result<Option<String>, Error>,
+) -> Result<serde_json::Value, Error> {
+    let invalid = |detail: String| {
+        Error::Descriptor(format!(
+            "map reference for parameter '{param}' ({}): {detail}",
+            reference.map
+        ))
+    };
+    let map_def = reference
+        .map
+        .strip_prefix(MAP_PATH_PREFIX)
+        .and_then(|name| descriptor.metadata.maps.get(name))
+        .ok_or_else(|| invalid("no such map in metadata.maps".to_string()))?;
+    let key_path = reference
+        .key_path
+        .as_deref()
+        .or(map_def.key_path.as_deref())
+        .ok_or_else(|| invalid("no keyPath".to_string()))?;
+    let key = resolve_key(key_path)?
+        .ok_or_else(|| invalid(format!("keyPath '{key_path}' does not resolve")))?;
+    lookup_map_value(&map_def.values, &key)
+        .filter(|value| !value.is_null())
+        .cloned()
+        .ok_or_else(|| invalid(format!("no value for key '{key}'")))
+}
+
+/// Replace every map reference in `params` with its constant for this
+/// transaction. Borrows `params` unchanged when it has no map reference.
+pub(crate) fn resolve_param_maps<'p>(
+    descriptor: &Descriptor,
+    params: Option<&'p FormatParams>,
+    resolve_key: &mut dyn FnMut(&str) -> Result<Option<String>, Error>,
+) -> Result<Option<Cow<'p, FormatParams>>, Error> {
+    let Some(params) = params else {
+        return Ok(None);
+    };
+    if params.map_refs.is_empty() {
+        return Ok(Some(Cow::Borrowed(params)));
+    }
+    let mut resolved = params.clone();
+    for (param, reference) in std::mem::take(&mut resolved.map_refs) {
+        let value = resolve_map_reference(descriptor, &param, &reference, resolve_key)?;
+        set_constant_param(&mut resolved, &param, &value)?;
+    }
+    Ok(Some(Cow::Owned(resolved)))
+}
+
+/// Store a map value in the constant parameter `param`.
+pub(crate) fn set_constant_param(
+    params: &mut FormatParams,
+    param: &str,
+    value: &serde_json::Value,
+) -> Result<(), Error> {
+    let invalid = || {
+        Error::Descriptor(format!(
+            "map value {value} is not valid for parameter '{param}'"
+        ))
+    };
+    let text = || map_value_string(value).ok_or_else(invalid);
+    match param {
+        "token" => params.token = Some(text()?),
+        "callee" => params.callee = Some(text()?),
+        "selector" => params.selector = Some(text()?),
+        "spender" => params.spender = Some(text()?),
+        "collection" => params.collection = Some(text()?),
+        "chainId" => {
+            let chain_id = UintLiteral::String(text()?)
+                .to_biguint()
+                .and_then(|n| u64::try_from(n).ok())
+                .ok_or_else(invalid)?;
+            params.chain_id = Some(chain_id);
+        }
+        "amount" => params.amount = Some(UintLiteral::String(text()?)),
+        _ => return Err(invalid()),
+    }
+    Ok(())
 }
 
 pub(crate) fn format_token_amount_output(

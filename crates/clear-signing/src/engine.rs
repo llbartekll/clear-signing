@@ -17,7 +17,8 @@ use crate::render_shared::{
     coerce_unsigned_decimal_string_from_argument_value, format_blockheight_timestamp,
     format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
     format_with_decimals, is_excluded_path, lookup_map_entry, native_token_meta,
-    resolve_interpolation_field_spec, resolve_metadata_constant_str, unknown_token_chain_warning,
+    resolve_interpolation_field_spec, resolve_metadata_constant_str, resolve_param_maps,
+    unknown_token_chain_warning,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -1048,6 +1049,9 @@ pub fn merge_ref_with_definition(
                     if let Some(v) = &rp.encryption {
                         dp.encryption = Some(v.clone());
                     }
+                    for (name, reference) in &rp.map_refs {
+                        dp.map_refs.insert(name.clone(), reference.clone());
+                    }
                     Some(dp)
                 }
             };
@@ -1235,6 +1239,13 @@ pub(crate) fn index_array_params(
     ]
     .into_iter()
     .flatten()
+    {
+        *path = path.replacen(".[]", &indexed, 1);
+    }
+    for path in params
+        .map_refs
+        .values_mut()
+        .filter_map(|reference| reference.key_path.as_mut())
     {
         *path = path.replacen(".[]", &indexed, 1);
     }
@@ -1704,6 +1715,9 @@ async fn format_value(
         return Ok("<unresolved>".to_string());
     };
 
+    let resolved_params = resolve_calldata_param_maps(ctx, params)?;
+    let params = resolved_params.as_deref();
+
     // Encryption (ERC-7730 `encryption`): decrypt via the wallet, then render the
     // plaintext with the field's regular format (e.g. tokenAmount → "1 cUSDC").
     // When decryption is unavailable the field renders its `fallbackLabel`; a
@@ -1774,6 +1788,17 @@ async fn format_value(
 }
 
 /// Render a nested calldata field by decoding the inner call and recursively formatting it.
+/// Replace the map references in `params` with their constants. The map key is
+/// read from this frame's calldata.
+fn resolve_calldata_param_maps<'p>(
+    ctx: &RenderContext<'_>,
+    params: Option<&'p FormatParams>,
+) -> Result<Option<std::borrow::Cow<'p, FormatParams>>, Error> {
+    resolve_param_maps(ctx.descriptor, params, &mut |key_path| {
+        Ok(resolve_path(ctx.decoded, key_path).map(|value| format_raw(&value)))
+    })
+}
+
 async fn render_calldata_field(
     ctx: &RenderContext<'_>,
     val: &Option<ArgumentValue>,
@@ -1782,6 +1807,9 @@ async fn render_calldata_field(
     warnings: &mut RenderDiagnostics,
     nested_fallback: &mut bool,
 ) -> Result<DisplayEntry, Error> {
+    let resolved_params = resolve_calldata_param_maps(ctx, params)?;
+    let params = resolved_params.as_deref();
+
     // Extract bytes from value
     let inner_calldata = match val {
         Some(ArgumentValue::Bytes(bytes)) => bytes,
@@ -2003,7 +2031,7 @@ fn format_raw_with_separator(val: &ArgumentValue, separator: Option<&str>) -> St
     }
 }
 
-fn format_raw(val: &ArgumentValue) -> String {
+pub(crate) fn format_raw(val: &ArgumentValue) -> String {
     match val {
         ArgumentValue::Address(addr) => eip55_checksum(addr),
         ArgumentValue::Uint(bytes) => BigUint::from_bytes_be(bytes).to_string(),

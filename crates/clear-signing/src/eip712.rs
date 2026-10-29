@@ -28,7 +28,7 @@ use crate::render_shared::{
     format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
     format_with_decimals, is_excluded_path, lookup_map_entry, native_token_meta,
     parse_unsigned_biguint_from_typed_value, resolve_interpolation_field_spec,
-    resolve_metadata_constant_str, unknown_token_chain_warning,
+    resolve_metadata_constant_str, resolve_param_maps, unknown_token_chain_warning,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -899,7 +899,7 @@ async fn render_typed_field_group_entries<'a>(
 /// The `#.` path prefix resolves from message fields (EIP-712 specific).
 #[allow(clippy::too_many_arguments)]
 async fn render_typed_calldata_field(
-    _descriptor: &Descriptor,
+    descriptor: &Descriptor,
     message: &serde_json::Value,
     val: &Option<serde_json::Value>,
     params: Option<&FormatParams>,
@@ -911,6 +911,12 @@ async fn render_typed_calldata_field(
     warnings: &mut RenderDiagnostics,
     nested_fallback: &mut bool,
 ) -> Result<DisplayEntry, Error> {
+    let resolved_params = resolve_param_maps(descriptor, params, &mut |key_path| {
+        Ok(resolve_typed_path_in_context(message, key_path, container)?
+            .map(|key| json_value_to_string(&key)))
+    })?;
+    let params = resolved_params.as_deref();
+
     // Extract hex bytes from JSON value
     let inner_calldata = match val {
         Some(serde_json::Value::String(s)) => {
@@ -1840,6 +1846,14 @@ async fn format_typed_value(
         return Ok("<unresolved>".to_string());
     };
 
+    let resolved_params = resolve_param_maps(descriptor, params, &mut |key_path| {
+        Ok(
+            resolve_typed_param_path_in_context(message, key_path, container, item_scope)?
+                .map(|key| json_value_to_string(&key)),
+        )
+    })?;
+    let params = resolved_params.as_deref();
+
     // Encryption (ERC-7730 `encryption`): decrypt via the wallet, then render the
     // plaintext with the field's regular format — the same path calldata takes,
     // using the typed container's chainId and verifyingContract. When decryption
@@ -2147,7 +2161,7 @@ fn resolve_typed_chain_id(
     })
 }
 
-fn json_value_to_string(val: &serde_json::Value) -> String {
+pub(crate) fn json_value_to_string(val: &serde_json::Value) -> String {
     match val {
         serde_json::Value::String(s) => s.clone(),
         serde_json::Value::Number(n) => n.to_string(),
