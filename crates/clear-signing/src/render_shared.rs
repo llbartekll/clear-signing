@@ -6,6 +6,7 @@ use crate::chain_names::CHAIN_NAMES;
 use crate::decoder::ArgumentValue;
 use crate::error::Error;
 use crate::native_currencies::NATIVE_CURRENCIES;
+use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind};
 use crate::provider::DataProvider;
 use crate::token::TokenMeta;
 use crate::types::descriptor::Descriptor;
@@ -22,6 +23,24 @@ pub(crate) fn chain_name(chain_id: u64) -> String {
         .binary_search_by_key(&chain_id, |&(id, _)| id)
         .map(|i| CHAIN_NAMES[i].1.to_string())
         .unwrap_or_else(|_| format!("Chain {chain_id}"))
+}
+
+/// [`chain_name`] for a chain ID of any width. A chain ID that does not fit in
+/// `u64` is not in the EIP-155 list and renders as "Chain <decimal id>".
+pub(crate) fn chain_name_from_biguint(chain_id: &BigUint) -> String {
+    match u64::try_from(chain_id) {
+        Ok(id) => chain_name(id),
+        Err(_) => format!("Chain {chain_id}"),
+    }
+}
+
+/// Diagnostic for a token whose `chainIdPath` chain ID does not fit in `u64`:
+/// the token is unknown and its value renders raw.
+pub(crate) fn unknown_token_chain_warning(kind: RenderDiagnosticKind) -> FormatDiagnostic {
+    render_warning(
+        kind,
+        "token chain ID from chainIdPath does not fit in 64 bits; token is unknown",
+    )
 }
 
 /// Resolve a `$.metadata.constants.xxx` reference to its string value, or return the input as-is.
@@ -497,6 +516,19 @@ mod tests {
         assert_eq!(chain_name(81457), "Blast");
         assert_eq!(chain_name(59144), "Linea");
         assert_eq!(chain_name(u64::MAX), format!("Chain {}", u64::MAX));
+    }
+
+    #[test]
+    fn test_chain_name_from_biguint() {
+        assert_eq!(
+            chain_name_from_biguint(&BigUint::from(1u8)),
+            "Ethereum Mainnet"
+        );
+        let above_u64 = BigUint::from(u64::MAX) + 1u8;
+        assert_eq!(
+            chain_name_from_biguint(&above_u64),
+            "Chain 18446744073709551616"
+        );
     }
 
     #[test]

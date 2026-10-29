@@ -7650,3 +7650,112 @@ async fn test_nested_calldata_renders_inner_interpolated_intent_parity() {
         }
     }
 }
+
+/// A chain ID above `u64` renders as "Chain <decimal>" for the `chainId` format.
+/// A `tokenAmount` / `tokenTicker` whose `chainIdPath` holds such an ID does not
+/// look up the token on the signing chain: the token is unknown and the value
+/// renders raw. Calldata and EIP-712 agree.
+#[tokio::test]
+async fn test_chain_id_above_u64_parity() {
+    let usdc = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    let above_u64 = "18446744073709551616";
+    let fields = r#"[
+        { "path": "amount", "label": "Amount", "format": "tokenAmount",
+          "params": { "tokenPath": "token", "chainIdPath": "dstChainId" } },
+        { "path": "token", "label": "Token", "format": "tokenTicker",
+          "params": { "chainIdPath": "dstChainId" } },
+        { "path": "dstChainId", "label": "Destination", "format": "chainId" }
+    ]"#;
+
+    let calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "bridge(uint256 amount,address token,uint256 dstChainId)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let mut chain_word = [0u8; 32];
+    chain_word[23] = 1;
+    let calldata = build_calldata(
+        "bridge(uint256,address,uint256)",
+        &[uint_word(5_000_000), addr_word(usdc), chain_word],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    let typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "Bridge(uint256 amount,address token,uint256 dstChainId)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Bridge": [
+                { "name": "amount", "type": "uint256" },
+                { "name": "token", "type": "address" },
+                { "name": "dstChainId", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Bridge",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "amount": "5000000", "token": usdc, "dstChainId": above_u64 }
+    }))
+    .unwrap();
+
+    // USDC is known on the signing chain only.
+    let mut tokens = StaticTokenSource::new();
+    tokens.insert(
+        1,
+        usdc,
+        TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        },
+    );
+
+    let calldata_result = format_calldata(&wrap_rd(calldata_descriptor, 1, "0xabc"), &tx, &tokens)
+        .await
+        .unwrap();
+    let typed_result =
+        format_typed_data(&wrap_rd(typed_descriptor, 1, "0xabc"), &typed_data, &tokens)
+            .await
+            .unwrap();
+
+    for result in [&calldata_result, &typed_result] {
+        let items = semantic_item_snapshot(&result.entries);
+        assert_eq!(items[0], ("Amount".to_string(), "5000000".to_string()));
+        assert_eq!(items[1].0, "Token");
+        assert!(
+            items[1].1.eq_ignore_ascii_case(usdc),
+            "ticker must not resolve on the signing chain: {:?}",
+            items[1]
+        );
+        assert_eq!(
+            items[2],
+            ("Destination".to_string(), format!("Chain {above_u64}"))
+        );
+        let codes: Vec<&str> = result
+            .diagnostics()
+            .iter()
+            .map(|d| d.code.as_str())
+            .collect();
+        assert!(codes.contains(&"token_metadata_not_found"), "{codes:?}");
+        assert!(codes.contains(&"token_ticker_not_found"), "{codes:?}");
+    }
+}

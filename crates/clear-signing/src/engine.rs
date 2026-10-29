@@ -13,11 +13,11 @@ use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, Ren
 use crate::path::{apply_collection_access, CollectionSelection};
 use crate::provider::DataProvider;
 use crate::render_shared::{
-    chain_name, coerce_unsigned_biguint_from_argument_value,
+    chain_name_from_biguint, coerce_unsigned_biguint_from_argument_value,
     coerce_unsigned_decimal_string_from_argument_value, format_blockheight_timestamp,
     format_duration_seconds, format_timestamp, format_token_amount_output, format_unit_biguint,
     format_with_decimals, is_excluded_path, lookup_map_entry, native_token_meta,
-    resolve_interpolation_field_spec, resolve_metadata_constant_str,
+    resolve_interpolation_field_spec, resolve_metadata_constant_str, unknown_token_chain_warning,
 };
 use crate::resolver::ResolvedDescriptor;
 use crate::types::descriptor::Descriptor;
@@ -2230,7 +2230,17 @@ async fn format_token_amount(
     };
 
     // Determine chain ID for token lookup (cross-chain support)
-    let lookup_chain_id = resolve_chain_id(ctx, params);
+    let Some(lookup_chain_id) = resolve_chain_id(ctx, params) else {
+        warnings.push(unknown_token_chain_warning(
+            RenderDiagnosticKind::TokenMetadataNotFound,
+        ));
+        return Ok(format_token_amount_output(
+            ctx.descriptor,
+            &raw_amount,
+            params,
+            None,
+        ));
+    };
 
     // Try to resolve token metadata
     let token_meta = if let Some(params) = params {
@@ -2305,7 +2315,12 @@ async fn format_token_ticker(
     params: Option<&FormatParams>,
     warnings: &mut RenderDiagnostics,
 ) -> Result<String, Error> {
-    let lookup_chain_id = resolve_chain_id(ctx, params);
+    let Some(lookup_chain_id) = resolve_chain_id(ctx, params) else {
+        warnings.push(unknown_token_chain_warning(
+            RenderDiagnosticKind::TokenTickerNotFound,
+        ));
+        return Ok(format_raw(val));
+    };
 
     if let Some(addr_hex) = address_string_from_argument_value(val) {
         if let Some(meta) = ctx
@@ -2326,32 +2341,30 @@ async fn format_token_ticker(
 
 fn format_chain_id(val: &ArgumentValue) -> Result<String, Error> {
     if let ArgumentValue::Uint(bytes) = val {
-        let n = BigUint::from_bytes_be(bytes);
-        let chain_id: u64 = n.try_into().unwrap_or(0);
-        Ok(chain_name(chain_id))
+        Ok(chain_name_from_biguint(&BigUint::from_bytes_be(bytes)))
     } else {
         Ok(format_raw(val))
     }
 }
 
 /// Resolve the chain ID for cross-chain token lookups.
-fn resolve_chain_id(ctx: &RenderContext<'_>, params: Option<&FormatParams>) -> u64 {
+///
+/// `None` when `chainIdPath` holds a chain ID that does not fit in `u64`. No
+/// token can be looked up on such a chain, and the signing chain is wrong.
+fn resolve_chain_id(ctx: &RenderContext<'_>, params: Option<&FormatParams>) -> Option<u64> {
     if let Some(params) = params {
         // Static chain ID takes precedence
         if let Some(cid) = params.chain_id {
-            return cid;
+            return Some(cid);
         }
         // Dynamic chain ID from calldata path
         if let Some(ref path) = params.chain_id_path {
             if let Some(ArgumentValue::Uint(bytes)) = resolve_path(ctx.decoded, path) {
-                let n = BigUint::from_bytes_be(&bytes);
-                if let Ok(cid) = u64::try_from(n) {
-                    return cid;
-                }
+                return u64::try_from(BigUint::from_bytes_be(&bytes)).ok();
             }
         }
     }
-    ctx.chain_id
+    Some(ctx.chain_id)
 }
 
 fn format_amount(ctx: &RenderContext<'_>, val: &ArgumentValue) -> Result<String, Error> {
