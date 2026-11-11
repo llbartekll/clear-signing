@@ -137,8 +137,9 @@ pub enum DisplayField {
         #[serde(skip_serializing_if = "Option::is_none")]
         label: Option<String>,
 
-        #[serde(default)]
-        iteration: Iteration,
+        /// `None` when the descriptor does not write the key.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        iteration: Option<Iteration>,
 
         fields: Vec<DisplayField>,
     },
@@ -190,13 +191,22 @@ pub struct FieldGroup {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 
-    #[serde(default)]
-    pub iteration: Iteration,
+    /// `None` when the descriptor does not write the key. The renderer needs
+    /// to tell an absent key from an explicit `"sequential"`: an absent key on
+    /// a group whose fields all iterate over arrays pairs the elements by
+    /// index, while an explicit `"sequential"` shows each array in full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iteration: Option<Iteration>,
 
     pub fields: Vec<DisplayField>,
 }
 
 /// How grouped fields should be iterated for display.
+///
+/// - `Sequential`: each array is displayed in full, one after the other:
+///   `a[0] a[1] .. a[N] b[0] b[1] .. b[M]`.
+/// - `Bundled`: the elements of the arrays are paired by index:
+///   `a[0] b[0] a[1] b[1] .. a[N] b[N]`. The arrays must have the same length.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Iteration {
