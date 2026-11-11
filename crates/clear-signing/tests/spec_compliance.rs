@@ -8020,3 +8020,363 @@ async fn test_map_references_resolve_constant_params_parity() {
         }
     }
 }
+
+// ─── Group iteration: absent key, explicit sequential, bundled (calldata ≡ EIP-712) ───
+
+const ITERATION_ADDR_1: &str = "0x0000000000000000000000000000000000000001";
+const ITERATION_ADDR_2: &str = "0x0000000000000000000000000000000000000002";
+
+fn labelled_values(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(label, value)| (label.to_string(), value.to_string()))
+        .collect()
+}
+
+/// A group with no `path` over the two arrays `recipients` and `amounts`.
+/// `iteration_key` is the JSON text of the key with its trailing comma, or an
+/// empty string for a group with no `iteration` key.
+fn two_array_group_descriptor(context: &str, format_key: &str, iteration_key: &str) -> Descriptor {
+    let json = format!(
+        r#"{{
+            "context": {{ "{context}": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "{format_key}": {{
+                        "intent": "Batch",
+                        "fields": [{{
+                            {iteration_key}
+                            "fields": [
+                                {{ "path": "recipients.[]", "label": "Recipient", "format": "address" }},
+                                {{ "path": "amounts.[]", "label": "Amount", "format": "number" }}
+                            ]
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    );
+    Descriptor::from_json(&json).unwrap()
+}
+
+async fn render_two_array_group_calldata(
+    iteration_key: &str,
+    recipients: &[&str],
+    amounts: &[u64],
+) -> Result<Vec<(String, String)>, String> {
+    let descriptor = two_array_group_descriptor(
+        "contract",
+        "batch(address[] recipients,uint256[] amounts)",
+        iteration_key,
+    );
+    let calldata = build_two_array_calldata("batch(address[],uint256[])", recipients, amounts);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .map(|model| semantic_item_snapshot(&model.entries))
+        .map_err(|err| err.to_string())
+}
+
+async fn render_two_array_group_typed(
+    iteration_key: &str,
+    recipients: &[&str],
+    amounts: &[u64],
+) -> Result<Vec<(String, String)>, String> {
+    let descriptor = two_array_group_descriptor(
+        "eip712",
+        "Batch(address[] recipients,uint256[] amounts)",
+        iteration_key,
+    );
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [
+                { "name": "recipients", "type": "address[]" },
+                { "name": "amounts", "type": "uint256[]" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "recipients": recipients, "amounts": amounts }
+    }))
+    .unwrap();
+    format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .map(|model| semantic_item_snapshot(&model.entries))
+    .map_err(|err| err.to_string())
+}
+
+/// ERC-7730, "Group format specification": "In `sequential` mode, arrays are
+/// displayed fully one after the other - array_0[0] array_0[1] .. array_0[N]
+/// array_1[0] array_1[1] .. array_1[M]".
+#[tokio::test]
+async fn test_group_explicit_sequential_displays_each_array_in_full() {
+    let key = r#""iteration": "sequential","#;
+    let recipients = [ITERATION_ADDR_1, ITERATION_ADDR_2];
+    let expected = labelled_values(&[
+        ("Recipient", ITERATION_ADDR_1),
+        ("Recipient", ITERATION_ADDR_2),
+        ("Amount", "100"),
+        ("Amount", "200"),
+    ]);
+
+    let calldata = render_two_array_group_calldata(key, &recipients, &[100, 200]).await;
+    assert_eq!(calldata.unwrap(), expected);
+    let typed = render_two_array_group_typed(key, &recipients, &[100, 200]).await;
+    assert_eq!(typed.unwrap(), expected);
+}
+
+/// Sequential mode does not pair the arrays, so their lengths can differ.
+#[tokio::test]
+async fn test_group_explicit_sequential_allows_unequal_array_lengths() {
+    let key = r#""iteration": "sequential","#;
+    let recipients = [ITERATION_ADDR_1, ITERATION_ADDR_2];
+    let expected = labelled_values(&[
+        ("Recipient", ITERATION_ADDR_1),
+        ("Recipient", ITERATION_ADDR_2),
+        ("Amount", "100"),
+    ]);
+
+    let calldata = render_two_array_group_calldata(key, &recipients, &[100]).await;
+    assert_eq!(calldata.unwrap(), expected);
+    let typed = render_two_array_group_typed(key, &recipients, &[100]).await;
+    assert_eq!(typed.unwrap(), expected);
+}
+
+/// ERC-7730, "Group format specification": "In `bundled` mode, elements of the
+/// arrays gets bundled together - array_0[0] array_1[0] array_0[1] array_1[1]".
+#[tokio::test]
+async fn test_group_explicit_bundled_pairs_array_items_by_index() {
+    let key = r#""iteration": "bundled","#;
+    let recipients = [ITERATION_ADDR_1, ITERATION_ADDR_2];
+    let expected = labelled_values(&[
+        ("Recipient", ITERATION_ADDR_1),
+        ("Amount", "100"),
+        ("Recipient", ITERATION_ADDR_2),
+        ("Amount", "200"),
+    ]);
+
+    let calldata = render_two_array_group_calldata(key, &recipients, &[100, 200]).await;
+    assert_eq!(calldata.unwrap(), expected);
+    let typed = render_two_array_group_typed(key, &recipients, &[100, 200]).await;
+    assert_eq!(typed.unwrap(), expected);
+}
+
+/// A group with no `iteration` key whose fields all iterate over arrays pairs
+/// the elements by index, as in `bundled` mode.
+#[tokio::test]
+async fn test_group_without_iteration_pairs_array_items_by_index() {
+    let recipients = [ITERATION_ADDR_1, ITERATION_ADDR_2];
+    let expected = labelled_values(&[
+        ("Recipient", ITERATION_ADDR_1),
+        ("Amount", "100"),
+        ("Recipient", ITERATION_ADDR_2),
+        ("Amount", "200"),
+    ]);
+
+    let calldata = render_two_array_group_calldata("", &recipients, &[100, 200]).await;
+    assert_eq!(calldata.unwrap(), expected);
+    let typed = render_two_array_group_typed("", &recipients, &[100, 200]).await;
+    assert_eq!(typed.unwrap(), expected);
+}
+
+/// The elements cannot be paired if the arrays have different lengths. This is
+/// the same error as in `bundled` mode.
+#[tokio::test]
+async fn test_group_without_iteration_unequal_array_lengths_errors() {
+    let recipients = [ITERATION_ADDR_1, ITERATION_ADDR_2];
+
+    let calldata = render_two_array_group_calldata("", &recipients, &[100]).await;
+    assert!(calldata.unwrap_err().contains("same length"));
+    let typed = render_two_array_group_typed("", &recipients, &[100]).await;
+    assert!(typed.unwrap_err().contains("same length"));
+}
+
+/// A group whose `path` ends with `.[]` and that has no `iteration` key shows
+/// each element of the array in full before the next element. The entries stay
+/// flat items when the group has no label.
+#[tokio::test]
+async fn test_array_path_group_without_iteration_displays_element_by_element() {
+    let fields = r#"[{
+        "path": "payments.[]",
+        "fields": [
+            { "path": "to", "label": "To", "format": "address" },
+            { "path": "amount", "label": "Amount", "format": "number" }
+        ]
+    }]"#;
+    let expected = labelled_values(&[
+        ("To", ITERATION_ADDR_1),
+        ("Amount", "100"),
+        ("To", ITERATION_ADDR_2),
+        ("Amount", "200"),
+    ]);
+
+    // Calldata: pay((address to,uint256 amount)[] payments)
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "pay((address to,uint256 amount)[] payments)": {{ "intent": "Pay", "fields": {fields} }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let sig = decoder::parse_signature("pay((address,uint256)[])").unwrap();
+    let mut calldata = Vec::new();
+    calldata.extend_from_slice(&sig.selector);
+    calldata.extend_from_slice(&dynamic_offset_word(32));
+    calldata.extend_from_slice(&uint_word(2));
+    calldata.extend_from_slice(&addr_word(ITERATION_ADDR_1));
+    calldata.extend_from_slice(&uint_word(100));
+    calldata.extend_from_slice(&addr_word(ITERATION_ADDR_2));
+    calldata.extend_from_slice(&uint_word(200));
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_model = format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap();
+    assert_eq!(semantic_item_snapshot(&calldata_model.entries), expected);
+    assert!(calldata_model
+        .entries
+        .iter()
+        .all(|entry| matches!(entry, DisplayEntry::Item(_))));
+
+    // EIP-712: Pay(Payment[] payments)Payment(address to,uint256 amount)
+    let descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "Pay(Payment[] payments)Payment(address to,uint256 amount)": {{ "intent": "Pay", "fields": {fields} }}
+                }}
+            }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Pay": [{ "name": "payments", "type": "Payment[]" }],
+            "Payment": [
+                { "name": "to", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Pay",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "payments": [
+                { "to": ITERATION_ADDR_1, "amount": 100 },
+                { "to": ITERATION_ADDR_2, "amount": 200 }
+            ]
+        }
+    }))
+    .unwrap();
+    let typed_model = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(semantic_item_snapshot(&typed_model.entries), expected);
+    assert!(typed_model
+        .entries
+        .iter()
+        .all(|entry| matches!(entry, DisplayEntry::Item(_))));
+}
+
+/// A group with no `iteration` key that mixes an array field with a field that
+/// is not an array is not paired: the fields are displayed in the order of the
+/// fields, with no error. An explicit `bundled` rejects the same group.
+#[tokio::test]
+async fn test_group_without_iteration_mixed_scalar_field_keeps_field_order() {
+    let descriptor = Descriptor::from_json(
+        r#"{
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Batch(address[] recipients,uint256 deadline)": {
+                        "intent": "Batch",
+                        "fields": [{
+                            "label": "Transfers",
+                            "fields": [
+                                { "path": "recipients.[]", "label": "Recipient", "format": "address" },
+                                { "path": "deadline", "label": "Deadline", "format": "number" }
+                            ]
+                        }]
+                    }
+                }
+            }
+        }"#,
+    )
+    .unwrap();
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [
+                { "name": "recipients", "type": "address[]" },
+                { "name": "deadline", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "recipients": [ITERATION_ADDR_1, ITERATION_ADDR_2],
+            "deadline": 123
+        }
+    }))
+    .unwrap();
+
+    let model = format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        semantic_item_snapshot(&model.entries),
+        labelled_values(&[
+            ("Recipient", ITERATION_ADDR_1),
+            ("Recipient", ITERATION_ADDR_2),
+            ("Deadline", "123"),
+        ])
+    );
+    match &model.entries[0] {
+        DisplayEntry::Group {
+            label, iteration, ..
+        } => {
+            assert_eq!(label, "Transfers");
+            assert!(matches!(iteration, GroupIteration::Sequential));
+        }
+        _ => panic!("expected a labelled group"),
+    }
+}

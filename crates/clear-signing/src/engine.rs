@@ -608,6 +608,18 @@ fn render_group_field_kind<'a>(
     })
 }
 
+/// Display each field of a group in full, in the order of the fields: every
+/// element of the first array, then every element of the second array.
+fn flatten_group_children_in_field_order(child_kinds: Vec<GroupRenderKind>) -> Vec<DisplayItem> {
+    child_kinds
+        .into_iter()
+        .flat_map(|kind| match kind {
+            GroupRenderKind::Scalar(items) => items,
+            GroupRenderKind::Bundles(bundles) => bundles.into_iter().flatten().collect(),
+        })
+        .collect()
+}
+
 fn render_group_kind<'a>(
     ctx: &'a RenderContext<'a>,
     group: &'a FieldGroup,
@@ -621,15 +633,23 @@ fn render_group_kind<'a>(
         }
 
         match group.iteration {
-            Iteration::Sequential => {
+            // Explicit `"sequential"`: each array is displayed in full, one
+            // after the other, in the order of the fields.
+            Some(Iteration::Sequential) => Ok(GroupRenderKind::Scalar(
+                flatten_group_children_in_field_order(child_kinds),
+            )),
+            // No `iteration` key. If every field of the group iterates over an
+            // array, the elements are paired by index, as in `bundled` mode:
+            // each element's fields stay contiguous (e.g. [addr0, amount0,
+            // addr1, amount1]). This is the case of a group whose `path` ends
+            // with `.[]`, after the path is prepended to its fields. In every
+            // other case the fields are displayed in the order of the fields.
+            None => {
                 let all_bundles = !child_kinds.is_empty()
                     && child_kinds
                         .iter()
                         .all(|k| matches!(k, GroupRenderKind::Bundles(_)));
                 let items = if all_bundles {
-                    // Element-major: keep each array element's fields contiguous
-                    // (e.g. [amount0, addr0, amount1, addr1]) rather than grouping
-                    // all of one field's elements together.
                     let mut sets: Vec<_> = child_kinds
                         .into_iter()
                         .map(|k| match k {
@@ -637,30 +657,26 @@ fn render_group_kind<'a>(
                             GroupRenderKind::Scalar(_) => Vec::new(),
                         })
                         .collect();
-                    let element_count = sets.iter().map(Vec::len).max().unwrap_or(0);
+                    let element_count = sets.first().map(Vec::len).unwrap_or(0);
+                    if sets.iter().any(|set| set.len() != element_count) {
+                        return Err(Error::Render(
+                            "bundled groups require all array-expanded fields to have the same length"
+                                .to_string(),
+                        ));
+                    }
                     let mut items = Vec::new();
                     for i in 0..element_count {
                         for set in sets.iter_mut() {
-                            if i < set.len() {
-                                items.append(&mut set[i]);
-                            }
+                            items.append(&mut set[i]);
                         }
                     }
                     items
                 } else {
-                    child_kinds
-                        .into_iter()
-                        .flat_map(|kind| match kind {
-                            GroupRenderKind::Scalar(items) => items,
-                            GroupRenderKind::Bundles(bundles) => {
-                                bundles.into_iter().flatten().collect()
-                            }
-                        })
-                        .collect()
+                    flatten_group_children_in_field_order(child_kinds)
                 };
                 Ok(GroupRenderKind::Scalar(items))
             }
-            Iteration::Bundled => {
+            Some(Iteration::Bundled) => {
                 let mut bundle_sets = Vec::new();
                 for kind in child_kinds {
                     match kind {
