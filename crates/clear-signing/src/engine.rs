@@ -2368,10 +2368,10 @@ async fn format_token_ticker(
 }
 
 fn format_chain_id(val: &ArgumentValue) -> Result<String, Error> {
-    if let ArgumentValue::Uint(bytes) = val {
-        Ok(chain_name_from_biguint(&BigUint::from_bytes_be(bytes)))
-    } else {
-        Ok(format_raw(val))
+    // A byte slice (`data.[64:96]`) is read as a big-endian unsigned integer.
+    match coerce_unsigned_biguint_from_argument_value(val) {
+        Some(chain_id) => Ok(chain_name_from_biguint(&chain_id)),
+        None => Ok(format_raw(val)),
     }
 }
 

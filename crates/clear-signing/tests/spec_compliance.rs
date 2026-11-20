@@ -7854,6 +7854,78 @@ async fn test_byte_slice_past_end_clamps_parity() {
     }
 }
 
+/// A slice on `bytes` applies the field format to the sliced bytes. For the
+/// integer format `chainId`, the slice is read as a big-endian unsigned integer
+/// and rendered as the chain name (not as hex). Calldata and EIP-712 agree.
+#[tokio::test]
+async fn test_chain_id_format_on_byte_slice_parity() {
+    let fields = r#"[ { "path": "data.[64:96]", "label": "To chain", "format": "chainId" } ]"#;
+    let calldata_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "contract": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "bridge(bytes data)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+    let typed_descriptor = Descriptor::from_json(&format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{ "definitions": {{}}, "formats": {{
+                "Bridge(bytes data)": {{ "intent": "Bridge", "fields": {fields} }}
+            }} }}
+        }}"#
+    ))
+    .unwrap();
+
+    let mut data = Vec::new();
+    data.extend_from_slice(&addr_word("0x4cd00e387622c35bddb9b4c962c136462338bc31"));
+    data.extend_from_slice(&addr_word("0x4cd00e387622c35bddb9b4c962c136462338bc31"));
+    data.extend_from_slice(&uint_word(8453));
+    data.extend_from_slice(&uint_word(0));
+
+    let calldata = build_single_bytes_calldata("bridge(bytes)", &data);
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": { "EIP712Domain": [], "Bridge": [{ "name": "data", "type": "bytes" }] },
+        "primaryType": "Bridge",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": { "data": format!("0x{}", hex::encode(&data)) }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        semantic_item_snapshot(&calldata_result.entries),
+        vec![("To chain".to_string(), "Base".to_string())]
+    );
+    assert_semantic_parity(&calldata_result, &typed_result);
+}
+
 /// Spec map references (`metadata.maps`) work for every parameter that takes a
 /// constant: here `token` and `chainId` of a tokenAmount (key read from a
 /// parameter, hex key matched case-insensitively) and `callee` of a nested call
