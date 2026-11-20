@@ -202,12 +202,12 @@
             "value": "0.95 WETH"
           },
           {
-            "label": "On Address",
-            "value": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
-          },
-          {
             "label": "Min amount to receive",
             "value": "5 USDC"
+          },
+          {
+            "label": "On Address",
+            "value": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
           },
           {
             "label": "On Address",

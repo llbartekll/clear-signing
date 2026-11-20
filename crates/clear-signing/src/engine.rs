@@ -622,42 +622,15 @@ fn render_group_kind<'a>(
 
         match group.iteration {
             Iteration::Sequential => {
-                let all_bundles = !child_kinds.is_empty()
-                    && child_kinds
-                        .iter()
-                        .all(|k| matches!(k, GroupRenderKind::Bundles(_)));
-                let items = if all_bundles {
-                    // Element-major: keep each array element's fields contiguous
-                    // (e.g. [amount0, addr0, amount1, addr1]) rather than grouping
-                    // all of one field's elements together.
-                    let mut sets: Vec<_> = child_kinds
-                        .into_iter()
-                        .map(|k| match k {
-                            GroupRenderKind::Bundles(b) => b,
-                            GroupRenderKind::Scalar(_) => Vec::new(),
-                        })
-                        .collect();
-                    let element_count = sets.iter().map(Vec::len).max().unwrap_or(0);
-                    let mut items = Vec::new();
-                    for i in 0..element_count {
-                        for set in sets.iter_mut() {
-                            if i < set.len() {
-                                items.append(&mut set[i]);
-                            }
+                let items = child_kinds
+                    .into_iter()
+                    .flat_map(|kind| match kind {
+                        GroupRenderKind::Scalar(items) => items,
+                        GroupRenderKind::Bundles(bundles) => {
+                            bundles.into_iter().flatten().collect()
                         }
-                    }
-                    items
-                } else {
-                    child_kinds
-                        .into_iter()
-                        .flat_map(|kind| match kind {
-                            GroupRenderKind::Scalar(items) => items,
-                            GroupRenderKind::Bundles(bundles) => {
-                                bundles.into_iter().flatten().collect()
-                            }
-                        })
-                        .collect()
-                };
+                    })
+                    .collect();
                 Ok(GroupRenderKind::Scalar(items))
             }
             Iteration::Bundled => {
