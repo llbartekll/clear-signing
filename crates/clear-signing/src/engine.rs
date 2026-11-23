@@ -608,6 +608,28 @@ fn render_group_field_kind<'a>(
     })
 }
 
+/// Return true when the group path ends in `.[]`, so each element is one struct.
+pub(crate) fn is_struct_array_group(group: &FieldGroup) -> bool {
+    group
+        .path
+        .as_deref()
+        .is_some_and(|path| path.ends_with(".[]"))
+}
+
+/// Show the fields of element 0, then the fields of element 1, and so on.
+pub(crate) fn interleave_elements(mut sets: Vec<Vec<Vec<DisplayItem>>>) -> Vec<DisplayItem> {
+    let element_count = sets.iter().map(Vec::len).max().unwrap_or(0);
+    let mut items = Vec::new();
+    for index in 0..element_count {
+        for set in sets.iter_mut() {
+            if let Some(element) = set.get_mut(index) {
+                items.append(element);
+            }
+        }
+    }
+    items
+}
+
 fn render_group_kind<'a>(
     ctx: &'a RenderContext<'a>,
     group: &'a FieldGroup,
@@ -622,15 +644,31 @@ fn render_group_kind<'a>(
 
         match group.iteration {
             Iteration::Sequential => {
-                let items = child_kinds
-                    .into_iter()
-                    .flat_map(|kind| match kind {
-                        GroupRenderKind::Scalar(items) => items,
-                        GroupRenderKind::Bundles(bundles) => {
-                            bundles.into_iter().flatten().collect()
-                        }
-                    })
-                    .collect();
+                let items = if is_struct_array_group(group)
+                    && child_kinds
+                        .iter()
+                        .all(|kind| matches!(kind, GroupRenderKind::Bundles(_)))
+                {
+                    // A struct-array group shows each element's fields together.
+                    let sets = child_kinds
+                        .into_iter()
+                        .map(|kind| match kind {
+                            GroupRenderKind::Bundles(bundles) => bundles,
+                            GroupRenderKind::Scalar(_) => Vec::new(),
+                        })
+                        .collect();
+                    interleave_elements(sets)
+                } else {
+                    child_kinds
+                        .into_iter()
+                        .flat_map(|kind| match kind {
+                            GroupRenderKind::Scalar(items) => items,
+                            GroupRenderKind::Bundles(bundles) => {
+                                bundles.into_iter().flatten().collect()
+                            }
+                        })
+                        .collect()
+                };
                 Ok(GroupRenderKind::Scalar(items))
             }
             Iteration::Bundled => {
@@ -772,9 +810,10 @@ pub(crate) fn expand_display_fields(
                 } else {
                     field_group.fields.clone()
                 };
+                // Keep the scope path. The renderer uses it to find struct-array groups.
                 expanded.push(DisplayField::Group {
                     field_group: FieldGroup {
-                        path: None,
+                        path: field_group.path.clone(),
                         label: field_group.label.clone(),
                         iteration: field_group.iteration.clone(),
                         fields: expand_display_fields(descriptor, &scoped_children, warnings),
@@ -797,7 +836,7 @@ pub(crate) fn expand_display_fields(
                 };
                 expanded.push(DisplayField::Group {
                     field_group: FieldGroup {
-                        path: None,
+                        path: scope_path.clone(),
                         label: label.clone(),
                         iteration: iteration.clone(),
                         fields: expand_display_fields(descriptor, &scoped_children, warnings),

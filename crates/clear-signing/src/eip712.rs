@@ -13,10 +13,10 @@ use crate::encryption::{
     fallback_text, validate_annotation, Decryption, DecryptionCache, PlainKind,
 };
 use crate::engine::{
-    ensure_single_nested_param_source, lookup_enum_label, normalized_nested_calldata,
-    parse_nested_address_param, parse_nested_amount_literal, parse_nested_selector_param,
-    uint_bytes_from_biguint, with_field_encryption, DisplayEntry, DisplayItem, DisplayModel,
-    GroupIteration,
+    ensure_single_nested_param_source, interleave_elements, is_struct_array_group,
+    lookup_enum_label, normalized_nested_calldata, parse_nested_address_param,
+    parse_nested_amount_literal, parse_nested_selector_param, uint_bytes_from_biguint,
+    with_field_encryption, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
@@ -762,15 +762,31 @@ fn render_typed_group_kind<'a>(
 
         match group.iteration {
             Iteration::Sequential => {
-                let items = child_kinds
-                    .into_iter()
-                    .flat_map(|kind| match kind {
-                        TypedGroupRenderKind::Scalar(items) => items,
-                        TypedGroupRenderKind::Bundles(bundles) => {
-                            bundles.into_iter().flatten().collect()
-                        }
-                    })
-                    .collect();
+                let items = if is_struct_array_group(group)
+                    && child_kinds
+                        .iter()
+                        .all(|kind| matches!(kind, TypedGroupRenderKind::Bundles(_)))
+                {
+                    // A struct-array group shows each element's fields together.
+                    let sets = child_kinds
+                        .into_iter()
+                        .map(|kind| match kind {
+                            TypedGroupRenderKind::Bundles(bundles) => bundles,
+                            TypedGroupRenderKind::Scalar(_) => Vec::new(),
+                        })
+                        .collect();
+                    interleave_elements(sets)
+                } else {
+                    child_kinds
+                        .into_iter()
+                        .flat_map(|kind| match kind {
+                            TypedGroupRenderKind::Scalar(items) => items,
+                            TypedGroupRenderKind::Bundles(bundles) => {
+                                bundles.into_iter().flatten().collect()
+                            }
+                        })
+                        .collect()
+                };
                 Ok(TypedGroupRenderKind::Scalar(items))
             }
             Iteration::Bundled => {

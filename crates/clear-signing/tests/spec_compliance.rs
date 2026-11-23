@@ -1566,62 +1566,115 @@ async fn test_eip712_explicit_sequential_group_shows_arrays_one_after_another() 
 }
 
 #[tokio::test]
-async fn test_eip712_struct_array_scope_without_iteration_is_sequential() {
-    let descriptor = Descriptor::from_json(
-        r##"{
+async fn test_struct_array_group_keeps_element_fields_together() {
+    const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    const WETH: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+    let fields = serde_json::json!([{
+        "path": "details.[]",
+        "label": "Details",
+        "fields": [
+            { "path": "token", "label": "Token", "format": "address" },
+            { "path": "amount", "label": "Amount", "format": "number" }
+        ]
+    }]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "swap((address token,uint256 amount)[] details)": {
+                        "intent": "Swap",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
             "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
             "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
             "display": {
                 "definitions": {},
                 "formats": {
-                    "Order(Output[] outputs)Output(address recipient,uint256 amount)": {
-                        "intent": "Order",
-                        "fields": [{
-                            "path": "outputs.[]",
-                            "label": "Outputs",
-                            "fields": [
-                                { "path": "amount", "label": "Amount", "format": "number" },
-                                { "path": "recipient", "label": "Recipient", "format": "address" }
-                            ]
-                        }]
+                    "Swap(Detail[] details)Detail(address token,uint256 amount)": {
+                        "intent": "Swap",
+                        "fields": fields
                     }
                 }
             }
-        }"##,
+        })
+        .to_string(),
     )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "swap((address token,uint256 amount)[] details)",
+        &[
+            uint_word(0x20),
+            uint_word(2),
+            address_word(USDC),
+            uint_word(100),
+            address_word(WETH),
+            uint_word(200),
+        ],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
     .unwrap();
 
     let typed_data: TypedData = serde_json::from_value(serde_json::json!({
         "types": {
             "EIP712Domain": [],
-            "Order": [{ "name": "outputs", "type": "Output[]" }],
-            "Output": [
-                { "name": "recipient", "type": "address" },
+            "Swap": [{ "name": "details", "type": "Detail[]" }],
+            "Detail": [
+                { "name": "token", "type": "address" },
                 { "name": "amount", "type": "uint256" }
             ]
         },
-        "primaryType": "Order",
+        "primaryType": "Swap",
         "domain": { "chainId": 1, "verifyingContract": "0xabc" },
         "message": {
-            "outputs": [
-                { "recipient": "0x0000000000000000000000000000000000000001", "amount": 100 },
-                { "recipient": "0x0000000000000000000000000000000000000002", "amount": 200 }
+            "details": [
+                { "token": USDC, "amount": 100 },
+                { "token": WETH, "amount": 200 }
             ]
         }
     }))
     .unwrap();
-
-    let result = format_typed_data(
-        &wrap_rd(descriptor, 1, "0xabc"),
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
         &typed_data,
         &EmptyDataProvider,
     )
     .await
     .unwrap();
-    assert_eq!(
-        sequential_group_labels(&result.entries[0]),
-        ["Amount", "Amount", "Recipient", "Recipient"]
-    );
+
+    for result in [&calldata_result, &typed_result] {
+        assert_eq!(
+            sequential_group_labels(&result.entries[0]),
+            ["Token", "Amount", "Token", "Amount"]
+        );
+    }
 }
 
 #[tokio::test]
