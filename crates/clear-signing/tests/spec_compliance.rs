@@ -1409,6 +1409,274 @@ async fn test_eip712_bundled_group_zips_array_items() {
     }
 }
 
+/// Return the group's field labels, or panic if the entry is not a sequential group.
+fn sequential_group_labels(entry: &DisplayEntry) -> Vec<&str> {
+    match entry {
+        DisplayEntry::Group {
+            iteration, items, ..
+        } => {
+            assert!(matches!(iteration, GroupIteration::Sequential));
+            items.iter().map(|item| item.label.as_str()).collect()
+        }
+        _ => panic!("expected sequential group"),
+    }
+}
+
+/// Format a two-array calldata group. `iteration` is the raw JSON member, or empty to omit it.
+async fn format_calldata_array_group(iteration: &str) -> FormatOutcome {
+    let json = format!(
+        r#"{{
+        "context": {{
+            "contract": {{
+                "deployments": [{{"chainId": 1, "address": "0xabc"}}]
+            }}
+        }},
+        "metadata": {{"owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}}}},
+        "display": {{
+            "definitions": {{}},
+            "formats": {{
+                "batch(address[] recipients,uint256[] amounts)": {{
+                    "intent": "Batch",
+                    "fields": [{{
+                        "label": "Transfers",
+                        {iteration}
+                        "fields": [
+                            {{"path": "recipients.[]", "label": "Recipient", "format": "address"}},
+                            {{"path": "amounts.[]", "label": "Amount", "format": "number"}}
+                        ]
+                    }}]
+                }}
+            }}
+        }}
+    }}"#
+    );
+
+    let descriptor = Descriptor::from_json(&json).unwrap();
+    let calldata = build_two_array_calldata(
+        "batch(address[],uint256[])",
+        &[
+            "0x0000000000000000000000000000000000000001",
+            "0x0000000000000000000000000000000000000002",
+        ],
+        &[100, 200],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+
+    format_calldata(&wrap_rd(descriptor, 1, "0xabc"), &tx, &EmptyDataProvider)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn test_calldata_group_without_iteration_is_sequential() {
+    let result = format_calldata_array_group("").await;
+    assert_eq!(
+        sequential_group_labels(&result.entries[0]),
+        ["Recipient", "Recipient", "Amount", "Amount"]
+    );
+}
+
+#[tokio::test]
+async fn test_calldata_explicit_sequential_group_shows_arrays_one_after_another() {
+    let result = format_calldata_array_group(r#""iteration": "sequential","#).await;
+    assert_eq!(
+        sequential_group_labels(&result.entries[0]),
+        ["Recipient", "Recipient", "Amount", "Amount"]
+    );
+}
+
+/// Format a two-array EIP-712 group. `iteration` is the raw JSON member, or empty to omit it.
+async fn format_typed_array_group(iteration: &str) -> FormatOutcome {
+    let json = format!(
+        r#"{{
+            "context": {{ "eip712": {{ "deployments": [{{"chainId": 1, "address": "0xabc"}}] }} }},
+            "metadata": {{ "owner": "test", "enums": {{}}, "constants": {{}}, "maps": {{}} }},
+            "display": {{
+                "definitions": {{}},
+                "formats": {{
+                    "Batch(address[] recipients,uint256[] amounts)": {{
+                        "intent": "Batch",
+                        "fields": [{{
+                            "label": "Transfers",
+                            {iteration}
+                            "fields": [
+                                {{ "path": "recipients.[]", "label": "Recipient", "format": "address" }},
+                                {{ "path": "amounts.[]", "label": "Amount", "format": "number" }}
+                            ]
+                        }}]
+                    }}
+                }}
+            }}
+        }}"#
+    );
+    let descriptor = Descriptor::from_json(&json).unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Batch": [
+                { "name": "recipients", "type": "address[]" },
+                { "name": "amounts", "type": "uint256[]" }
+            ]
+        },
+        "primaryType": "Batch",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "recipients": [
+                "0x0000000000000000000000000000000000000001",
+                "0x0000000000000000000000000000000000000002"
+            ],
+            "amounts": [100, 200]
+        }
+    }))
+    .unwrap();
+
+    format_typed_data(
+        &wrap_rd(descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn test_eip712_group_without_iteration_is_sequential() {
+    let result = format_typed_array_group("").await;
+    assert_eq!(
+        sequential_group_labels(&result.entries[0]),
+        ["Recipient", "Recipient", "Amount", "Amount"]
+    );
+}
+
+#[tokio::test]
+async fn test_eip712_explicit_sequential_group_shows_arrays_one_after_another() {
+    let result = format_typed_array_group(r#""iteration": "sequential","#).await;
+    assert_eq!(
+        sequential_group_labels(&result.entries[0]),
+        ["Recipient", "Recipient", "Amount", "Amount"]
+    );
+}
+
+#[tokio::test]
+async fn test_struct_array_group_keeps_element_fields_together() {
+    const USDC: &str = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48";
+    const WETH: &str = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2";
+
+    let fields = serde_json::json!([{
+        "path": "details.[]",
+        "label": "Details",
+        "fields": [
+            { "path": "token", "label": "Token", "format": "address" },
+            { "path": "amount", "label": "Amount", "format": "number" }
+        ]
+    }]);
+
+    let calldata_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "contract": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "swap((address token,uint256 amount)[] details)": {
+                        "intent": "Swap",
+                        "fields": fields.clone()
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let typed_descriptor = Descriptor::from_json(
+        &serde_json::json!({
+            "context": { "eip712": { "deployments": [{"chainId": 1, "address": "0xabc"}] } },
+            "metadata": { "owner": "test", "enums": {}, "constants": {}, "maps": {} },
+            "display": {
+                "definitions": {},
+                "formats": {
+                    "Swap(Detail[] details)Detail(address token,uint256 amount)": {
+                        "intent": "Swap",
+                        "fields": fields
+                    }
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let calldata = build_calldata(
+        "swap((address token,uint256 amount)[] details)",
+        &[
+            uint_word(0x20),
+            uint_word(2),
+            address_word(USDC),
+            uint_word(100),
+            address_word(WETH),
+            uint_word(200),
+        ],
+    );
+    let tx = TransactionContext {
+        chain_id: 1,
+        to: "0xabc",
+        calldata: &calldata,
+        value: None,
+        from: None,
+        implementation_address: None,
+    };
+    let calldata_result = format_calldata(
+        &wrap_rd(calldata_descriptor, 1, "0xabc"),
+        &tx,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    let typed_data: TypedData = serde_json::from_value(serde_json::json!({
+        "types": {
+            "EIP712Domain": [],
+            "Swap": [{ "name": "details", "type": "Detail[]" }],
+            "Detail": [
+                { "name": "token", "type": "address" },
+                { "name": "amount", "type": "uint256" }
+            ]
+        },
+        "primaryType": "Swap",
+        "domain": { "chainId": 1, "verifyingContract": "0xabc" },
+        "message": {
+            "details": [
+                { "token": USDC, "amount": 100 },
+                { "token": WETH, "amount": 200 }
+            ]
+        }
+    }))
+    .unwrap();
+    let typed_result = format_typed_data(
+        &wrap_rd(typed_descriptor, 1, "0xabc"),
+        &typed_data,
+        &EmptyDataProvider,
+    )
+    .await
+    .unwrap();
+
+    for result in [&calldata_result, &typed_result] {
+        assert_eq!(
+            sequential_group_labels(&result.entries[0]),
+            ["Token", "Amount", "Token", "Amount"]
+        );
+    }
+}
+
 #[tokio::test]
 async fn test_eip712_bundled_group_mixed_scalar_child_errors() {
     let descriptor = Descriptor::from_json(

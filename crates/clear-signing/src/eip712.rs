@@ -13,10 +13,10 @@ use crate::encryption::{
     fallback_text, validate_annotation, Decryption, DecryptionCache, PlainKind,
 };
 use crate::engine::{
-    ensure_single_nested_param_source, lookup_enum_label, normalized_nested_calldata,
-    parse_nested_address_param, parse_nested_amount_literal, parse_nested_selector_param,
-    uint_bytes_from_biguint, with_field_encryption, DisplayEntry, DisplayItem, DisplayModel,
-    GroupIteration,
+    ensure_single_nested_param_source, interleave_elements, is_struct_array_group,
+    lookup_enum_label, normalized_nested_calldata, parse_nested_address_param,
+    parse_nested_amount_literal, parse_nested_selector_param, uint_bytes_from_biguint,
+    with_field_encryption, DisplayEntry, DisplayItem, DisplayModel, GroupIteration,
 };
 use crate::error::Error;
 use crate::outcome::{render_warning, FormatDiagnostic, RenderDiagnosticKind, RenderState};
@@ -762,31 +762,20 @@ fn render_typed_group_kind<'a>(
 
         match group.iteration {
             Iteration::Sequential => {
-                let all_bundles = !child_kinds.is_empty()
+                let items = if is_struct_array_group(group)
                     && child_kinds
                         .iter()
-                        .all(|k| matches!(k, TypedGroupRenderKind::Bundles(_)));
-                let items = if all_bundles {
-                    // Element-major: keep each array element's fields contiguous
-                    // (e.g. [amount0, addr0, amount1, addr1]) rather than grouping
-                    // all of one field's elements together.
-                    let mut sets: Vec<_> = child_kinds
+                        .all(|kind| matches!(kind, TypedGroupRenderKind::Bundles(_)))
+                {
+                    // A struct-array group shows each element's fields together.
+                    let sets = child_kinds
                         .into_iter()
-                        .map(|k| match k {
-                            TypedGroupRenderKind::Bundles(b) => b,
+                        .map(|kind| match kind {
+                            TypedGroupRenderKind::Bundles(bundles) => bundles,
                             TypedGroupRenderKind::Scalar(_) => Vec::new(),
                         })
                         .collect();
-                    let element_count = sets.iter().map(Vec::len).max().unwrap_or(0);
-                    let mut items = Vec::new();
-                    for i in 0..element_count {
-                        for set in sets.iter_mut() {
-                            if i < set.len() {
-                                items.append(&mut set[i]);
-                            }
-                        }
-                    }
-                    items
+                    interleave_elements(sets)
                 } else {
                     child_kinds
                         .into_iter()
