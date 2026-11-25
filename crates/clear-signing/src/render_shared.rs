@@ -517,6 +517,10 @@ pub(crate) fn set_constant_param(
     Ok(())
 }
 
+/// Message shown for a `tokenAmount` at or above `threshold` when the
+/// descriptor sets no `message` (ERC-7730: "defaults to "Unlimited"").
+const DEFAULT_THRESHOLD_MESSAGE: &str = "Unlimited";
+
 pub(crate) fn format_token_amount_output(
     descriptor: &Descriptor,
     raw_amount: &BigUint,
@@ -524,13 +528,17 @@ pub(crate) fn format_token_amount_output(
     token_meta: Option<&TokenMeta>,
 ) -> String {
     if let Some(params) = params {
-        if let (Some(threshold_ref), Some(message)) = (&params.threshold, &params.message) {
+        if let Some(threshold_ref) = &params.threshold {
             if let Some(threshold) = resolve_metadata_constant_biguint(descriptor, threshold_ref) {
                 if raw_amount >= &threshold {
+                    let message = params
+                        .message
+                        .as_deref()
+                        .unwrap_or(DEFAULT_THRESHOLD_MESSAGE);
                     if let Some(meta) = token_meta {
                         return format!("{} {}", message, meta.symbol);
                     }
-                    return message.clone();
+                    return message.to_string();
                 }
             }
         }
@@ -701,6 +709,37 @@ mod tests {
             Some(&token_meta),
         );
         assert_eq!(rendered, "All USDC");
+    }
+
+    #[test]
+    fn test_format_token_amount_output_threshold_default_message() {
+        let descriptor = descriptor_with_metadata(json!({}));
+        let params: FormatParams = serde_json::from_value(json!({
+            "threshold": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        }))
+        .unwrap();
+        let token_meta = TokenMeta {
+            symbol: "USDC".to_string(),
+            decimals: 6,
+            name: "USD Coin".to_string(),
+        };
+        let max = (BigUint::from(1u8) << 256usize) - BigUint::from(1u8);
+
+        let rendered =
+            format_token_amount_output(&descriptor, &max, Some(&params), Some(&token_meta));
+        assert_eq!(rendered, "Unlimited USDC");
+
+        let rendered = format_token_amount_output(&descriptor, &max, Some(&params), None);
+        assert_eq!(rendered, "Unlimited");
+
+        // Below the threshold the amount is shown.
+        let rendered = format_token_amount_output(
+            &descriptor,
+            &BigUint::from(1_500_000u64),
+            Some(&params),
+            Some(&token_meta),
+        );
+        assert_eq!(rendered, "1.5 USDC");
     }
 
     #[test]
