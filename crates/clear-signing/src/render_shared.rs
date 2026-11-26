@@ -527,6 +527,12 @@ pub(crate) fn format_token_amount_output(
     params: Option<&FormatParams>,
     token_meta: Option<&TokenMeta>,
 ) -> String {
+    // ERC-7730: for an unknown token, show the raw value. The threshold
+    // message is shown with the ticker, so it needs the token metadata.
+    let Some(meta) = token_meta else {
+        return raw_amount.to_string();
+    };
+
     if let Some(params) = params {
         if let Some(threshold_ref) = &params.threshold {
             if let Some(threshold) = resolve_metadata_constant_biguint(descriptor, threshold_ref) {
@@ -535,21 +541,14 @@ pub(crate) fn format_token_amount_output(
                         .message
                         .as_deref()
                         .unwrap_or(DEFAULT_THRESHOLD_MESSAGE);
-                    if let Some(meta) = token_meta {
-                        return format!("{} {}", message, meta.symbol);
-                    }
-                    return message.to_string();
+                    return format!("{} {}", message, meta.symbol);
                 }
             }
         }
     }
 
-    if let Some(meta) = token_meta {
-        let formatted = format_with_decimals(raw_amount, meta.decimals);
-        format!("{formatted} {}", meta.symbol)
-    } else {
-        raw_amount.to_string()
-    }
+    let formatted = format_with_decimals(raw_amount, meta.decimals);
+    format!("{formatted} {}", meta.symbol)
 }
 
 #[cfg(test)]
@@ -729,8 +728,9 @@ mod tests {
             format_token_amount_output(&descriptor, &max, Some(&params), Some(&token_meta));
         assert_eq!(rendered, "Unlimited USDC");
 
+        // An unknown token shows the raw value, also at the threshold.
         let rendered = format_token_amount_output(&descriptor, &max, Some(&params), None);
-        assert_eq!(rendered, "Unlimited");
+        assert_eq!(rendered, max.to_string());
 
         // Below the threshold the amount is shown.
         let rendered = format_token_amount_output(
@@ -740,6 +740,20 @@ mod tests {
             Some(&token_meta),
         );
         assert_eq!(rendered, "1.5 USDC");
+    }
+
+    #[test]
+    fn test_format_token_amount_output_threshold_unknown_token() {
+        let descriptor = descriptor_with_metadata(json!({}));
+        let params: FormatParams = serde_json::from_value(json!({
+            "threshold": "0x100",
+            "message": "All"
+        }))
+        .unwrap();
+
+        let rendered =
+            format_token_amount_output(&descriptor, &BigUint::from(0x100u64), Some(&params), None);
+        assert_eq!(rendered, "256");
     }
 
     #[test]
